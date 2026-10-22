@@ -1,0 +1,131 @@
+"""API request and response models. The client generates its types from these."""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class LeagueRequest(BaseModel):
+    league_id: int = Field(gt=0)
+    season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")
+
+
+class AnalyzeRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+    keep_player_ids: list[int] = Field(
+        default_factory=list, description="Players never offered in trades or suggested as drops"
+    )
+
+
+class TeamSummary(BaseModel):
+    id: int
+    name: str
+    abbrev: str
+    record: str
+
+
+class LeagueSummary(BaseModel):
+    id: int
+    season: int
+    name: str
+    scoring_type: str
+    categories: list[str]
+    teams: list[TeamSummary]
+    playoff_teams: int
+    is_public: bool
+    supported: bool
+    unsupported_reason: str | None = None
+
+
+class PlayerRef(BaseModel):
+    id: int
+    name: str
+    positions: list[str]
+    injury_status: str
+    percent_owned: float
+    value: float = Field(description="Generic z-score value summed over the league's categories")
+
+
+class CategoryOutlook(BaseModel):
+    category: str
+    win_pct: float = Field(description="Chance of winning this category in an average week")
+    league_rank: int = Field(description="1 = best weekly projection in the league")
+    weekly_projection: float
+    tag: Literal["locked", "swing", "lost"]
+
+
+class TeamBuild(BaseModel):
+    team_id: int
+    team_name: str
+    ranks: dict[str, int]
+    strong: list[str]
+    weak: list[str] = Field(description="Categories a team is far behind in, likely punts")
+    expected_cats_won: float
+
+
+class TradeIdea(BaseModel):
+    partner_team_id: int
+    partner_team_name: str
+    give: list[PlayerRef]
+    get: list[PlayerRef]
+    my_cats_gain: float = Field(description="Change in my expected categories won per week")
+    their_cats_gain: float = Field(description="Change in theirs, under their own build")
+    paper_gap: float = Field(description="Generic value I receive minus value I give; above 0 means I win on paper")
+    paper_verdict: Literal["win_for_them", "even", "stretch"] = Field(
+        description="How the deal reads to an owner who judges by generic rankings"
+    )
+    playoff_pct_before: float
+    playoff_pct_after: float
+    category_changes: dict[str, float] = Field(description="Change in my weekly win % per category")
+
+
+class PickupIdea(BaseModel):
+    add: PlayerRef
+    drop: PlayerRef
+    availability: str
+    my_cats_gain: float
+    playoff_pct_before: float
+    playoff_pct_after: float
+    category_changes: dict[str, float]
+
+
+class SeasonRow(BaseModel):
+    team_id: int
+    team_name: str
+    current_record: str
+    projected_wins: float
+    projected_losses: float
+    projected_ties: float
+    playoff_pct: float
+    first_seed_pct: float
+    mean_rank: float
+
+
+class Assumptions(BaseModel):
+    games_per_week: float
+    simulations: int
+    scoring_type: str
+    notes: list[str]
+
+
+class AnalysisReport(BaseModel):
+    league: LeagueSummary
+    team_id: int
+    team_name: str
+    roster: list[PlayerRef]
+    categories: list[CategoryOutlook]
+    builds: list[TeamBuild]
+    trades: list[TradeIdea]
+    pickups: list[PickupIdea]
+    season: list[SeasonRow]
+    faab_remaining: int | None
+    assumptions: Assumptions
+    generated_at: str
+    elapsed_ms: int
+
+
+class ErrorBody(BaseModel):
+    code: str
+    message: str

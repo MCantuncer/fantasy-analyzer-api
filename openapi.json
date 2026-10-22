@@ -1,0 +1,868 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Fantasy Analyzer API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Api Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/league": {
+      "post": {
+        "summary": "League",
+        "operationId": "league_api_league_post",
+        "parameters": [
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeagueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeagueSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/analyze": {
+      "post": {
+        "summary": "Analyze",
+        "operationId": "analyze_api_analyze_post",
+        "parameters": [
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AnalysisReport": {
+        "properties": {
+          "league": {
+            "$ref": "#/components/schemas/LeagueSummary"
+          },
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "roster": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Roster"
+          },
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/CategoryOutlook"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "builds": {
+            "items": {
+              "$ref": "#/components/schemas/TeamBuild"
+            },
+            "type": "array",
+            "title": "Builds"
+          },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/TradeIdea"
+            },
+            "type": "array",
+            "title": "Trades"
+          },
+          "pickups": {
+            "items": {
+              "$ref": "#/components/schemas/PickupIdea"
+            },
+            "type": "array",
+            "title": "Pickups"
+          },
+          "season": {
+            "items": {
+              "$ref": "#/components/schemas/SeasonRow"
+            },
+            "type": "array",
+            "title": "Season"
+          },
+          "faab_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Faab Remaining"
+          },
+          "assumptions": {
+            "$ref": "#/components/schemas/Assumptions"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          },
+          "elapsed_ms": {
+            "type": "integer",
+            "title": "Elapsed Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league",
+          "team_id",
+          "team_name",
+          "roster",
+          "categories",
+          "builds",
+          "trades",
+          "pickups",
+          "season",
+          "faab_remaining",
+          "assumptions",
+          "generated_at",
+          "elapsed_ms"
+        ],
+        "title": "AnalysisReport"
+      },
+      "AnalyzeRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          },
+          "keep_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Keep Player Ids",
+            "description": "Players never offered in trades or suggested as drops"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id"
+        ],
+        "title": "AnalyzeRequest"
+      },
+      "Assumptions": {
+        "properties": {
+          "games_per_week": {
+            "type": "number",
+            "title": "Games Per Week"
+          },
+          "simulations": {
+            "type": "integer",
+            "title": "Simulations"
+          },
+          "scoring_type": {
+            "type": "string",
+            "title": "Scoring Type"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "games_per_week",
+          "simulations",
+          "scoring_type",
+          "notes"
+        ],
+        "title": "Assumptions"
+      },
+      "CategoryOutlook": {
+        "properties": {
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "win_pct": {
+            "type": "number",
+            "title": "Win Pct",
+            "description": "Chance of winning this category in an average week"
+          },
+          "league_rank": {
+            "type": "integer",
+            "title": "League Rank",
+            "description": "1 = best weekly projection in the league"
+          },
+          "weekly_projection": {
+            "type": "number",
+            "title": "Weekly Projection"
+          },
+          "tag": {
+            "type": "string",
+            "enum": [
+              "locked",
+              "swing",
+              "lost"
+            ],
+            "title": "Tag"
+          }
+        },
+        "type": "object",
+        "required": [
+          "category",
+          "win_pct",
+          "league_rank",
+          "weekly_projection",
+          "tag"
+        ],
+        "title": "CategoryOutlook"
+      },
+      "ErrorBody": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorBody"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LeagueRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id"
+        ],
+        "title": "LeagueRequest"
+      },
+      "LeagueSummary": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "scoring_type": {
+            "type": "string",
+            "title": "Scoring Type"
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "teams": {
+            "items": {
+              "$ref": "#/components/schemas/TeamSummary"
+            },
+            "type": "array",
+            "title": "Teams"
+          },
+          "playoff_teams": {
+            "type": "integer",
+            "title": "Playoff Teams"
+          },
+          "is_public": {
+            "type": "boolean",
+            "title": "Is Public"
+          },
+          "supported": {
+            "type": "boolean",
+            "title": "Supported"
+          },
+          "unsupported_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unsupported Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "season",
+          "name",
+          "scoring_type",
+          "categories",
+          "teams",
+          "playoff_teams",
+          "is_public",
+          "supported"
+        ],
+        "title": "LeagueSummary"
+      },
+      "PickupIdea": {
+        "properties": {
+          "add": {
+            "$ref": "#/components/schemas/PlayerRef"
+          },
+          "drop": {
+            "$ref": "#/components/schemas/PlayerRef"
+          },
+          "availability": {
+            "type": "string",
+            "title": "Availability"
+          },
+          "my_cats_gain": {
+            "type": "number",
+            "title": "My Cats Gain"
+          },
+          "playoff_pct_before": {
+            "type": "number",
+            "title": "Playoff Pct Before"
+          },
+          "playoff_pct_after": {
+            "type": "number",
+            "title": "Playoff Pct After"
+          },
+          "category_changes": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Category Changes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "add",
+          "drop",
+          "availability",
+          "my_cats_gain",
+          "playoff_pct_before",
+          "playoff_pct_after",
+          "category_changes"
+        ],
+        "title": "PickupIdea"
+      },
+      "PlayerRef": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "positions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Positions"
+          },
+          "injury_status": {
+            "type": "string",
+            "title": "Injury Status"
+          },
+          "percent_owned": {
+            "type": "number",
+            "title": "Percent Owned"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "Generic z-score value summed over the league's categories"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "positions",
+          "injury_status",
+          "percent_owned",
+          "value"
+        ],
+        "title": "PlayerRef"
+      },
+      "SeasonRow": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "current_record": {
+            "type": "string",
+            "title": "Current Record"
+          },
+          "projected_wins": {
+            "type": "number",
+            "title": "Projected Wins"
+          },
+          "projected_losses": {
+            "type": "number",
+            "title": "Projected Losses"
+          },
+          "projected_ties": {
+            "type": "number",
+            "title": "Projected Ties"
+          },
+          "playoff_pct": {
+            "type": "number",
+            "title": "Playoff Pct"
+          },
+          "first_seed_pct": {
+            "type": "number",
+            "title": "First Seed Pct"
+          },
+          "mean_rank": {
+            "type": "number",
+            "title": "Mean Rank"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "current_record",
+          "projected_wins",
+          "projected_losses",
+          "projected_ties",
+          "playoff_pct",
+          "first_seed_pct",
+          "mean_rank"
+        ],
+        "title": "SeasonRow"
+      },
+      "TeamBuild": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "ranks": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Ranks"
+          },
+          "strong": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Strong"
+          },
+          "weak": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Weak",
+            "description": "Categories a team is far behind in, likely punts"
+          },
+          "expected_cats_won": {
+            "type": "number",
+            "title": "Expected Cats Won"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "ranks",
+          "strong",
+          "weak",
+          "expected_cats_won"
+        ],
+        "title": "TeamBuild"
+      },
+      "TeamSummary": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "abbrev": {
+            "type": "string",
+            "title": "Abbrev"
+          },
+          "record": {
+            "type": "string",
+            "title": "Record"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "abbrev",
+          "record"
+        ],
+        "title": "TeamSummary"
+      },
+      "TradeIdea": {
+        "properties": {
+          "partner_team_id": {
+            "type": "integer",
+            "title": "Partner Team Id"
+          },
+          "partner_team_name": {
+            "type": "string",
+            "title": "Partner Team Name"
+          },
+          "give": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Give"
+          },
+          "get": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Get"
+          },
+          "my_cats_gain": {
+            "type": "number",
+            "title": "My Cats Gain",
+            "description": "Change in my expected categories won per week"
+          },
+          "their_cats_gain": {
+            "type": "number",
+            "title": "Their Cats Gain",
+            "description": "Change in theirs, under their own build"
+          },
+          "paper_gap": {
+            "type": "number",
+            "title": "Paper Gap",
+            "description": "Generic value I receive minus value I give; above 0 means I win on paper"
+          },
+          "paper_verdict": {
+            "type": "string",
+            "enum": [
+              "win_for_them",
+              "even",
+              "stretch"
+            ],
+            "title": "Paper Verdict",
+            "description": "How the deal reads to an owner who judges by generic rankings"
+          },
+          "playoff_pct_before": {
+            "type": "number",
+            "title": "Playoff Pct Before"
+          },
+          "playoff_pct_after": {
+            "type": "number",
+            "title": "Playoff Pct After"
+          },
+          "category_changes": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Category Changes",
+            "description": "Change in my weekly win % per category"
+          }
+        },
+        "type": "object",
+        "required": [
+          "partner_team_id",
+          "partner_team_name",
+          "give",
+          "get",
+          "my_cats_gain",
+          "their_cats_gain",
+          "paper_gap",
+          "paper_verdict",
+          "playoff_pct_before",
+          "playoff_pct_after",
+          "category_changes"
+        ],
+        "title": "TradeIdea"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
