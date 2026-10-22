@@ -74,12 +74,13 @@ class TradeIdea(BaseModel):
     my_drop: PlayerRef | None = Field(default=None, description="Who you cut to make room when you get more players")
     their_drop: PlayerRef | None = Field(default=None, description="Who they would likely cut to make room")
     my_cats_gain: float = Field(description="Change in my expected categories won per week")
-    their_cats_gain: float = Field(description="Change in theirs, under their own build")
+    their_cats_gain: float = Field(description="Change in theirs, ignoring the categories they punt")
     value_they_get: float = Field(description="Perceived value they receive, in auction dollars")
     value_they_give: float = Field(description="Perceived value they send, in auction dollars")
     acceptance: float = Field(description="Rough chance the other owner accepts (heuristic)")
     acceptance_label: Literal["likely", "possible", "long_shot"]
     pitch: str = Field(description="Why the deal helps them, to use when you propose it")
+    reasons: list[str] = Field(description="Why it can work for both sides: sell high, buy low, their punts, timing")
     playoff_pct_before: float
     playoff_pct_after: float
     category_changes: dict[str, float] = Field(description="Change in my weekly win % per category")

@@ -7,6 +7,8 @@ blends those signals into one auction-dollar figure ($200 budget scale).
 
 from __future__ import annotations
 
+from functools import cached_property
+
 import numpy as np
 
 from app.espn.parse import League, Player
@@ -18,6 +20,9 @@ W_PAID = 0.25
 # This season's rank takes over gradually, reaching this weight at FULL_SEASON_GAMES.
 W_SEASON_MAX = 0.45
 FULL_SEASON_GAMES = 30
+# Owners value one star over two decent players adding up to the same dollars.
+# A package is worth the K-norm of its parts, so two $20 players count as about $32.
+STUD_POWER = 1.5
 
 
 class PerceivedValue:
@@ -60,3 +65,13 @@ class PerceivedValue:
 
     def total(self, players: list[Player]) -> float:
         return sum(self.value(p) for p in players)
+
+    def package(self, players: list[Player]) -> float:
+        """What a group of players is worth together in a trade, with the premium for stars."""
+        return float(sum(self.value(p) ** STUD_POWER for p in players) ** (1 / STUD_POWER)) if players else 0.0
+
+    @cached_property
+    def replacement(self) -> float:
+        """Value of the best healthy free agent: what an owner gets back for a roster spot."""
+        free = [self.value(p) for p in self.league.free_agents if p.available]
+        return max(free, default=0.0)

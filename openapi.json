@@ -801,7 +801,7 @@
           "their_cats_gain": {
             "type": "number",
             "title": "Their Cats Gain",
-            "description": "Change in theirs, under their own build"
+            "description": "Change in theirs, ignoring the categories they punt"
           },
           "value_they_get": {
             "type": "number",
@@ -831,6 +831,14 @@
             "type": "string",
             "title": "Pitch",
             "description": "Why the deal helps them, to use when you propose it"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons",
+            "description": "Why it can work for both sides: sell high, buy low, their punts, timing"
           },
           "playoff_pct_before": {
             "type": "number",
@@ -862,6 +870,7 @@
           "acceptance",
           "acceptance_label",
           "pitch",
+          "reasons",
           "playoff_pct_before",
           "playoff_pct_after",
           "category_changes"
