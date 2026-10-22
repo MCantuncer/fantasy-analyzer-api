@@ -198,7 +198,7 @@ class TradeFinder:
                 )
                 if cat.reverse:
                     delta = -delta
-                if delta > 0:
+                if delta >= 0.5:
                     line += f", +{delta:.1f} a game"
             parts.append(line)
         return "Helps their " + " and ".join(parts) + "."
