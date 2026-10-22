@@ -143,6 +143,7 @@ class Analyzer:
                     acceptance=round(d.acceptance, 2),
                     acceptance_label=acceptance_label(d.acceptance),
                     pitch=finder.pitch(d),
+                    reasons=d.reasons,
                     playoff_pct_before=round(before, 3),
                     playoff_pct_after=round(after, 3),
                     category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
@@ -236,9 +237,11 @@ class Analyzer:
                     "Every category counts as a win or loss in the standings."
                     if each_cat
                     else "Each matchup counts as one win, loss or tie in the standings.",
-                    "Trades are shown only if they also help the other team's categories and give them close to "
-                    "equal value as owners see it (ESPN rankings, auction values, this league's draft prices, "
-                    "this season's rank). Acceptance odds are a rough estimate, not a prediction.",
+                    "Trades are shown only if they also help the other team in the categories it competes in "
+                    "(its punts are ignored) and give it close to equal value as owners see it (ESPN rankings, "
+                    "auction values, this league's draft prices, this season's rank). One star counts for more "
+                    "than two players adding up to the same dollars, and a player they'd have to cut counts "
+                    "against the deal. Acceptance odds are a rough estimate, not a prediction.",
                 ],
             ),
             generated_at=datetime.now(UTC).isoformat(timespec="seconds"),

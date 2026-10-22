@@ -2,11 +2,15 @@
 
 A deal is suggested only when
   * it raises your expected categories won,
-  * it raises theirs too, under their own build, and
+  * it raises theirs too, counting only the categories they compete in (not their punts), and
   * it doesn't look like a loss to an owner who goes by rankings and draft prices.
 
-Each surviving deal gets an acceptance estimate, and deals are ranked by
-playoff-odds gain weighted by that estimate.
+"On paper" follows how owners judge deals: one star is worth more than two players
+adding up to the same dollars, and a player they must cut to make room counts
+against the deal unless waivers have someone as good.
+
+Each surviving deal gets an acceptance estimate and a list of reasons to use when
+pitching it. Deals are ranked by playoff-odds gain weighted by that estimate.
 """
 
 from __future__ import annotations
@@ -29,6 +33,10 @@ SHORTLIST = 14
 MAX_PER_TARGET = 2
 MAX_PER_PARTNER = 4
 
+PUNT_WIN = 0.3  # a category an owner wins less often than this is treated as punted
+MISPRICED = 5.0  # dollars between owner value and our projection that count as sell-high / buy-low
+STRUGGLING_BONUS = 0.05  # teams outside the playoff spots are more open to shaking things up
+
 LIKELY, POSSIBLE = 0.6, 0.4
 
 
@@ -42,16 +50,17 @@ class Deal:
     my_gain: float
     their_gain: float
     give_value: float  # perceived value they receive
-    get_value: float  # perceived value they send
+    get_value: float  # perceived value they send, including a player they must cut
     acceptance: float
     dists: list[Dist]
+    reasons: list[str]
 
     @property
     def score(self) -> float:
         return self.acceptance * self.my_gain
 
 
-def acceptance_odds(ratio: float, their_gain: float, gives_star: bool) -> float:
+def acceptance_odds(ratio: float, their_gain: float, gives_star: bool, struggling: bool = False) -> float:
     """Rough chance the other owner says yes. A heuristic, not a fitted model."""
     p = float(np.interp(ratio, [0.85, 0.95, 1.05, 1.2, 1.4], [0.2, 0.4, 0.55, 0.7, 0.8]))
     if their_gain >= 0.15:
@@ -60,6 +69,8 @@ def acceptance_odds(ratio: float, their_gain: float, gives_star: bool) -> float:
         p -= 0.1
     if gives_star and ratio < 1.15:
         p -= 0.2
+    if struggling:
+        p += STRUGGLING_BONUS
     return float(np.clip(p, 0.05, 0.9))
 
 
@@ -77,6 +88,28 @@ class TradeFinder:
         self.teams = league.teams
         self.dists = [model.dist(t.roster) for t in self.teams]
         self.base = [model.strength(i, self.dists) for i in range(len(self.teams))]
+        self.base_cats = [self._avg_win(i, self.dists) for i in range(len(self.teams))]
+        self.punts = [cats < PUNT_WIN for cats in self.base_cats]
+        self.struggling = self._outside_playoffs()
+        # Our projection in dollars: a player's model-value rank priced on ESPN's rank curve.
+        pool = [p for t in self.teams for p in t.roster] + list(league.free_agents)
+        by_model = sorted(pool, key=model.value, reverse=True)
+        self.model_dollars = {p.id: self.perceived.dollars_at_rank(r) for r, p in enumerate(by_model, 1)}
+
+    def _outside_playoffs(self) -> set[int]:
+        def pct(t: Team) -> float:
+            games = t.wins + t.losses + t.ties
+            return (t.wins + 0.5 * t.ties) / games if games else 0.5
+
+        if not any(t.wins + t.losses + t.ties for t in self.teams):
+            return set()
+        order = sorted(range(len(self.teams)), key=lambda i: pct(self.teams[i]), reverse=True)
+        return set(order[self.league.playoff_teams :])
+
+    def fit_gain(self, j: int, dists: list[Dist]) -> float:
+        """Change in team j's expected categories won, ignoring the categories it punts."""
+        change = self._avg_win(j, dists) - self.base_cats[j]
+        return float(change[~self.punts[j]].sum())
 
     def _worst(self, roster: list[Player], protected: set[int]) -> Player | None:
         """The player an owner would cut to make room: lowest model value, not protected."""
@@ -89,13 +122,6 @@ class TradeFinder:
 
     def _evaluate(self, j: int, give: list[Player], get: list[Player], stars: set[int]) -> Deal | None:
         pv = self.perceived
-        give_v, get_v = pv.total(give), pv.total(get)
-        if get_v <= 0:
-            return None
-        ratio = give_v / get_v
-        if ratio < MIN_VALUE_RATIO or ratio > MAX_VALUE_RATIO:
-            return None
-
         me, partner = self.teams[self.me_idx], self.teams[j]
         give_ids, get_ids = {p.id for p in give}, {p.id for p in get}
         my_roster = [p for p in me.roster if p.id not in give_ids] + get
@@ -108,16 +134,28 @@ class TradeFinder:
             their_drop = self._worst(their_roster, give_ids)
             their_roster = [p for p in their_roster if p is not their_drop]
 
+        give_v = pv.package(give)
+        get_v = pv.package(get)
+        if their_drop is not None:
+            get_v += max(pv.value(their_drop) - pv.replacement, 0.0)
+        if get_v <= 0:
+            return None
+        ratio = give_v / get_v
+        if ratio < MIN_VALUE_RATIO or ratio > MAX_VALUE_RATIO:
+            return None
+
         dists = list(self.dists)
         dists[self.me_idx] = self.model.dist(my_roster)
         dists[j] = self.model.dist(their_roster)
         my_gain = self.model.strength(self.me_idx, dists) - self.base[self.me_idx]
         if my_gain < MIN_MY_GAIN:
             return None
-        their_gain = self.model.strength(j, dists) - self.base[j]
+        their_gain = self.fit_gain(j, dists)
         if their_gain < MIN_THEIR_GAIN:
             return None
         gives_star = bool(get_ids & stars)
+        struggling = j in self.struggling
+        reasons = self._reasons(j, give, get, dists, struggling)
         return Deal(
             partner_idx=j,
             give=give,
@@ -128,9 +166,35 @@ class TradeFinder:
             their_gain=their_gain,
             give_value=give_v,
             get_value=get_v,
-            acceptance=acceptance_odds(ratio, their_gain, gives_star),
+            acceptance=acceptance_odds(ratio, their_gain, gives_star, struggling),
             dists=dists,
+            reasons=reasons,
         )
+
+    def _reasons(self, j: int, give: list[Player], get: list[Player], dists: list[Dist], struggling: bool) -> list[str]:
+        """Talking points for the pitch, and why the deal can work for both sides."""
+        pv, out = self.perceived, []
+        for p in give:
+            owners, ours = pv.value(p), self.model_dollars.get(p.id, 0.0)
+            if owners - ours >= MISPRICED:
+                out.append(f"Sell high: owners value {p.name} at ${owners:.0f}, {_ours(ours)}.")
+        for p in get:
+            owners, ours = pv.value(p), self.model_dollars.get(p.id, 0.0)
+            if ours - owners >= MISPRICED:
+                out.append(f"Buy low: owners value {p.name} at ${owners:.0f}, {_ours(ours)}.")
+        change = self._avg_win(j, dists) - self.base_cats[j]
+        lost = [self.model.cats[c].name for c in np.flatnonzero(self.punts[j] & (change < -0.02))]
+        if lost:
+            out.append(f"They punt {', '.join(lost)}, so what they give up there doesn't cost them.")
+        partner = self.teams[j]
+        out_count = sum(not p.available for p in partner.roster)
+        if len(give) > len(get) and out_count >= 2:
+            out.append(f"They have {out_count} players out, so an extra healthy body helps them now.")
+        if len(get) > len(give):
+            out.append("They turn two roster spots into one better player and can grab someone off waivers.")
+        if struggling:
+            out.append("They're outside the playoff spots, so they have reason to shake things up.")
+        return out
 
     def candidates(self) -> list[Deal]:
         me = self.teams[self.me_idx]
@@ -205,6 +269,12 @@ class TradeFinder:
 
     def _avg_win(self, i: int, dists: list[Dist]) -> np.ndarray:
         return np.mean([self.model.cat_win_prob(dists[i], d) for k, d in enumerate(dists) if k != i], axis=0)
+
+
+def _ours(dollars: float) -> str:
+    if dollars < 1:
+        return "but he's near replacement level in this league's categories"
+    return f"but he's worth ${dollars:.0f} in this league's categories"
 
 
 def _ordinal(n: int) -> str:

@@ -1,3 +1,5 @@
+import pytest
+
 from app.analysis.model import CategoryModel
 from app.analysis.perceived import PerceivedValue
 from app.analysis.trades import (
@@ -61,3 +63,25 @@ def test_shortlist_limits_repeats(league):
     partners = [d.partner_idx for d in picked]
     assert all(partners.count(p) <= 4 for p in set(partners))
     assert all(finder.pitch(d).endswith(".") for d in picked)
+
+
+def test_package_value_has_a_star_premium(league):
+    pv = PerceivedValue(league)
+    roster = sorted(league.team(3).roster, key=pv.value, reverse=True)
+    a, b = roster[3], roster[4]
+    assert max(pv.value(a), pv.value(b)) < pv.package([a, b]) < pv.total([a, b])
+    assert pv.package([a]) == pytest.approx(pv.value(a))
+
+
+def test_their_gain_ignores_their_punts(league):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set())
+    for d in finder.candidates()[:50]:
+        change = finder._avg_win(d.partner_idx, d.dists) - finder.base_cats[d.partner_idx]
+        assert d.their_gain == pytest.approx(change[~finder.punts[d.partner_idx]].sum())
+        assert all(r.endswith(".") for r in d.reasons)
+
+
+def test_struggling_teams_are_more_open():
+    assert acceptance_odds(1.0, 0.1, False, struggling=True) > acceptance_odds(1.0, 0.1, False)
