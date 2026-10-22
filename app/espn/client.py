@@ -14,7 +14,7 @@ import httpx
 
 BASE_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/fba"
 
-LEAGUE_VIEWS = ["mSettings", "mTeam", "mRoster", "mStandings", "mMatchupScore", "mScoreboard"]
+LEAGUE_VIEWS = ["mSettings", "mTeam", "mRoster", "mStandings", "mMatchupScore", "mScoreboard", "mDraftDetail"]
 
 
 class EspnError(Exception):

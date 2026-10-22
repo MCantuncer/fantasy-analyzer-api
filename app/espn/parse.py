@@ -61,6 +61,11 @@ class Player:
     per_game: dict[int, float]  # stat id -> projected per-game value
     games_played: int  # this season so far
     status: str = "ONTEAM"  # FREEAGENT / WAIVERS for free agents
+    # What owners see when they judge a trade:
+    espn_rank: int | None = None  # ESPN's preseason rank for category leagues
+    espn_auction_value: float = 0.0  # ESPN's suggested auction price ($200 budget)
+    avg_auction_value: float = 0.0  # average price paid in ESPN auction drafts
+    season_rank: int | None = None  # ESPN's rank on this season's stats, once games are played
 
     @property
     def available(self) -> bool:
@@ -102,6 +107,9 @@ class League:
     starter_slots: int
     is_public: bool
     free_agents: list[Player] = field(default_factory=list)
+    is_auction: bool = False
+    draft_prices: dict[int, float] = field(default_factory=dict)  # player id -> price paid in this league
+    draft_picks: dict[int, int] = field(default_factory=dict)  # player id -> overall pick number
 
     def team(self, team_id: int) -> Team | None:
         return next((t for t in self.teams if t.id == team_id), None)
@@ -129,10 +137,19 @@ def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int]:
     return {k: (1 - w) * proj.get(k, 0.0) + w * actual.get(k, proj.get(k, 0.0)) for k in keys}, gp
 
 
+def _draft_rank(p: dict) -> tuple[int | None, float]:
+    ranks = p.get("draftRanksByRankType") or {}
+    r = ranks.get("ROTO") or ranks.get("STANDARD") or {}
+    rank = r.get("rank")
+    return (int(rank) if rank else None), float(r.get("auctionValue") or 0.0)
+
+
 def parse_player(entry: dict, season: int, lineup_slot: int | None = None) -> Player:
     p = entry.get("player") or entry.get("playerPoolEntry", {}).get("player", {})
     per_game, gp = _blend_stats(p, season)
     positions = [POSITIONS[s] for s in p.get("eligibleSlots", []) if s in POSITIONS]
+    espn_rank, espn_av = _draft_rank(p)
+    season_rank = ((entry.get("ratings") or {}).get("0") or {}).get("totalRanking") or None
     return Player(
         id=int(p["id"]),
         name=p.get("fullName", str(p["id"])),
@@ -145,6 +162,10 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None) -> Pl
         per_game=per_game,
         games_played=gp,
         status=entry.get("status", "ONTEAM"),
+        espn_rank=espn_rank,
+        espn_auction_value=espn_av,
+        avg_auction_value=float((p.get("ownership") or {}).get("auctionValueAverage") or 0.0),
+        season_rank=int(season_rank) if season_rank else None,
     )
 
 
@@ -204,6 +225,10 @@ def parse_league(raw: dict, free_agents: list[dict] | None = None) -> League:
 
     fas = [parse_player(e, season) for e in (free_agents or [])]
 
+    draft = raw.get("draftDetail") or {}
+    picks = [pk for pk in draft.get("picks", []) if pk.get("playerId")]
+    is_auction = (settings.get("draftSettings") or {}).get("type") == "AUCTION"
+
     return League(
         id=int(raw["id"]),
         season=season,
@@ -218,4 +243,7 @@ def parse_league(raw: dict, free_agents: list[dict] | None = None) -> League:
         starter_slots=_starter_slots(settings.get("rosterSettings", {})),
         is_public=bool(settings.get("isPublic", False)),
         free_agents=fas,
+        is_auction=is_auction,
+        draft_prices={int(pk["playerId"]): float(pk.get("bidAmount") or 0) for pk in picks} if is_auction else {},
+        draft_picks={int(pk["playerId"]): int(pk.get("overallPickNumber") or 0) for pk in picks},
     )

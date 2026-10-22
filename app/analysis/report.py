@@ -9,21 +9,16 @@ import numpy as np
 
 from app import schemas
 from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
+from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import EACH_CATEGORY, simulate_season
+from app.analysis.trades import TradeFinder, acceptance_label
 from app.espn.parse import League, Player, Team
 
 SEASON_SIMS = 4000
 WHAT_IF_SIMS = 2000
-TRADE_SIM_TOP = 12
+TRADE_RESULTS = 10
 PICKUP_SIM_TOP = 8
 LOCKED, LOST = 0.70, 0.30
-# A partner is assumed to accept only if the deal does not make them worse.
-PARTNER_TOLERANCE = -0.02
-# Owners judge trades on generic value. Deals that look this lopsided against them are skipped.
-MAX_PAPER_GAP = 2.5
-EVEN_PAPER_GAP = 0.5
-MAX_IDEAS_PER_PLAYER = 2
-MAX_IDEAS_PER_PARTNER = 4
 SUPPORTED_SCORING = {"H2H_CATEGORY", "H2H_MOST_CATEGORIES"}
 
 
@@ -59,6 +54,7 @@ class Analyzer:
         self.keep = set(keep_player_ids or [])
         self.dists = [self.model.dist(t.roster) for t in self.teams]
         self.cat_names = [c.name for c in self.model.cats]
+        self.perceived = PerceivedValue(league)
 
     # ---- helpers -----------------------------------------------------------------------
 
@@ -70,6 +66,7 @@ class Analyzer:
             injury_status=p.injury_status,
             percent_owned=round(p.percent_owned, 1),
             value=round(self.model.value(p), 2),
+            perceived_value=round(self.perceived.value(p), 1),
         )
 
     def avg_cat_win(self, i: int, dists: list[Dist]) -> np.ndarray:
@@ -121,64 +118,39 @@ class Analyzer:
         return out
 
     def trades(self) -> list[schemas.TradeIdea]:
-        base_strength = [self.model.strength(i, self.dists) for i in range(len(self.teams))]
+        finder = TradeFinder(self.league, self.model, self.idx, self.keep)
         base_cats = self.avg_cat_win(self.idx, self.dists)
-        candidates = []
-        mine = [p for p in self.me.roster if p.id not in self.keep]
-        for j, partner in enumerate(self.teams):
-            if j == self.idx:
-                continue
-            for give in mine:
-                for get in partner.roster:
-                    if self.model.value(get) - self.model.value(give) > MAX_PAPER_GAP:
-                        continue
-                    my_roster = [p for p in self.me.roster if p.id != give.id] + [get]
-                    their_roster = [p for p in partner.roster if p.id != get.id] + [give]
-                    dists = list(self.dists)
-                    dists[self.idx] = self.model.dist(my_roster)
-                    dists[j] = self.model.dist(their_roster)
-                    my_gain = self.model.strength(self.idx, dists) - base_strength[self.idx]
-                    their_gain = self.model.strength(j, dists) - base_strength[j]
-                    if my_gain <= 0.05 or their_gain < PARTNER_TOLERANCE:
-                        continue
-                    candidates.append((my_gain, their_gain, j, give, get, dists))
-
-        # Best gain first; among equal gains, give up the least valuable player.
-        candidates.sort(key=lambda c: (round(c[0], 3), -self.model.value(c[3])), reverse=True)
-        shortlist, per_player, per_partner = [], {}, {}
-        for c in candidates:
-            _, _, j, give, get, _ = c
-            if per_player.get(get.id, 0) >= MAX_IDEAS_PER_PLAYER or per_partner.get(j, 0) >= MAX_IDEAS_PER_PARTNER:
-                continue
-            per_player[get.id] = per_player.get(get.id, 0) + 1
-            per_partner[j] = per_partner.get(j, 0) + 1
-            shortlist.append(c)
-            if len(shortlist) == TRADE_SIM_TOP:
-                break
         before = self.playoff_pct(self.dists)
         ideas = []
-        for my_gain, their_gain, j, give, get, dists in shortlist:
-            cats = self.avg_cat_win(self.idx, dists) - base_cats
-            gap = self.model.value(get) - self.model.value(give)
+        for d in finder.shortlist():
+            after = self.playoff_pct(d.dists)
+            # Small category gains can vanish in the full simulation; only keep moves that hold up there.
+            if after < before:
+                continue
+            cats = self.avg_cat_win(self.idx, d.dists) - base_cats
             ideas.append(
                 schemas.TradeIdea(
-                    partner_team_id=self.teams[j].id,
-                    partner_team_name=self.teams[j].name,
-                    give=[self.ref(give)],
-                    get=[self.ref(get)],
-                    my_cats_gain=round(my_gain, 3),
-                    their_cats_gain=round(their_gain, 3),
-                    paper_gap=round(gap, 2),
-                    paper_verdict="win_for_them" if gap <= 0 else "even" if gap <= EVEN_PAPER_GAP else "stretch",
+                    partner_team_id=self.teams[d.partner_idx].id,
+                    partner_team_name=self.teams[d.partner_idx].name,
+                    give=[self.ref(p) for p in d.give],
+                    get=[self.ref(p) for p in d.get],
+                    my_drop=self.ref(d.my_drop) if d.my_drop else None,
+                    their_drop=self.ref(d.their_drop) if d.their_drop else None,
+                    my_cats_gain=round(d.my_gain, 3),
+                    their_cats_gain=round(d.their_gain, 3),
+                    value_they_get=round(d.give_value, 1),
+                    value_they_give=round(d.get_value, 1),
+                    acceptance=round(d.acceptance, 2),
+                    acceptance_label=acceptance_label(d.acceptance),
+                    pitch=finder.pitch(d),
                     playoff_pct_before=round(before, 3),
-                    playoff_pct_after=round(self.playoff_pct(dists), 3),
+                    playoff_pct_after=round(after, 3),
                     category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
                 )
             )
-        # Small category gains can vanish in the full simulation; only keep moves that hold up there.
-        ideas = [t for t in ideas if t.playoff_pct_after >= t.playoff_pct_before]
-        ideas.sort(key=lambda t: (t.playoff_pct_after, t.my_cats_gain), reverse=True)
-        return ideas
+        # Expected payoff: playoff gain weighted by the chance the deal actually happens.
+        ideas.sort(key=lambda t: t.acceptance * (t.playoff_pct_after - t.playoff_pct_before), reverse=True)
+        return ideas[:TRADE_RESULTS]
 
     def pickups(self) -> list[schemas.PickupIdea]:
         base = self.model.strength(self.idx, self.dists)
@@ -264,7 +236,9 @@ class Analyzer:
                     "Every category counts as a win or loss in the standings."
                     if each_cat
                     else "Each matchup counts as one win, loss or tie in the standings.",
-                    "Trades assume the partner accepts only if their own expected categories won does not drop.",
+                    "Trades are shown only if they also help the other team's categories and give them close to "
+                    "equal value as owners see it (ESPN rankings, auction values, this league's draft prices, "
+                    "this season's rank). Acceptance odds are a rough estimate, not a prediction.",
                 ],
             ),
             generated_at=datetime.now(UTC).isoformat(timespec="seconds"),
