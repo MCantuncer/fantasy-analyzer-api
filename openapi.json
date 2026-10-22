@@ -599,6 +599,11 @@
             "type": "number",
             "title": "Value",
             "description": "Generic z-score value summed over the league's categories"
+          },
+          "perceived_value": {
+            "type": "number",
+            "title": "Perceived Value",
+            "description": "What owners think he's worth, in auction dollars"
           }
         },
         "type": "object",
@@ -608,7 +613,8 @@
           "positions",
           "injury_status",
           "percent_owned",
-          "value"
+          "value",
+          "perceived_value"
         ],
         "title": "PlayerRef"
       },
@@ -765,6 +771,28 @@
             "type": "array",
             "title": "Get"
           },
+          "my_drop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who you cut to make room when you get more players"
+          },
+          "their_drop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who they would likely cut to make room"
+          },
           "my_cats_gain": {
             "type": "number",
             "title": "My Cats Gain",
@@ -775,20 +803,34 @@
             "title": "Their Cats Gain",
             "description": "Change in theirs, under their own build"
           },
-          "paper_gap": {
+          "value_they_get": {
             "type": "number",
-            "title": "Paper Gap",
-            "description": "Generic value I receive minus value I give; above 0 means I win on paper"
+            "title": "Value They Get",
+            "description": "Perceived value they receive, in auction dollars"
           },
-          "paper_verdict": {
+          "value_they_give": {
+            "type": "number",
+            "title": "Value They Give",
+            "description": "Perceived value they send, in auction dollars"
+          },
+          "acceptance": {
+            "type": "number",
+            "title": "Acceptance",
+            "description": "Rough chance the other owner accepts (heuristic)"
+          },
+          "acceptance_label": {
             "type": "string",
             "enum": [
-              "win_for_them",
-              "even",
-              "stretch"
+              "likely",
+              "possible",
+              "long_shot"
             ],
-            "title": "Paper Verdict",
-            "description": "How the deal reads to an owner who judges by generic rankings"
+            "title": "Acceptance Label"
+          },
+          "pitch": {
+            "type": "string",
+            "title": "Pitch",
+            "description": "Why the deal helps them, to use when you propose it"
           },
           "playoff_pct_before": {
             "type": "number",
@@ -815,8 +857,11 @@
           "get",
           "my_cats_gain",
           "their_cats_gain",
-          "paper_gap",
-          "paper_verdict",
+          "value_they_get",
+          "value_they_give",
+          "acceptance",
+          "acceptance_label",
+          "pitch",
           "playoff_pct_before",
           "playoff_pct_after",
           "category_changes"

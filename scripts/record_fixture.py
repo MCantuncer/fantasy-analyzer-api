@@ -28,9 +28,10 @@ def trim_player(p: dict, season: int) -> dict:
         for s in p.get("stats", [])
         if s.get("seasonId") == season and s.get("statSplitTypeId") == 0 and s.get("averageStats")
     ]
-    keep = ("id", "fullName", "eligibleSlots", "proTeamId", "injuryStatus")
+    keep = ("id", "fullName", "eligibleSlots", "proTeamId", "injuryStatus", "draftRanksByRankType")
     out = {k: p[k] for k in keep if k in p}
-    out["ownership"] = {"percentOwned": (p.get("ownership") or {}).get("percentOwned", 0)}
+    own = p.get("ownership") or {}
+    out["ownership"] = {k: own.get(k, 0) for k in ("percentOwned", "auctionValueAverage")}
     out["stats"] = stats
     return out
 
@@ -46,15 +47,27 @@ async def main(league_id: int, season: int, path: str) -> None:
         for e in (t.get("roster") or {}).get("entries", []):
             pool = e["playerPoolEntry"]
             pool["player"] = trim_player(pool["player"], season)
-            pool.pop("ratings", None)
+            pool["ratings"] = {"0": (pool.get("ratings") or {}).get("0", {})}
     raw.pop("members", None)
-    raw.pop("draftDetail", None)
+    draft = raw.get("draftDetail") or {}
+    raw["draftDetail"] = {
+        "drafted": draft.get("drafted"),
+        "picks": [
+            {k: pk.get(k) for k in ("playerId", "teamId", "bidAmount", "overallPickNumber")}
+            for pk in draft.get("picks", [])
+        ],
+    }
     for m in raw.get("schedule", []):
         for side in ("home", "away"):
             if side in m:
                 m[side] = {"teamId": m[side]["teamId"]}
     fas = [
-        {"onTeamId": f.get("onTeamId", 0), "status": f.get("status"), "player": trim_player(f["player"], season)}
+        {
+            "onTeamId": f.get("onTeamId", 0),
+            "status": f.get("status"),
+            "ratings": {"0": (f.get("ratings") or {}).get("0", {})},
+            "player": trim_player(f["player"], season),
+        }
         for f in fas
     ]
     with gzip.open(path, "wt") as fh:

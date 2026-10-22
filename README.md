@@ -50,7 +50,12 @@ ESPN answers `401` for a private league without cookies, and the API passes that
 
 - **Projections:** ESPN's season projections, blended with this season's per-game stats as games are played (`app/espn/parse.py`).
 - **Weekly model:** each team starts its top healthy players (by z-score value) for about 3.4 games a week. Each category's weekly total is a normal distribution; counting stats use an over-dispersed Poisson variance, percentages use binomial variance on attempts (`app/analysis/model.py`).
-- **Trades:** every 1-for-1 with every team. A deal is kept only if it helps you and does not lower the partner's expected categories won under their own build. The best 12 go through the season simulation for before and after playoff odds. Each deal is labelled by how it reads on paper to an owner who goes by rankings (`app/analysis/report.py`).
+- **Trades:** every 1-for-1, 2-for-1 and 1-for-2 with every team (`app/analysis/trades.py`). A deal is kept only if it
+    - helps your categories,
+    - helps theirs too, under their own build, and
+    - gives them at least 85% of the value they send as owners see it: ESPN's rankings and auction values, this league's draft prices, and this season's rank as games are played (`app/analysis/perceived.py`).
+
+  Each deal gets rough acceptance odds and a one-line pitch on why it helps them. Deals are ranked by playoff-odds gain weighted by those odds.
 - **Pickups:** every healthy free agent against every possible drop, keeping the best drop.
 - **Season:** 4,000 simulations of the remaining schedule with the league's real format: each category counts in "H2H each category" leagues, one result per matchup in "most categories" leagues (`app/analysis/sim.py`).
 

@@ -59,7 +59,9 @@ def test_report_sections(league):
     assert report.trades and report.pickups
     for t in report.trades:
         assert t.my_cats_gain > 0
-        assert t.their_cats_gain >= -0.02
+        assert t.their_cats_gain > 0
+        assert t.playoff_pct_after >= t.playoff_pct_before
         assert all(p.id not in keep for p in t.give)
+        assert t.pitch
     assert all(p.drop.id not in keep for p in report.pickups)
     assert all(not p.add.injury_status == "OUT" for p in report.pickups)

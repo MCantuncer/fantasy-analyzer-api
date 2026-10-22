@@ -46,6 +46,7 @@ class PlayerRef(BaseModel):
     injury_status: str
     percent_owned: float
     value: float = Field(description="Generic z-score value summed over the league's categories")
+    perceived_value: float = Field(description="What owners think he's worth, in auction dollars")
 
 
 class CategoryOutlook(BaseModel):
@@ -70,12 +71,15 @@ class TradeIdea(BaseModel):
     partner_team_name: str
     give: list[PlayerRef]
     get: list[PlayerRef]
+    my_drop: PlayerRef | None = Field(default=None, description="Who you cut to make room when you get more players")
+    their_drop: PlayerRef | None = Field(default=None, description="Who they would likely cut to make room")
     my_cats_gain: float = Field(description="Change in my expected categories won per week")
     their_cats_gain: float = Field(description="Change in theirs, under their own build")
-    paper_gap: float = Field(description="Generic value I receive minus value I give; above 0 means I win on paper")
-    paper_verdict: Literal["win_for_them", "even", "stretch"] = Field(
-        description="How the deal reads to an owner who judges by generic rankings"
-    )
+    value_they_get: float = Field(description="Perceived value they receive, in auction dollars")
+    value_they_give: float = Field(description="Perceived value they send, in auction dollars")
+    acceptance: float = Field(description="Rough chance the other owner accepts (heuristic)")
+    acceptance_label: Literal["likely", "possible", "long_shot"]
+    pitch: str = Field(description="Why the deal helps them, to use when you propose it")
     playoff_pct_before: float
     playoff_pct_after: float
     category_changes: dict[str, float] = Field(description="Change in my weekly win % per category")
