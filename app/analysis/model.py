@@ -132,6 +132,12 @@ class CategoryModel:
 
     def strength(self, idx: int, dists: list[Dist]) -> float:
         """Expected categories won per week against an average opponent in the league."""
+        return float(self.avg_cat_win(idx, dists).sum())
+
+    def avg_cat_win(self, idx: int, dists: list[Dist]) -> np.ndarray:
+        """(C,) average weekly win probability per category against every other team."""
         me = dists[idx]
-        others = [d for j, d in enumerate(dists) if j != idx]
-        return float(np.mean([self.cat_win_prob(me, o).sum() for o in others]))
+        mu = np.array([d.mu for j, d in enumerate(dists) if j != idx])
+        sd = np.array([d.sd for j, d in enumerate(dists) if j != idx])
+        p = norm_cdf((me.mu - mu) / np.sqrt(me.sd**2 + sd**2))
+        return np.where(self.reverse, 1.0 - p, p).mean(0)

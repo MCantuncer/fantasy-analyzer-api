@@ -75,7 +75,7 @@ class Analyzer:
 
     def avg_cat_win(self, i: int, dists: list[Dist]) -> np.ndarray:
         """(C,) average weekly win probability per category against the rest of the league."""
-        return np.mean([self.model.cat_win_prob(dists[i], d) for j, d in enumerate(dists) if j != i], axis=0)
+        return self.model.avg_cat_win(i, dists)
 
     def playoff_pct(self, dists: list[Dist], sims: int = WHAT_IF_SIMS) -> float:
         res = simulate_season(self.league, dists, self.model.reverse, n_sims=sims)
