@@ -77,8 +77,20 @@ class Analyzer:
         """(C,) average weekly win probability per category against the rest of the league."""
         return self.model.avg_cat_win(i, dists)
 
-    def playoff_pct(self, dists: list[Dist], sims: int = WHAT_IF_SIMS) -> float:
-        res = simulate_season(self.league, dists, self.model.reverse, n_sims=sims)
+    def period_dists(self, changed: dict[int, list[Player]] | None = None) -> dict[int, list[Dist]] | None:
+        """Each team's projection for every remaining matchup period, with changed rosters swapped in."""
+        if not self.model.cal:
+            return None
+        rosters = [(changed or {}).get(i, t.roster) for i, t in enumerate(self.teams)]
+        periods = sorted({m.period for m in self.league.schedule if m.winner == "UNDECIDED"})
+        return {p: [self.model.dist(r, p) for r in rosters] for p in periods}
+
+    def playoff_pct(
+        self, dists: list[Dist], changed: dict[int, list[Player]] | None = None, sims: int = WHAT_IF_SIMS
+    ) -> float:
+        res = simulate_season(
+            self.league, dists, self.model.reverse, n_sims=sims, period_dists=self.period_dists(changed)
+        )
         return float(res.playoff_pct[self.idx])
 
     # ---- sections ----------------------------------------------------------------------
@@ -127,7 +139,7 @@ class Analyzer:
         before = self.playoff_pct(self.dists)
         ideas = []
         for d in finder.shortlist():
-            after = self.playoff_pct(d.dists)
+            after = self.playoff_pct(d.dists, d.rosters)
             # Small category gains can vanish in the full simulation; only keep moves that hold up there.
             if after < before:
                 continue
@@ -140,6 +152,7 @@ class Analyzer:
                     get=[self.ref(p) for p in d.get],
                     my_drop=self.ref(d.my_drop) if d.my_drop else None,
                     their_drop=self.ref(d.their_drop) if d.their_drop else None,
+                    my_add=self.ref(d.my_add) if d.my_add else None,
                     my_cats_gain=round(d.my_gain, 3),
                     their_cats_gain=round(d.their_gain, 3),
                     edge=round(d.edge, 3),
@@ -166,7 +179,8 @@ class Analyzer:
         outgoing = [p for p in self.me.roster if p.id not in self.keep and p.available]
         candidates = []
         for fa in self.league.free_agents:
-            if not fa.available or (not fa.has_prior and fa.games_played < MIN_SAMPLE_GAMES):
+            # No NBA team (unsigned) means no games, whatever his stats say.
+            if not fa.available or not fa.pro_team_id or (not fa.has_prior and fa.games_played < MIN_SAMPLE_GAMES):
                 continue
             best: dict[bool, tuple] = {}
             for drop in outgoing:
@@ -176,10 +190,10 @@ class Analyzer:
                 gain = self.model.strength(self.idx, dists) - base
                 via_trade = has_market(drop)
                 if via_trade not in best or gain > best[via_trade][0]:
-                    best[via_trade] = (gain, drop, dists)
-            for via_trade, (gain, drop, dists) in best.items():
+                    best[via_trade] = (gain, drop, dists, roster)
+            for via_trade, (gain, drop, dists, roster) in best.items():
                 if gain > 0.02:
-                    candidates.append((gain, fa, drop, dists, via_trade))
+                    candidates.append((gain, fa, drop, dists, via_trade, roster))
 
         candidates.sort(key=lambda c: c[0], reverse=True)
         released = [c for c in candidates if not c[4]][:PICKUP_SIM_TOP]
@@ -189,7 +203,7 @@ class Analyzer:
         traded = [c for c in traded if c[0] > top_release + 0.05][:PICKUP_VIA_TRADE]
         before = self.playoff_pct(self.dists)
         ideas = []
-        for gain, fa, drop, dists, via_trade in released + traded:
+        for gain, fa, drop, dists, via_trade, roster in released + traded:
             cats = self.avg_cat_win(self.idx, dists) - base_cats
             ideas.append(
                 schemas.PickupIdea(
@@ -199,7 +213,7 @@ class Analyzer:
                     availability=fa.status,
                     my_cats_gain=round(gain, 3),
                     playoff_pct_before=round(before, 3),
-                    playoff_pct_after=round(self.playoff_pct(dists), 3),
+                    playoff_pct_after=round(self.playoff_pct(dists, {self.idx: roster}), 3),
                     category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
                 )
             )
@@ -208,7 +222,9 @@ class Analyzer:
         return ideas
 
     def season(self) -> list[schemas.SeasonRow]:
-        res = simulate_season(self.league, self.dists, self.model.reverse, n_sims=SEASON_SIMS)
+        res = simulate_season(
+            self.league, self.dists, self.model.reverse, n_sims=SEASON_SIMS, period_dists=self.period_dists()
+        )
         rows = [
             schemas.SeasonRow(
                 team_id=t.id,

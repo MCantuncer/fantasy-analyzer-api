@@ -46,6 +46,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 LEAGUE_TTL = float(os.getenv("LEAGUE_CACHE_SECONDS", "600"))
+SCHEDULE_TTL = 6 * 3600.0  # the NBA calendar changes rarely (postponements, NBA Cup knockouts)
 STATUS_FOR_ERROR = {LeaguePrivate: 401, LeagueNotFound: 404}
 # How long a trade-of-the-day request waits for the scan before answering "pending".
 DAILY_WAIT = float(os.getenv("DAILY_TRADE_WAIT_SECONDS", "20"))
@@ -99,6 +100,7 @@ def create_app(
     app.state.tx_past = TTLCache(6 * 3600, max_items=4096)
     app.state.players = TTLCache(24 * 3600, max_items=20000)
     app.state.post_times = defaultdict(deque)
+    app.state.schedules = TTLCache(SCHEDULE_TTL)
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
     app.add_middleware(
@@ -113,13 +115,25 @@ def create_app(
         status = STATUS_FOR_ERROR.get(type(exc), 502)
         return JSONResponse(status_code=status, content={"detail": {"code": exc.code, "message": str(exc)}})
 
+    async def pro_schedule(season: int) -> dict | None:
+        """The NBA calendar. Analysis still works without it, on an even number of games a week."""
+        cached = app.state.schedules.get(season)
+        if cached is None:
+            try:
+                cached = await app.state.espn.pro_schedule(season)
+            except EspnError:
+                return None
+            app.state.schedules.set(season, cached)
+        return cached
+
     async def load_league(league_id: int, season: int, creds: EspnCredentials | None, with_fa: bool) -> League:
         key = (league_id, season, credentials_key(creds), with_fa)
         league = app.state.leagues.get(key)
         if league is None:
             raw = await app.state.espn.league(season, league_id, creds)
             fas = await app.state.espn.free_agents(season, league_id, creds) if with_fa else []
-            league = parse_league(raw, fas)
+            schedule = await pro_schedule(season) if with_fa else None
+            league = parse_league(raw, fas, schedule)
             app.state.leagues.set(key, league)
         return league
 

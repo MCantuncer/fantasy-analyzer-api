@@ -3,6 +3,12 @@
 Each team's weekly total in a category is modelled as a normal distribution.
 Counting stats use an over-dispersed Poisson variance per game plus schedule
 noise. Percentage stats are makes over attempts with binomial variance.
+
+With the NBA calendar, games are counted day by day: each day the best healthy
+players who have a game fill the league's lineup slots (PG, SG, SF, PF, C, G, F,
+UTIL), so a bench player counts on days a starter sits, a 4-game week counts
+more than a 2-game week, and an injured player counts again once he's back.
+Without it, every starter plays GAMES_PER_WEEK games.
 """
 
 from __future__ import annotations
@@ -11,13 +17,17 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from app.espn.parse import Category, League, Player
+from app.espn.parse import IR_SLOT, UTIL_SLOT, Category, League, Player
 
 GAMES_PER_WEEK = 3.4
 # Per-game variance as a multiple of the per-game mean, by stat id.
 DISPERSION = {0: 7.0, 1: 1.3, 2: 1.0, 3: 2.0, 4: 1.5, 5: 2.0, 6: 2.5, 11: 1.2, 17: 1.3}
 DEFAULT_DISPERSION = 1.5
 SCHEDULE_CV = 0.08  # weekly games played varies by about 8%
+KNOWN_SCHEDULE_CV = 0.04  # with the real calendar, only rest days and minutes vary
+# ESPN gives no return dates, so a status means an expected number of days out.
+DAYS_OUT = {"DAY_TO_DAY": 2, "SUSPENSION": 5, "OUT": 14, "INJURY_RESERVE": 28}
+IR_DAYS_OUT = 28
 RATIO_OVERDISPERSION = 1.5
 
 
@@ -48,6 +58,20 @@ class CategoryModel:
         self._values: dict[int, float] = {}
         pool = [p for t in league.teams for p in t.roster]
         self._fit_values(pool)
+        self.cal = league.calendar
+        self.slot_counts = league.lineup_slots or {}
+        self._plays: dict[tuple[int, object], np.ndarray] = {}
+        self._fills: dict[tuple[int, ...], tuple[int, ...]] = {}
+        self._dists: dict[tuple[tuple[int, ...], object], Dist] = {}
+        self._masks: dict[int, int] = {}
+        self.seats = [slot for slot, n in sorted(self.slot_counts.items()) for _ in range(n)]
+        self.horizon: dict[object, tuple[list[int], float]] = {}
+        if self.cal:
+            last = league.regular_season_periods or max(self.cal.period_days)
+            season = [d for p in range(league.current_period, last + 1) for d in self.cal.days_left(p)]
+            self.horizon["season"] = (season, max(len(season) / 7, 1.0))
+            for p in self.cal.period_days:
+                self.horizon[p] = (self.cal.days_left(p), 1.0)
 
     # ---- per-player weekly contribution -------------------------------------------------
 
@@ -100,19 +124,132 @@ class CategoryModel:
         healthy = [p for p in roster if p.available]
         return sorted(healthy, key=self.value, reverse=True)[: self.n_starters]
 
-    def dist(self, roster: list[Player]) -> Dist:
-        lineup = self.lineup(roster)
-        if not lineup:
-            return Dist(np.zeros(len(self.cats)), np.ones(len(self.cats)))
-        s = np.sum([self.row(p) for p in lineup], axis=0)
-        total, att, var = s
+    def dist(self, roster: list[Player], horizon: object = "season") -> Dist:
+        """A team's weekly totals: an average week of the rest of the regular season, or
+        the remaining days of one matchup period when `horizon` is a period number."""
+        key = (tuple(sorted(p.id for p in roster)), horizon)
+        cached = self._dists.get(key)
+        if cached is None:
+            cached = self._dists[key] = self._compute_dist(roster, horizon)
+        return cached
+
+    def _compute_dist(self, roster: list[Player], horizon: object) -> Dist:
+        if not self.cal or horizon not in self.horizon:
+            lineup = self.lineup(roster)
+            if not lineup:
+                return self._empty()
+            total, att, var = np.sum([self.row(p) for p in lineup], axis=0)
+            return self._dist(total, att, var, SCHEDULE_CV)
+        days, weeks = self.horizon[horizon]
+        starts = self.starts(roster, horizon)
+        if not starts.any():
+            return self._empty()
+        # row() is one week at self.g games; scale each player to his starts per week.
+        rows = np.array([self.row(p) for p in roster]) * (starts / (self.g * weeks))[:, None, None]
+        total, att, var = rows.sum(0)
+        return self._dist(total, att, var, KNOWN_SCHEDULE_CV)
+
+    def _empty(self) -> Dist:
+        return Dist(np.zeros(len(self.cats)), np.ones(len(self.cats)))
+
+    def _dist(self, total: np.ndarray, att: np.ndarray, var: np.ndarray, cv: float) -> Dist:
         with np.errstate(invalid="ignore", divide="ignore"):
             pct = np.where(att > 0, total / np.maximum(att, 1e-9), 0.0)
             ratio_sd = np.sqrt(RATIO_OVERDISPERSION * pct * (1 - pct) / np.maximum(att, 1.0))
-        count_sd = np.sqrt(var + (SCHEDULE_CV * total) ** 2) + 1e-6
+        count_sd = np.sqrt(var + (cv * total) ** 2) + 1e-6
         mu = np.where(self.is_ratio, pct, total)
         sd = np.where(self.is_ratio, ratio_sd, count_sd)
         return Dist(mu, sd)
+
+    # ---- the calendar: who plays which day, and who starts ------------------------------
+
+    def return_day(self, p: Player) -> int:
+        """First day an injured player is expected back (today for healthy players)."""
+        today = self.cal.today if self.cal else 1
+        out = DAYS_OUT.get(p.injury_status, 0)
+        if p.lineup_slot == IR_SLOT:
+            out = max(out, IR_DAYS_OUT)
+        return today + out
+
+    def plays(self, p: Player, horizon: object) -> np.ndarray:
+        """(D,) bool: days in the horizon his team plays and he's expected to be healthy."""
+        key = (p.id, horizon)
+        cached = self._plays.get(key)
+        if cached is None:
+            days, _ = self.horizon[horizon]
+            games = self.cal.team_days.get(p.pro_team_id, frozenset())
+            back = self.return_day(p)
+            cached = self._plays[key] = np.array([d in games and d >= back for d in days], dtype=bool)
+        return cached
+
+    def starts(self, roster: list[Player], horizon: object = "season") -> np.ndarray:
+        """(P,) games each player starts over the horizon, in roster order."""
+        if not roster:
+            return np.zeros(0)
+        order = sorted(range(len(roster)), key=lambda i: self.value(roster[i]), reverse=True)
+        m = np.array([self.plays(roster[i], horizon) for i in order])  # (P, D) in value order
+        out = np.zeros(len(roster))
+        if not m.size:
+            return out
+        # Days with the same players available share one lineup: solve each pattern once.
+        bits = (m.astype(np.int64) << np.arange(len(order), dtype=np.int64)[:, None]).sum(0)
+        patterns, counts = np.unique(bits, return_counts=True)
+        masks = [self._seat_mask(roster[i]) for i in order]
+        for mask, n in zip(patterns.tolist(), counts.tolist(), strict=True):
+            idx = [k for k in range(len(order)) if mask >> k & 1]
+            for k in self._fill(tuple([masks[k] for k in idx])):
+                out[order[idx[k]]] += n
+        return out
+
+    def _seat_mask(self, p: Player) -> int:
+        """Bit k set when he can sit in lineup seat k."""
+        mask = self._masks.get(p.id)
+        if mask is None:
+            slots = p.slots or (UTIL_SLOT,)
+            mask = self._masks[p.id] = sum(1 << k for k, s in enumerate(self.seats) if s in slots)
+        return mask
+
+    def _fill(self, masks: tuple[int, ...]) -> tuple[int, ...]:
+        """Which of today's players start, given each one's seat mask, best player first.
+
+        Adding players in value order and keeping each one an augmenting path can
+        seat gives the most valuable lineup the slots allow. Only the masks matter,
+        so lineups with the same position mix share one answer.
+        """
+        cached = self._fills.get(masks)
+        if cached is not None:
+            return cached
+        if not self.seats:
+            res = tuple(range(min(len(masks), self.n_starters)))
+            self._fills[masks] = res
+            return res
+        holder = [-1] * len(self.seats)  # seat -> index into masks
+        seen = 0  # seats already tried in this augmenting search
+
+        def seat(i: int) -> bool:
+            """Seat player i, moving others along an augmenting path."""
+            nonlocal seen
+            free = masks[i] & ~seen
+            while free:
+                bit = free & -free
+                free ^= bit
+                seen |= bit
+                k = bit.bit_length() - 1
+                if holder[k] < 0 or seat(holder[k]):
+                    holder[k] = i
+                    return True
+            return False
+
+        started = []
+        for i in range(len(masks)):
+            if len(started) == len(self.seats):
+                break
+            seen = 0
+            if seat(i):
+                started.append(i)
+        res = tuple(started)
+        self._fills[masks] = res
+        return res
 
     # ---- win probabilities --------------------------------------------------------------
 

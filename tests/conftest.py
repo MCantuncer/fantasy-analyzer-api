@@ -12,6 +12,7 @@ from app.main import create_app
 from app.store import MemoryStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "chill_primera_2027.json.gz"
+SCHEDULE = Path(__file__).parent / "fixtures" / "pro_schedule_2027.json.gz"
 LEAGUE_ID = 744636428
 MY_TEAM = 3
 
@@ -23,15 +24,28 @@ def recorded() -> dict:
 
 
 @pytest.fixture(scope="session")
-def league(recorded):
+def pro_schedule() -> dict:
+    with gzip.open(SCHEDULE, "rt") as fh:
+        return json.load(fh)
+
+
+@pytest.fixture(scope="session")
+def league(recorded, pro_schedule):
+    return parse_league(recorded["league"], recorded["free_agents"], pro_schedule)
+
+
+@pytest.fixture(scope="session")
+def flat_league(recorded):
+    """The same league without the NBA calendar: every starter plays the same games each week."""
     return parse_league(recorded["league"], recorded["free_agents"])
 
 
 class FakeEspn:
     """Serves the recorded league. ``private=True`` behaves like ESPN for a private league."""
 
-    def __init__(self, recorded: dict, private: bool = False):
+    def __init__(self, recorded: dict, private: bool = False, schedule: dict | None = None):
         self.recorded = recorded
+        self.schedule = schedule
         self.private = private
         self.seen_cookies: list[str] = []
         self.calls = 0
@@ -42,6 +56,8 @@ class FakeEspn:
         self.seen_cookies.append(cookie)
         if self.private and "espn_s2=" not in cookie:
             return httpx.Response(401, json={"messages": ["not authorized"]})
+        if request.url.params.get("view") == "proTeamSchedules_wl" and self.schedule is not None:
+            return httpx.Response(200, json=self.schedule)
         if f"/leagues/{LEAGUE_ID}" not in request.url.path:
             return httpx.Response(404, json={})
         if request.url.params.get("view") == "kona_player_info":
@@ -50,8 +66,8 @@ class FakeEspn:
 
 
 @pytest.fixture
-def fake_espn(recorded):
-    return FakeEspn(recorded)
+def fake_espn(recorded, pro_schedule):
+    return FakeEspn(recorded, schedule=pro_schedule)
 
 
 @pytest.fixture

@@ -16,7 +16,7 @@ pitching it. Deals are ranked by playoff-odds gain weighted by that estimate.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Literal
 
@@ -69,6 +69,8 @@ class Deal:
     dists: list[Dist]
     reasons: list[str]
     rival: bool = False
+    rosters: dict[int, list[Player]] = field(default_factory=dict)  # team index -> roster after the deal
+    my_add: Player | None = None  # free agent I pick up for the spot a 2-for-1 opens
 
     @property
     def edge(self) -> float:
@@ -112,6 +114,10 @@ class TradeFinder:
         self.base_cats = [self._avg_win(i, self.dists) for i in range(len(self.teams))]
         self.punts = [cats < PUNT_WIN for cats in self.base_cats]
         self.struggling = self._outside_playoffs()
+        healthy = [
+            p for p in league.free_agents if p.available and p.pro_team_id and (p.has_prior or p.games_played >= 5)
+        ]
+        self.filler = max(healthy, key=model.value, default=None)
         self.rivals = self._rivals()
         # Our projection in dollars: a player's model-value rank priced on ESPN's rank curve.
         pool = [p for t in self.teams for p in t.roster] + list(league.free_agents)
@@ -195,6 +201,13 @@ class TradeFinder:
             if my_drop is None:
                 return None
             my_roster = [p for p in my_roster if p is not my_drop]
+        # The side that sends more players gets an open spot and fills it from free agency.
+        # In a daily league that spot plays real games, so leaving it empty would undersell the deal.
+        my_add = self.filler if len(give) > len(get) else None
+        if my_add is not None:
+            my_roster = my_roster + [my_add]
+        if len(get) > len(give) and self.filler is not None:
+            their_roster = their_roster + [self.filler]
 
         dists = list(self.dists)
         dists[self.me_idx] = self.model.dist(my_roster)
@@ -228,6 +241,8 @@ class TradeFinder:
             dists=dists,
             reasons=reasons,
             rival=rival,
+            rosters={self.me_idx: my_roster, j: their_roster},
+            my_add=my_add,
         )
 
     def _wasted(self, p: Player, punts: np.ndarray) -> list[str]:

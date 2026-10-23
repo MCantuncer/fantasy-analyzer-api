@@ -136,3 +136,7 @@ class EspnClient:
             headers={"X-Fantasy-Filter": json.dumps(flt)},
         )
         return data.get("players", [])
+
+    async def pro_schedule(self, season: int) -> dict:
+        """Every NBA team's games by scoring period. The same for every league, no cookies."""
+        return await self._get(f"{BASE_URL}/seasons/{season}", [("view", "proTeamSchedules_wl")], None)

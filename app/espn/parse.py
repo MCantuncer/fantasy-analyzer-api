@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 
 # ESPN stat ids for basketball.
 STAT_NAMES = {
@@ -31,6 +32,7 @@ GAMES_PLAYED = 42
 POSITIONS = {0: "PG", 1: "SG", 2: "SF", 3: "PF", 4: "C"}  # ESPN lineup slot ids
 IR_SLOT = 13
 BENCH_SLOT = 12
+UTIL_SLOT = 11
 UNAVAILABLE = {"OUT", "INJURY_RESERVE", "SUSPENSION"}
 
 # Weight on actual stats grows with games played; projections dominate early.
@@ -69,6 +71,7 @@ class Player:
     avg_auction_value: float = 0.0  # average price paid in ESPN auction drafts
     season_rank: int | None = None  # ESPN's rank on this season's stats, once games are played
     recent_rank: int | None = None  # ESPN's rank over the last 15 days
+    slots: tuple[int, ...] = ()  # lineup slot ids he can fill (PG..C, G, F, UTIL, ...)
 
     @property
     def available(self) -> bool:
@@ -96,6 +99,22 @@ class Matchup:
 
 
 @dataclass
+class Calendar:
+    """The NBA schedule in fantasy terms. Days are ESPN scoring periods: day 1 is opening night."""
+
+    opening: date
+    today: int  # current scoring period
+    team_days: dict[int, frozenset[int]]  # pro team id -> days it plays
+    period_days: dict[int, list[int]]  # matchup period -> its days, regular season and playoffs
+
+    def date_of(self, day: int) -> date:
+        return self.opening + timedelta(days=day - 1)
+
+    def days_left(self, period: int) -> list[int]:
+        return [d for d in self.period_days.get(period, []) if d >= self.today]
+
+
+@dataclass
 class League:
     id: int
     season: int
@@ -113,6 +132,8 @@ class League:
     is_auction: bool = False
     draft_prices: dict[int, float] = field(default_factory=dict)  # player id -> price paid in this league
     draft_picks: dict[int, int] = field(default_factory=dict)  # player id -> overall pick number
+    lineup_slots: dict[int, int] = field(default_factory=dict)  # starting slot id -> count
+    calendar: Calendar | None = None  # None: no NBA schedule, assume an even number of games a week
 
     def team(self, team_id: int) -> Team | None:
         return next((t for t in self.teams if t.id == team_id), None)
@@ -182,6 +203,7 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None) -> Pl
         avg_auction_value=float((p.get("ownership") or {}).get("auctionValueAverage") or 0.0),
         season_rank=int(season_rank) if season_rank else None,
         recent_rank=int(recent_rank) if recent_rank else None,
+        slots=tuple(int(s) for s in p.get("eligibleSlots", [])),
     )
 
 
@@ -190,7 +212,66 @@ def _starter_slots(roster_settings: dict) -> int:
     return sum(v for k, v in counts.items() if k not in (BENCH_SLOT, IR_SLOT))
 
 
-def parse_league(raw: dict, free_agents: list[dict] | None = None) -> League:
+def _lineup_slots(roster_settings: dict) -> dict[int, int]:
+    counts = {int(k): int(v) for k, v in roster_settings.get("lineupSlotCounts", {}).items()}
+    return {k: v for k, v in counts.items() if v > 0 and k not in (BENCH_SLOT, IR_SLOT)}
+
+
+def parse_calendar(pro_schedule: dict, raw: dict) -> Calendar | None:
+    """Days each NBA team plays, and which days make up each fantasy matchup period.
+
+    ESPN doesn't publish the matchup -> day mapping, so it is rebuilt the way ESPN
+    builds it: Monday-to-Sunday weeks up to the league's last scoring day, with the
+    All-Star break week (the longest run of days without games) folded into the week
+    before it until the count matches.
+    """
+    team_days: dict[int, set[int]] = {}
+    opening: date | None = None
+    for team in (pro_schedule.get("settings") or {}).get("proTeams", []):
+        for day, games in (team.get("proGamesByScoringPeriod") or {}).items():
+            if not games:
+                continue
+            team_days.setdefault(int(team["id"]), set()).add(int(day))
+            if int(day) == 1:
+                # Game times are UTC; US evening games land on the next UTC day, so step back 8 hours.
+                ts = games[0]["date"] / 1000 - 8 * 3600
+                opening = date(1970, 1, 1) + timedelta(seconds=ts)
+    if not team_days or opening is None:
+        return None
+    status = raw.get("status") or {}
+    sched = (raw.get("settings") or {}).get("scheduleSettings") or {}
+    last_day = int(status.get("finalScoringPeriod") or max(max(d) for d in team_days.values()))
+    n_periods = len(sched.get("matchupPeriods") or {}) or int(sched.get("matchupPeriodCount", 0))
+    weeks: list[list[int]] = []
+    for day in range(1, last_day + 1):
+        d = opening + timedelta(days=day - 1)
+        if not weeks or d.weekday() == 0:
+            weeks.append([])
+        weeks[-1].append(day)
+    game_days = set().union(*team_days.values())
+
+    def idle_run(week: list[int]) -> int:
+        best = run = 0
+        for d in week:
+            run = 0 if d in game_days else run + 1
+            best = max(best, run)
+        return best
+
+    while n_periods and len(weeks) > n_periods:
+        # The All-Star break is in February. Early in the season December's NBA Cup
+        # games are still unscheduled, so a December week can look emptier than it is.
+        feb = [k for k in range(1, len(weeks)) if (opening + timedelta(days=weeks[k][0] - 1)).month == 2]
+        i = max(feb or range(1, len(weeks)), key=lambda k: idle_run(weeks[k]))
+        weeks[i - 1 : i + 1] = [weeks[i - 1] + weeks[i]]
+    return Calendar(
+        opening=opening,
+        today=int(status.get("latestScoringPeriod") or raw.get("scoringPeriodId") or 1),
+        team_days={t: frozenset(d) for t, d in team_days.items()},
+        period_days={i + 1: w for i, w in enumerate(weeks)},
+    )
+
+
+def parse_league(raw: dict, free_agents: list[dict] | None = None, pro_schedule: dict | None = None) -> League:
     settings = raw["settings"]
     season = int(raw["seasonId"])
     scoring = settings["scoringSettings"]
@@ -262,4 +343,6 @@ def parse_league(raw: dict, free_agents: list[dict] | None = None) -> League:
         is_auction=is_auction,
         draft_prices={int(pk["playerId"]): float(pk.get("bidAmount") or 0) for pk in picks} if is_auction else {},
         draft_picks={int(pk["playerId"]): int(pk.get("overallPickNumber") or 0) for pk in picks},
+        lineup_slots=_lineup_slots(settings.get("rosterSettings", {})),
+        calendar=parse_calendar(pro_schedule, raw) if pro_schedule else None,
     )
