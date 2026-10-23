@@ -85,3 +85,22 @@ def test_their_gain_ignores_their_punts(league):
 
 def test_struggling_teams_are_more_open():
     assert acceptance_odds(1.0, 0.1, False, struggling=True) > acceptance_odds(1.0, 0.1, False)
+
+
+def test_draft_dollars_fade_as_games_are_played(league):
+    import dataclasses
+
+    model = CategoryModel(league)
+    pv = PerceivedValue(league, model)
+    p = max(league.team(3).roster, key=pv.value)
+    draft = {"espn", "avg_auction", "paid"}
+
+    def draft_share(player):
+        sig = pv.signals(player)
+        return sum(w for n, w, _ in sig if n in draft) / sum(w for _, w, _ in sig)
+
+    early = dataclasses.replace(p, games_played=0, season_rank=None, recent_rank=None)
+    late = dataclasses.replace(p, games_played=40, season_rank=5, recent_rank=5)
+    assert draft_share(early) <= 0.55
+    assert draft_share(late) <= 0.15
+    assert {n for n, _, _ in pv.signals(late)} >= {"owned", "projection", "season", "recent"}

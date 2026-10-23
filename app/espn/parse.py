@@ -68,6 +68,7 @@ class Player:
     espn_auction_value: float = 0.0  # ESPN's suggested auction price ($200 budget)
     avg_auction_value: float = 0.0  # average price paid in ESPN auction drafts
     season_rank: int | None = None  # ESPN's rank on this season's stats, once games are played
+    recent_rank: int | None = None  # ESPN's rank over the last 15 days
 
     @property
     def available(self) -> bool:
@@ -160,7 +161,9 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None) -> Pl
     per_game, gp, has_prior = _blend_stats(p, season)
     positions = [POSITIONS[s] for s in p.get("eligibleSlots", []) if s in POSITIONS]
     espn_rank, espn_av = _draft_rank(p)
-    season_rank = ((entry.get("ratings") or {}).get("0") or {}).get("totalRanking") or None
+    ratings = entry.get("ratings") or {}
+    season_rank = (ratings.get("0") or {}).get("totalRanking") or None
+    recent_rank = (ratings.get("2") or {}).get("totalRanking") or None  # last 15 days
     return Player(
         id=int(p["id"]),
         name=p.get("fullName", str(p["id"])),
@@ -178,6 +181,7 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None) -> Pl
         espn_auction_value=espn_av,
         avg_auction_value=float((p.get("ownership") or {}).get("auctionValueAverage") or 0.0),
         season_rank=int(season_rank) if season_rank else None,
+        recent_rank=int(recent_rank) if recent_rank else None,
     )
 
 

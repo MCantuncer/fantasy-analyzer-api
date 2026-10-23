@@ -85,7 +85,7 @@ class TradeFinder:
         self.model = model
         self.me_idx = me_idx
         self.keep = keep
-        self.perceived = PerceivedValue(league)
+        self.perceived = PerceivedValue(league, model)
         self.teams = league.teams
         self.dists = [model.dist(t.roster) for t in self.teams]
         self.base = [model.strength(i, self.dists) for i in range(len(self.teams))]

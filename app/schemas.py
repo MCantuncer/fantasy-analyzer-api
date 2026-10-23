@@ -46,7 +46,10 @@ class PlayerRef(BaseModel):
     injury_status: str
     percent_owned: float
     value: float = Field(description="Generic z-score value summed over the league's categories")
-    perceived_value: float = Field(description="What owners think he's worth, in auction dollars")
+    perceived_value: float = Field(
+        description="Trade value in auction dollars: draft-day signals fading into % owned, "
+        "rest-of-season category value and this season's production"
+    )
     tier: Literal["core", "tradeable", "droppable", "injured"] = Field(
         description="core: kept by you. tradeable: has a market, trade rather than drop. "
         "droppable: replaceable from free agency. injured: out right now."

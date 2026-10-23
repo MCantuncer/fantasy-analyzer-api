@@ -57,7 +57,7 @@ class Analyzer:
         self.keep = set(keep_player_ids or [])
         self.dists = [self.model.dist(t.roster) for t in self.teams]
         self.cat_names = [c.name for c in self.model.cats]
-        self.perceived = PerceivedValue(league)
+        self.perceived = PerceivedValue(league, self.model)
 
     # ---- helpers -----------------------------------------------------------------------
 
@@ -252,8 +252,10 @@ class Analyzer:
                     if each_cat
                     else "Each matchup counts as one win, loss or tie in the standings.",
                     "Trades are shown only if they also help the other team in the categories it competes in "
-                    "(its punts are ignored) and give it close to equal value as owners see it (ESPN rankings, "
-                    "auction values, this league's draft prices, this season's rank). One star counts for more "
+                    "(its punts are ignored) and give it close to equal trade value. Trade value starts from ESPN "
+                    "rankings and draft prices, which fade as games are played, and blends % owned, "
+                    "rest-of-season value in your categories, this season's rank and the last 15 days. "
+                    "Only lightly owned players are ever suggested as drops. One star counts for more "
                     "than two players adding up to the same dollars, and a player they'd have to cut counts "
                     "against the deal. Acceptance odds are a rough estimate, not a prediction.",
                 ],
