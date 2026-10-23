@@ -29,8 +29,12 @@ def simulate_season(
     reverse: np.ndarray,
     n_sims: int = 4000,
     seed: int = 7,
+    period_dists: dict[int, list[Dist]] | None = None,
 ) -> SeasonResult:
     """Simulate every undecided regular-season matchup.
+
+    `dists` is each team's average week; `period_dists`, when given, has each team's
+    projection for a specific matchup period (its real games and who is injured then).
 
     Uses a fixed seed so that two runs differing only in one roster share the same
     random draws, which makes "before vs after" comparisons much less noisy.
@@ -39,8 +43,6 @@ def simulate_season(
     ids = [t.id for t in league.teams]
     index = {tid: i for i, tid in enumerate(ids)}
     n_teams = len(ids)
-    mu = np.array([d.mu for d in dists])
-    sd = np.array([d.sd for d in dists])
     sign = np.where(reverse, -1.0, 1.0)
 
     wins = np.tile(np.array([t.wins for t in league.teams], float), (n_sims, 1))
@@ -53,6 +55,9 @@ def simulate_season(
         games = [m for m in league.schedule if m.period == period and m.winner == "UNDECIDED"]
         if not games:
             continue
+        week = (period_dists or {}).get(period, dists)
+        mu = np.array([d.mu for d in week])
+        sd = np.array([d.sd for d in week])
         draws = rng.normal(mu, sd, size=(n_sims, n_teams, mu.shape[1])) * sign
         for m in games:
             h, a = index.get(m.home), index.get(m.away)

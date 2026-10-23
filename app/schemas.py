@@ -80,6 +80,9 @@ class TradeIdea(BaseModel):
     get: list[PlayerRef]
     my_drop: PlayerRef | None = Field(default=None, description="Who you cut to make room when you get more players")
     their_drop: PlayerRef | None = Field(default=None, description="Who they would likely cut to make room")
+    my_add: PlayerRef | None = Field(
+        default=None, description="Free agent you add to fill the spot a 2-for-1 opens on your roster"
+    )
     my_cats_gain: float = Field(description="Change in my expected categories won per week")
     their_cats_gain: float = Field(description="Change in theirs, ignoring the categories they punt")
     edge: float = Field(description="My gain minus theirs: how much more the deal does for me")
