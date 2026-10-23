@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import combinations
+from typing import Literal
 
 import numpy as np
 
@@ -38,7 +39,18 @@ PUNT_WIN = 0.3  # a category an owner wins less often than this is treated as pu
 MISPRICED = 5.0  # dollars between owner value and our projection that count as sell-high / buy-low
 STRUGGLING_BONUS = 0.05  # teams outside the playoff spots are more open to shaking things up
 
+# Edge mode: they win on paper, you win on the court. Their build may stay flat or
+# lose a little, as long as they get at least equal trade value and you gain clearly more.
+EDGE_MIN_RATIO = 1.0
+EDGE_MIN_THEIR_GAIN = -0.10
+EDGE_MIN_MARGIN = 0.10  # my gain minus theirs, in expected categories won per week
+WASTED_SHARE = 0.4  # a player whose positive value is at least this much in punted categories
+RIVAL_SPOTS = 2  # teams within this many standings places of me are playoff rivals
+RIVAL_DISCOUNT = 0.8  # in edge mode, deals that also help a rival rank lower
+
 LIKELY, POSSIBLE = 0.6, 0.4
+
+Mode = Literal["fair", "edge"]
 
 
 @dataclass
@@ -55,6 +67,12 @@ class Deal:
     acceptance: float
     dists: list[Dist]
     reasons: list[str]
+    rival: bool = False
+
+    @property
+    def edge(self) -> float:
+        """How much more the deal does for me than for them, in categories won per week."""
+        return self.my_gain - self.their_gain
 
     @property
     def score(self) -> float:
@@ -80,7 +98,8 @@ def acceptance_label(p: float) -> str:
 
 
 class TradeFinder:
-    def __init__(self, league: League, model: CategoryModel, me_idx: int, keep: set[int]):
+    def __init__(self, league: League, model: CategoryModel, me_idx: int, keep: set[int], mode: Mode = "fair"):
+        self.mode = mode
         self.league = league
         self.model = model
         self.me_idx = me_idx
@@ -92,6 +111,7 @@ class TradeFinder:
         self.base_cats = [self._avg_win(i, self.dists) for i in range(len(self.teams))]
         self.punts = [cats < PUNT_WIN for cats in self.base_cats]
         self.struggling = self._outside_playoffs()
+        self.rivals = self._rivals()
         # Our projection in dollars: a player's model-value rank priced on ESPN's rank curve.
         pool = [p for t in self.teams for p in t.roster] + list(league.free_agents)
         by_model = sorted(pool, key=model.value, reverse=True)
@@ -106,6 +126,21 @@ class TradeFinder:
             return set()
         order = sorted(range(len(self.teams)), key=lambda i: pct(self.teams[i]), reverse=True)
         return set(order[self.league.playoff_teams :])
+
+    def _rivals(self) -> set[int]:
+        """Teams near me in the standings: their gains cost me playoff odds most directly."""
+
+        def pct(t: Team) -> float:
+            games = t.wins + t.losses + t.ties
+            return (t.wins + 0.5 * t.ties) / games if games else 0.5
+
+        if any(t.wins + t.losses + t.ties for t in self.teams):
+            key = [pct(t) for t in self.teams]
+        else:
+            key = self.base  # no games yet: rank by projected strength
+        order = sorted(range(len(self.teams)), key=lambda i: key[i], reverse=True)
+        pos = order.index(self.me_idx)
+        return {i for k, i in enumerate(order) if i != self.me_idx and abs(k - pos) <= RIVAL_SPOTS}
 
     def fit_gain(self, j: int, dists: list[Dist]) -> float:
         """Change in team j's expected categories won, ignoring the categories it punts."""
@@ -154,7 +189,8 @@ class TradeFinder:
         if get_v <= 0:
             return None
         ratio = give_v / get_v
-        if ratio < MIN_VALUE_RATIO or ratio > MAX_VALUE_RATIO:
+        min_ratio = EDGE_MIN_RATIO if self.mode == "edge" else MIN_VALUE_RATIO
+        if ratio < min_ratio or ratio > MAX_VALUE_RATIO:
             return None
 
         dists = list(self.dists)
@@ -164,11 +200,17 @@ class TradeFinder:
         if my_gain < MIN_MY_GAIN:
             return None
         their_gain = self.fit_gain(j, dists)
-        if their_gain < MIN_THEIR_GAIN:
+        if self.mode == "edge":
+            if their_gain < EDGE_MIN_THEIR_GAIN or my_gain - their_gain < EDGE_MIN_MARGIN:
+                return None
+        elif their_gain < MIN_THEIR_GAIN:
             return None
         gives_star = bool(get_ids & stars)
         struggling = j in self.struggling
         reasons = self._reasons(j, give, get, dists, struggling)
+        rival = j in self.rivals
+        if self.mode == "edge":
+            reasons = self._edge_reasons(j, give, get, ratio, rival) + reasons
         return Deal(
             partner_idx=j,
             give=give,
@@ -182,7 +224,32 @@ class TradeFinder:
             acceptance=acceptance_odds(ratio, their_gain, gives_star, struggling),
             dists=dists,
             reasons=reasons,
+            rival=rival,
         )
+
+    def _wasted(self, p: Player, punts: np.ndarray) -> list[str]:
+        """Categories a player's value mostly comes from that this team punts."""
+        z = np.maximum(self.model.z_scores(p), 0.0)
+        if z.sum() <= 0 or z[punts].sum() < WASTED_SHARE * z.sum():
+            return []
+        return [self.model.cats[c].name for c in np.flatnonzero(punts & (z > 0.25))]
+
+    def _edge_reasons(self, j: int, give: list[Player], get: list[Player], ratio: float, rival: bool) -> list[str]:
+        """Why the deal favors me even though it looks like a win for them."""
+        out = []
+        if ratio >= 1.05:
+            out.append(f"On paper they win: they get {ratio:.0%} of the trade value they send.")
+        for p in give:
+            cats = self._wasted(p, self.punts[self.me_idx])
+            if cats:
+                out.append(f"{p.name}'s value is mostly {', '.join(cats)}, which you punt: it costs you little.")
+        for p in get:
+            cats = self._wasted(p, self.punts[j])
+            if cats:
+                out.append(f"{p.name}'s {', '.join(cats)} is wasted on them: they punt it.")
+        if not rival:
+            out.append("They aren't one of your direct playoff rivals.")
+        return out
 
     def _reasons(self, j: int, give: list[Player], get: list[Player], dists: list[Dist], struggling: bool) -> list[str]:
         """Talking points for the pitch, and why the deal can work for both sides."""
@@ -237,8 +304,13 @@ class TradeFinder:
                         deals.append(d)
         return deals
 
+    def rank_key(self, d: Deal) -> float:
+        if self.mode == "edge":
+            return d.score * (RIVAL_DISCOUNT if d.rival and d.their_gain > 0 else 1.0)
+        return d.score
+
     def shortlist(self) -> list[Deal]:
-        deals = sorted(self.candidates(), key=lambda d: d.score, reverse=True)
+        deals = sorted(self.candidates(), key=self.rank_key, reverse=True)
         picked: list[Deal] = []
         per_target: dict[int, int] = {}
         per_partner: dict[int, int] = {}

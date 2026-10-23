@@ -12,7 +12,7 @@ from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import EACH_CATEGORY, simulate_season
 from app.analysis.tiers import has_market, tier
-from app.analysis.trades import TradeFinder, acceptance_label
+from app.analysis.trades import Mode, TradeFinder, acceptance_label
 from app.espn.parse import League, Player, Team
 
 SEASON_SIMS = 4000
@@ -121,8 +121,8 @@ class Analyzer:
             )
         return out
 
-    def trades(self) -> list[schemas.TradeIdea]:
-        finder = TradeFinder(self.league, self.model, self.idx, self.keep)
+    def trades(self, mode: Mode = "fair") -> list[schemas.TradeIdea]:
+        finder = TradeFinder(self.league, self.model, self.idx, self.keep, mode)
         base_cats = self.avg_cat_win(self.idx, self.dists)
         before = self.playoff_pct(self.dists)
         ideas = []
@@ -142,6 +142,7 @@ class Analyzer:
                     their_drop=self.ref(d.their_drop) if d.their_drop else None,
                     my_cats_gain=round(d.my_gain, 3),
                     their_cats_gain=round(d.their_gain, 3),
+                    edge=round(d.edge, 3),
                     value_they_get=round(d.give_value, 1),
                     value_they_give=round(d.get_value, 1),
                     acceptance=round(d.acceptance, 2),
@@ -236,6 +237,7 @@ class Analyzer:
             categories=self.categories(),
             builds=self.builds(),
             trades=self.trades(),
+            edge_trades=self.trades("edge"),
             pickups=self.pickups(),
             season=self.season(),
             faab_remaining=self.me.faab_remaining,

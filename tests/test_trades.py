@@ -104,3 +104,18 @@ def test_draft_dollars_fade_as_games_are_played(league):
     assert draft_share(early) <= 0.55
     assert draft_share(late) <= 0.15
     assert {n for n, _, _ in pv.signals(late)} >= {"owned", "projection", "season", "recent"}
+
+
+def test_edge_deals_win_on_paper_for_them_and_on_the_court_for_me(league):
+    from app.analysis.trades import EDGE_MIN_MARGIN, EDGE_MIN_RATIO, EDGE_MIN_THEIR_GAIN
+
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set(), mode="edge")
+    deals = finder.candidates()
+    assert deals
+    for d in deals:
+        assert d.give_value / d.get_value >= EDGE_MIN_RATIO
+        assert d.their_gain >= EDGE_MIN_THEIR_GAIN
+        assert d.edge >= EDGE_MIN_MARGIN - 1e-9
+        assert len(finder.rivals) <= 4 and finder.me_idx not in finder.rivals

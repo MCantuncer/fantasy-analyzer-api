@@ -231,7 +231,16 @@
               "$ref": "#/components/schemas/TradeIdea"
             },
             "type": "array",
-            "title": "Trades"
+            "title": "Trades",
+            "description": "Fair deals: both teams' categories improve"
+          },
+          "edge_trades": {
+            "items": {
+              "$ref": "#/components/schemas/TradeIdea"
+            },
+            "type": "array",
+            "title": "Edge Trades",
+            "description": "Edge deals: they get at least equal trade value on paper, you gain clearly more on the court"
           },
           "pickups": {
             "items": {
@@ -279,6 +288,7 @@
           "categories",
           "builds",
           "trades",
+          "edge_trades",
           "pickups",
           "season",
           "faab_remaining",
@@ -821,6 +831,11 @@
             "title": "Their Cats Gain",
             "description": "Change in theirs, ignoring the categories they punt"
           },
+          "edge": {
+            "type": "number",
+            "title": "Edge",
+            "description": "My gain minus theirs: how much more the deal does for me"
+          },
           "value_they_get": {
             "type": "number",
             "title": "Value They Get",
@@ -883,6 +898,7 @@
           "get",
           "my_cats_gain",
           "their_cats_gain",
+          "edge",
           "value_they_get",
           "value_they_give",
           "acceptance",
