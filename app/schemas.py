@@ -195,3 +195,118 @@ class VoteRequest(LeagueRequest):
     voter: str = Field(
         min_length=8, max_length=64, pattern=r"^[A-Za-z0-9-]+$", description="Random id kept by the browser"
     )
+
+
+class TeamLinkStart(LeagueRequest):
+    team_id: int = Field(gt=0)
+
+
+class TeamLinkChallenge(BaseModel):
+    challenge: str = Field(description="Signed challenge to send back to /api/team-link/verify")
+    code: str = Field(description="Set this as the team's abbreviation on ESPN")
+    expires_at: str
+    team_id: int
+    team_name: str
+    current_abbrev: str
+
+
+class TeamLinkVerify(BaseModel):
+    challenge: str = Field(min_length=10, max_length=512)
+
+
+class LinkedTeam(BaseModel):
+    league_id: int
+    season: int
+    team_id: int
+    team_name: str
+    token: str | None = Field(
+        default=None, description="Only on a fresh link: send it as 'Authorization: Bearer <token>' from now on"
+    )
+
+
+class FeedPlayer(BaseModel):
+    id: int
+    name: str
+    position: str
+
+
+class FeedMove(BaseModel):
+    player: FeedPlayer
+    kind: Literal["add", "drop", "trade"]
+    from_team_id: int = Field(description="0 = free agency")
+    to_team_id: int = Field(description="0 = free agency")
+
+
+class FeedBid(BaseModel):
+    team_id: int
+    bid: int
+
+
+class Reactions(BaseModel):
+    counts: dict[str, int] = Field(default_factory=dict)
+    mine: list[str] = Field(default_factory=list, description="Reactions from the linked team")
+
+
+class FeedItem(BaseModel):
+    id: str = Field(description="tx:<id> for an ESPN move, post:<id> for a message; also the reply/reaction target")
+    kind: Literal["waiver", "free_agent", "trade", "post"]
+    at: str = Field(description="ISO time")
+    team_id: int = Field(description="The team that made the move or wrote the post")
+    team_ids: list[int] = Field(default_factory=list, description="Every team in the move")
+    bid: int | None = None
+    moves: list[FeedMove] = Field(default_factory=list)
+    losing_bids: list[FeedBid] = Field(default_factory=list, description="Bids this claim beat, highest first")
+    body: str | None = None
+    reactions: Reactions = Field(default_factory=Reactions)
+    replies: int = 0
+
+
+class FeedTeam(BaseModel):
+    id: int
+    name: str
+    abbrev: str
+    faab_spent: int | None = None
+
+
+class FeedRequest(LeagueRequest):
+    page: int = Field(default=0, ge=0, le=60, description="0 = the last 7 days, 1 = the 7 before that, ...")
+
+
+class FeedPage(BaseModel):
+    league_id: int
+    season: int
+    page: int
+    has_more: bool
+    items: list[FeedItem]
+    teams: list[FeedTeam]
+    faab_budget: int | None = None
+    me: LinkedTeam | None = Field(default=None, description="The linked team; chat and reactions need one")
+
+
+class RepliesRequest(LeagueRequest):
+    target: str = Field(pattern=r"^(tx|post):[A-Za-z0-9-]{1,64}$")
+
+
+class RepliesPage(BaseModel):
+    target: str
+    items: list[FeedItem]
+
+
+class PostRequest(LeagueRequest):
+    body: str = Field(min_length=1, max_length=500)
+    target: str | None = Field(default=None, pattern=r"^(tx|post):[A-Za-z0-9-]{1,64}$", description="None = chat")
+
+
+class DeletePostRequest(LeagueRequest):
+    post_id: int = Field(gt=0)
+
+
+class ReactRequest(LeagueRequest):
+    target: str = Field(pattern=r"^(tx|post):[A-Za-z0-9-]{1,64}$")
+    reaction: str = Field(pattern=r"^(steal|smart|overpay|lol|won:\d{1,4})$")
+    on: bool = True
+
+
+class ReactionsOut(BaseModel):
+    target: str
+    reactions: Reactions

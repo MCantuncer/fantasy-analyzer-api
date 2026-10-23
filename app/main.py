@@ -9,7 +9,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import UTC, datetime
+import secrets
+import time
+from collections import defaultdict, deque
+from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -22,6 +25,20 @@ from app.analysis.report import Analyzer, league_summary
 from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
 from app.espn.parse import League, parse_league
+from app.feed import PlayerName, Transaction, parse_players, parse_transactions
+from app.social import (
+    CHALLENGE_SECONDS,
+    Challenge,
+    Post,
+    Session,
+    SocialStore,
+    create_social_store,
+    hash_token,
+    new_code,
+    read_challenge,
+    sign_challenge,
+    valid_reaction,
+)
 from app.store import Store, TradeKey, create_store
 
 # httpx logs request lines at INFO; keep its logs quiet so nothing about a request leaks.
@@ -32,6 +49,10 @@ LEAGUE_TTL = float(os.getenv("LEAGUE_CACHE_SECONDS", "600"))
 STATUS_FOR_ERROR = {LeaguePrivate: 401, LeagueNotFound: 404}
 # How long a trade-of-the-day request waits for the scan before answering "pending".
 DAILY_WAIT = float(os.getenv("DAILY_TRADE_WAIT_SECONDS", "20"))
+# The feed pages through the season a week (seven scoring periods) at a time.
+FEED_PAGE_PERIODS = 7
+POSTS_PER_MINUTE = 10
+NOT_LINKED = {"code": "not_linked", "message": "Link your ESPN team to join the league chat."}
 
 
 def current_season(now: datetime | None = None) -> int:
@@ -53,7 +74,18 @@ def today() -> str:
     return datetime.now(UTC).date().isoformat()
 
 
-def create_app(espn: EspnClient | None = None, store: Store | None = None) -> FastAPI:
+def bearer(authorization: str | None) -> str | None:
+    scheme, _, token = (authorization or "").partition(" ")
+    return token.strip() if scheme.lower() == "bearer" and token.strip() else None
+
+
+def iso(dt: datetime) -> str:
+    return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def create_app(
+    espn: EspnClient | None = None, store: Store | None = None, social: SocialStore | None = None
+) -> FastAPI:
     app = FastAPI(title="Fantasy Analyzer API", version="0.1.0")
     app.state.espn = espn or EspnClient()
     app.state.leagues = TTLCache(LEAGUE_TTL)
@@ -61,13 +93,19 @@ def create_app(espn: EspnClient | None = None, store: Store | None = None) -> Fa
     app.state.store = store or create_store()
     app.state.daily = TTLCache(36 * 3600)
     app.state.daily_jobs = {}
+    app.state.social = social or create_social_store()
+    app.state.basics = TTLCache(60)
+    app.state.tx_recent = TTLCache(60)
+    app.state.tx_past = TTLCache(6 * 3600, max_items=4096)
+    app.state.players = TTLCache(24 * 3600, max_items=20000)
+    app.state.post_times = defaultdict(deque)
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", "X-ESPN-S2", "X-ESPN-SWID"],
+        allow_headers=["Content-Type", "Authorization", "X-ESPN-S2", "X-ESPN-SWID"],
     )
 
     @app.exception_handler(EspnError)
@@ -203,6 +241,296 @@ def create_app(espn: EspnClient | None = None, store: Store | None = None) -> Fa
             )
         await run_in_threadpool(app.state.store.vote, key, body.team_id, body.voter, body.take)
         return await with_votes(key, pick)
+
+    # League chat ---------------------------------------------------------------
+
+    async def feed_basics(league_id: int, season: int, creds: EspnCredentials | None, fresh: bool = False) -> dict:
+        key = (league_id, season, credentials_key(creds))
+        raw = None if fresh else app.state.basics.get(key)
+        if raw is None:
+            raw = await app.state.espn.feed_basics(season, league_id, creds)
+            app.state.basics.set(key, raw)
+        return raw
+
+    async def period_transactions(
+        league_id: int, season: int, period: int, current: int, creds: EspnCredentials | None
+    ) -> list[dict]:
+        # Past days rarely change, so they are kept for hours; today is refreshed every minute.
+        cache = app.state.tx_recent if period >= current else app.state.tx_past
+        key = (league_id, season, credentials_key(creds), period)
+        raw = cache.get(key)
+        if raw is None:
+            raw = await app.state.espn.transactions(season, league_id, period, creds)
+            cache.set(key, raw)
+        return raw
+
+    async def player_names(
+        league_id: int, season: int, ids: set[int], creds: EspnCredentials | None
+    ) -> dict[int, PlayerName]:
+        out = {pid: p for pid in ids if (p := app.state.players.get((season, pid))) is not None}
+        missing = sorted(ids - out.keys())
+        if missing:
+            for pid, p in parse_players(await app.state.espn.players(season, league_id, missing, creds)).items():
+                app.state.players.set((season, pid), p)
+                out[pid] = p
+        return out
+
+    async def linked(authorization: str | None, league_id: int, season: int, required: bool = False) -> Session | None:
+        token = bearer(authorization)
+        session = await run_in_threadpool(app.state.social.session, hash_token(token)) if token else None
+        if session is not None and (session.league_id, session.season) != (league_id, season):
+            session = None
+        if session is None and required:
+            raise HTTPException(401, detail=NOT_LINKED)
+        return session
+
+    def team_rows(basics: dict) -> list[schemas.FeedTeam]:
+        return [
+            schemas.FeedTeam(
+                id=int(t["id"]),
+                name=t.get("name") or f"{t.get('location', '')} {t.get('nickname', '')}".strip(),
+                abbrev=t.get("abbrev", ""),
+                faab_spent=(t.get("transactionCounter") or {}).get("acquisitionBudgetSpent"),
+            )
+            for t in basics.get("teams", [])
+        ]
+
+    def linked_team(session: Session, teams: list[schemas.FeedTeam], token: str | None = None) -> schemas.LinkedTeam:
+        name = next((t.name for t in teams if t.id == session.team_id), f"Team {session.team_id}")
+        return schemas.LinkedTeam(
+            league_id=session.league_id, season=session.season, team_id=session.team_id, team_name=name, token=token
+        )
+
+    def tx_item(tx: Transaction, names: dict[int, PlayerName]) -> schemas.FeedItem:
+        def player(pid: int) -> schemas.FeedPlayer:
+            p = names.get(pid)
+            return schemas.FeedPlayer(id=pid, name=p.name if p else f"Player {pid}", position=p.position if p else "")
+
+        return schemas.FeedItem(
+            id=f"tx:{tx.id}",
+            kind=tx.kind,
+            at=iso(datetime.fromtimestamp(tx.date_ms / 1000, UTC)),
+            team_id=tx.team_id,
+            team_ids=tx.team_ids,
+            bid=tx.bid,
+            moves=[
+                schemas.FeedMove(
+                    player=player(m.player_id), kind=m.kind, from_team_id=m.from_team_id, to_team_id=m.to_team_id
+                )
+                for m in tx.moves
+            ],
+            losing_bids=[schemas.FeedBid(team_id=b.team_id, bid=b.bid) for b in tx.losing_bids],
+        )
+
+    def post_item(p: Post) -> schemas.FeedItem:
+        return schemas.FeedItem(id=f"post:{p.id}", kind="post", at=iso(p.created_at), team_id=p.team_id, body=p.body)
+
+    async def with_social(
+        items: list[schemas.FeedItem], league_id: int, season: int, session: Session
+    ) -> list[schemas.FeedItem]:
+        targets = [i.id for i in items]
+        social = app.state.social
+        marks = await run_in_threadpool(social.reactions, league_id, season, targets, session.team_id)
+        counts = await run_in_threadpool(social.reply_counts, league_id, season, targets)
+        for i in items:
+            rc = marks.get(i.id)
+            if rc is not None:
+                i.reactions = schemas.Reactions(counts=rc.counts, mine=sorted(rc.mine))
+            i.replies = counts.get(i.id, 0)
+        return items
+
+    @app.post(
+        "/api/team-link/start", response_model=schemas.TeamLinkChallenge, responses={404: {"model": schemas.ErrorBody}}
+    )
+    async def team_link_start(
+        body: schemas.TeamLinkStart,
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.TeamLinkChallenge:
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        team = next(
+            (t for t in team_rows(await feed_basics(body.league_id, season, creds)) if t.id == body.team_id), None
+        )
+        if team is None:
+            raise HTTPException(
+                404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
+            )
+        c = Challenge(body.league_id, season, body.team_id, new_code(team.abbrev), int(time.time()) + CHALLENGE_SECONDS)
+        return schemas.TeamLinkChallenge(
+            challenge=sign_challenge(c),
+            code=c.code,
+            expires_at=iso(datetime.fromtimestamp(c.expires, UTC)),
+            team_id=team.id,
+            team_name=team.name,
+            current_abbrev=team.abbrev,
+        )
+
+    @app.post(
+        "/api/team-link/verify",
+        response_model=schemas.LinkedTeam,
+        responses={409: {"model": schemas.ErrorBody}, 410: {"model": schemas.ErrorBody}},
+    )
+    async def team_link_verify(
+        body: schemas.TeamLinkVerify,
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.LinkedTeam:
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        c = read_challenge(body.challenge)
+        if c is None:
+            raise HTTPException(
+                410, detail={"code": "challenge_expired", "message": "That code expired. Get a new one."}
+            )
+        # Always read ESPN fresh here: the abbreviation was just changed.
+        teams = team_rows(await feed_basics(c.league_id, c.season, creds, fresh=True))
+        team = next((t for t in teams if t.id == c.team_id), None)
+        if team is None or team.abbrev.strip().upper() != c.code:
+            now = team.abbrev if team else "?"
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "abbrev_mismatch",
+                    "message": f"ESPN still shows {now}. Save {c.code} as your abbreviation on ESPN, then check again.",
+                },
+            )
+        token = secrets.token_urlsafe(32)
+        session = Session(c.league_id, c.season, c.team_id)
+        await run_in_threadpool(app.state.social.save_session, hash_token(token), session)
+        return linked_team(session, teams, token)
+
+    @app.post("/api/team-link/me", response_model=schemas.LinkedTeam, responses={401: {"model": schemas.ErrorBody}})
+    async def team_link_me(
+        body: schemas.LeagueRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.LinkedTeam:
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        session = await linked(authorization, body.league_id, season, required=True)
+        return linked_team(session, team_rows(await feed_basics(body.league_id, season, creds)))
+
+    @app.post("/api/team-link/unlink")
+    async def team_link_unlink(authorization: str | None = Header(default=None)) -> dict:
+        if token := bearer(authorization):
+            await run_in_threadpool(app.state.social.drop_session, hash_token(token))
+        return {"ok": True}
+
+    @app.post("/api/feed", response_model=schemas.FeedPage, responses={401: {"model": schemas.ErrorBody}})
+    async def feed(
+        body: schemas.FeedRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.FeedPage:
+        """A week of moves, newest first. With a linked team: the chat, reactions and reply counts too."""
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        session = await linked(authorization, body.league_id, season)
+        basics = await feed_basics(body.league_id, season, creds)
+        status = basics.get("status") or {}
+        current = int(status.get("latestScoringPeriod") or basics.get("scoringPeriodId") or 1)
+        first = int(status.get("firstScoringPeriod") or 1)
+        top = current - body.page * FEED_PAGE_PERIODS
+        periods = [p for p in range(max(first, top - FEED_PAGE_PERIODS + 1), top + 1)]
+        raw = await asyncio.gather(*(period_transactions(body.league_id, season, p, current, creds) for p in periods))
+        txs = parse_transactions([t for day in raw for t in day])
+        names = await player_names(body.league_id, season, {pid for tx in txs for pid in tx.player_ids}, creds)
+        items = [tx_item(tx, names) for tx in txs]
+        teams = team_rows(basics)
+        me = None
+        if session is not None:
+            now = datetime.now(UTC)
+            until = None if body.page == 0 else now - timedelta(days=FEED_PAGE_PERIODS * body.page)
+            since = now - timedelta(days=FEED_PAGE_PERIODS * (body.page + 1))
+            posts = await run_in_threadpool(app.state.social.chat, body.league_id, season, since, until)
+            items += [post_item(p) for p in posts]
+            items.sort(key=lambda i: i.at, reverse=True)
+            items = await with_social(items, body.league_id, season, session)
+            me = linked_team(session, teams)
+        acq = (basics.get("settings") or {}).get("acquisitionSettings") or {}
+        return schemas.FeedPage(
+            league_id=body.league_id,
+            season=season,
+            page=body.page,
+            has_more=bool(periods) and periods[0] > first,
+            items=items,
+            teams=teams,
+            faab_budget=acq.get("acquisitionBudget") if acq.get("isUsingAcquisitionBudget") else None,
+            me=me,
+        )
+
+    @app.post("/api/feed/replies", response_model=schemas.RepliesPage, responses={401: {"model": schemas.ErrorBody}})
+    async def replies(
+        body: schemas.RepliesRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.RepliesPage:
+        season = body.season or current_season()
+        session = await linked(authorization, body.league_id, season, required=True)
+        posts = await run_in_threadpool(app.state.social.replies, body.league_id, season, body.target)
+        items = await with_social([post_item(p) for p in posts], body.league_id, season, session)
+        return schemas.RepliesPage(target=body.target, items=items)
+
+    @app.post(
+        "/api/posts",
+        response_model=schemas.FeedItem,
+        responses={401: {"model": schemas.ErrorBody}, 429: {"model": schemas.ErrorBody}},
+    )
+    async def create_post(
+        body: schemas.PostRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.FeedItem:
+        season = body.season or current_season()
+        session = await linked(authorization, body.league_id, season, required=True)
+        text = body.body.strip()
+        if not text:
+            raise HTTPException(422, detail={"code": "empty_post", "message": "Write something first."})
+        recent = app.state.post_times[(body.league_id, season, session.team_id)]
+        now = time.monotonic()
+        while recent and now - recent[0] > 60:
+            recent.popleft()
+        if len(recent) >= POSTS_PER_MINUTE:
+            raise HTTPException(429, detail={"code": "slow_down", "message": "Easy there. Try again in a minute."})
+        recent.append(now)
+        post = await run_in_threadpool(
+            app.state.social.add_post, body.league_id, season, session.team_id, body.target, text
+        )
+        return post_item(post)
+
+    @app.post("/api/posts/delete", responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}})
+    async def delete_post(body: schemas.DeletePostRequest, authorization: str | None = Header(default=None)) -> dict:
+        season = body.season or current_season()
+        session = await linked(authorization, body.league_id, season, required=True)
+        post = await run_in_threadpool(app.state.social.post, body.league_id, season, body.post_id)
+        if post is None or post.team_id != session.team_id:
+            raise HTTPException(403, detail={"code": "not_yours", "message": "You can only delete your own posts."})
+        await run_in_threadpool(app.state.social.delete_post, body.league_id, season, body.post_id)
+        return {"ok": True}
+
+    @app.post(
+        "/api/reactions",
+        response_model=schemas.ReactionsOut,
+        responses={401: {"model": schemas.ErrorBody}, 422: {"model": schemas.ErrorBody}},
+    )
+    async def react(
+        body: schemas.ReactRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.ReactionsOut:
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        session = await linked(authorization, body.league_id, season, required=True)
+        team_ids = [t.id for t in team_rows(await feed_basics(body.league_id, season, creds))]
+        if not valid_reaction(body.reaction, team_ids):
+            raise HTTPException(422, detail={"code": "bad_reaction", "message": "Unknown reaction."})
+        social = app.state.social
+        await run_in_threadpool(
+            social.react, body.league_id, season, body.target, session.team_id, body.reaction, body.on
+        )
+        marks = await run_in_threadpool(social.reactions, body.league_id, season, [body.target], session.team_id)
+        rc = marks.get(body.target)
+        out = schemas.Reactions(counts=rc.counts, mine=sorted(rc.mine)) if rc else schemas.Reactions()
+        return schemas.ReactionsOut(target=body.target, reactions=out)
 
     return app
 
