@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.espn.client import EspnClient
 from app.espn.parse import parse_league
 from app.main import create_app
+from app.store import MemoryStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "chill_primera_2027.json.gz"
 LEAGUE_ID = 744636428
@@ -55,5 +56,5 @@ def fake_espn(recorded):
 
 @pytest.fixture
 def client(fake_espn):
-    app = create_app(EspnClient(transport=httpx.MockTransport(fake_espn.handler)))
+    app = create_app(EspnClient(transport=httpx.MockTransport(fake_espn.handler)), store=MemoryStore())
     return TestClient(app)

@@ -148,3 +148,50 @@ class AnalysisReport(BaseModel):
 class ErrorBody(BaseModel):
     code: str
     message: str
+
+
+class TradeSide(BaseModel):
+    team_id: int
+    team_name: str
+    abbrev: str
+    sends: list[PlayerRef]
+    drop: PlayerRef | None = Field(default=None, description="Who this team cuts to make room")
+    cats_gain: float = Field(description="Change in expected categories won per week, ignoring this team's punts")
+    category_changes: dict[str, float] = Field(description="Change in weekly win % per category")
+    punts: list[str]
+    acceptance: float = Field(description="Rough chance this owner says yes (heuristic)")
+    acceptance_label: Literal["likely", "possible", "long_shot"]
+    pitch: str = Field(description="Why the deal helps this team")
+    reasons: list[str]
+    playoff_pct_before: float
+    playoff_pct_after: float
+
+
+class PollTally(BaseModel):
+    yes: int = 0
+    no: int = 0
+
+
+class TradeOfTheDay(BaseModel):
+    status: Literal["ready", "pending", "none"] = Field(
+        description="pending: still being worked out, ask again shortly; none: no deal works for both sides today"
+    )
+    date: str = Field(description="UTC day this pick is for, YYYY-MM-DD")
+    league_id: int
+    season: int
+    headline: str | None = None
+    sides: list[TradeSide] = Field(default_factory=list, description="The two teams; the spotlight team first")
+    spotlight_team_id: int | None = None
+    team_pairs: int = 0
+    win_win_deals: int = Field(default=0, description="Deals found that work for both sides")
+    votes: dict[int, PollTally] = Field(default_factory=dict, description="'Would you take it?' votes, by team id")
+    generated_at: str | None = None
+
+
+class VoteRequest(LeagueRequest):
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    team_id: int = Field(gt=0, description="The side being voted on")
+    take: bool = Field(description="True: that team should take the deal")
+    voter: str = Field(
+        min_length=8, max_length=64, pattern=r"^[A-Za-z0-9-]+$", description="Random id kept by the browser"
+    )
