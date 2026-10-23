@@ -173,7 +173,15 @@ class TradeFinder:
         top = sorted(team.roster, key=self.perceived.value, reverse=True)[:TOP_PLAYERS_PROTECTED]
         return {p.id for p in top}
 
-    def _evaluate(self, j: int, give: list[Player], get: list[Player], stars: set[int]) -> Deal | None:
+    def _evaluate(
+        self,
+        j: int,
+        give: list[Player],
+        get: list[Player],
+        stars: set[int],
+        min_my_gain: float = MIN_MY_GAIN,
+        min_their_gain: float = MIN_THEIR_GAIN,
+    ) -> Deal | None:
         pv = self.perceived
         me, partner = self.teams[self.me_idx], self.teams[j]
         give_ids, get_ids = {p.id for p in give}, {p.id for p in get}
@@ -213,13 +221,13 @@ class TradeFinder:
         dists[self.me_idx] = self.model.dist(my_roster)
         dists[j] = self.model.dist(their_roster)
         my_gain = self.model.strength(self.me_idx, dists) - self.base[self.me_idx]
-        if my_gain < MIN_MY_GAIN:
+        if my_gain < min_my_gain:
             return None
         their_gain = self.fit_gain(j, dists)
         if self.mode == "edge":
             if their_gain < EDGE_MIN_THEIR_GAIN or my_gain - their_gain < EDGE_MIN_MARGIN:
                 return None
-        elif their_gain < MIN_THEIR_GAIN:
+        elif their_gain < min_their_gain:
             return None
         gives_star = bool(get_ids & stars)
         struggling = j in self.struggling
