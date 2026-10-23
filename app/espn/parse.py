@@ -28,7 +28,7 @@ STAT_NAMES = {
 RATIO_STATS = {19: (13, 14), 20: (15, 16), 21: (17, 18)}
 GAMES_PLAYED = 42
 
-POSITIONS = {1: "PG", 2: "SG", 3: "SF", 4: "PF", 5: "C"}
+POSITIONS = {0: "PG", 1: "SG", 2: "SF", 3: "PF", 4: "C"}  # ESPN lineup slot ids
 IR_SLOT = 13
 BENCH_SLOT = 12
 UNAVAILABLE = {"OUT", "INJURY_RESERVE", "SUSPENSION"}
