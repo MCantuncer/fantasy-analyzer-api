@@ -821,6 +821,17 @@
             ],
             "description": "Who they would likely cut to make room"
           },
+          "my_add": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Free agent you add to fill the spot a 2-for-1 opens on your roster"
+          },
           "my_cats_gain": {
             "type": "number",
             "title": "My Cats Gain",
