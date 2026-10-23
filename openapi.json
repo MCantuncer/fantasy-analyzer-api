@@ -534,6 +534,11 @@
           "drop": {
             "$ref": "#/components/schemas/PlayerRef"
           },
+          "open_spot_by_trade": {
+            "type": "boolean",
+            "title": "Open Spot By Trade",
+            "description": "The spot would come from trading `drop` (he has trade value), not from releasing him"
+          },
           "availability": {
             "type": "string",
             "title": "Availability"
@@ -562,6 +567,7 @@
         "required": [
           "add",
           "drop",
+          "open_spot_by_trade",
           "availability",
           "my_cats_gain",
           "playoff_pct_before",
@@ -604,6 +610,17 @@
             "type": "number",
             "title": "Perceived Value",
             "description": "What owners think he's worth, in auction dollars"
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "core",
+              "tradeable",
+              "droppable",
+              "injured"
+            ],
+            "title": "Tier",
+            "description": "core: kept by you. tradeable: has a market, trade rather than drop. droppable: replaceable from free agency. injured: out right now."
           }
         },
         "type": "object",
@@ -614,7 +631,8 @@
           "injury_status",
           "percent_owned",
           "value",
-          "perceived_value"
+          "perceived_value",
+          "tier"
         ],
         "title": "PlayerRef"
       },
