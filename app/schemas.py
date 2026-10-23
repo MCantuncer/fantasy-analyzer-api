@@ -46,7 +46,10 @@ class PlayerRef(BaseModel):
     injury_status: str
     percent_owned: float
     value: float = Field(description="Generic z-score value summed over the league's categories")
-    perceived_value: float = Field(description="What owners think he's worth, in auction dollars")
+    perceived_value: float = Field(
+        description="Trade value in auction dollars: draft-day signals fading into % owned, "
+        "rest-of-season category value and this season's production"
+    )
     tier: Literal["core", "tradeable", "droppable", "injured"] = Field(
         description="core: kept by you. tradeable: has a market, trade rather than drop. "
         "droppable: replaceable from free agency. injured: out right now."
@@ -79,6 +82,7 @@ class TradeIdea(BaseModel):
     their_drop: PlayerRef | None = Field(default=None, description="Who they would likely cut to make room")
     my_cats_gain: float = Field(description="Change in my expected categories won per week")
     their_cats_gain: float = Field(description="Change in theirs, ignoring the categories they punt")
+    edge: float = Field(description="My gain minus theirs: how much more the deal does for me")
     value_they_get: float = Field(description="Perceived value they receive, in auction dollars")
     value_they_give: float = Field(description="Perceived value they send, in auction dollars")
     acceptance: float = Field(description="Rough chance the other owner accepts (heuristic)")
@@ -129,7 +133,10 @@ class AnalysisReport(BaseModel):
     roster: list[PlayerRef]
     categories: list[CategoryOutlook]
     builds: list[TeamBuild]
-    trades: list[TradeIdea]
+    trades: list[TradeIdea] = Field(description="Fair deals: both teams' categories improve")
+    edge_trades: list[TradeIdea] = Field(
+        description="Edge deals: they get at least equal trade value on paper, you gain clearly more on the court"
+    )
     pickups: list[PickupIdea]
     season: list[SeasonRow]
     faab_remaining: int | None

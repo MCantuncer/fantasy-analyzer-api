@@ -28,3 +28,9 @@ def test_schedule_covers_regular_season(league):
     periods = {m.period for m in league.schedule}
     assert periods == set(range(1, 19))
     assert all(len([m for m in league.schedule if m.period == p]) == 5 for p in periods)
+
+
+def test_positions_follow_espn_slot_ids(league):
+    roster = {p.name: p for p in league.team(3).roster}
+    assert roster["Jarrett Allen"].positions == ["C"]
+    assert "PG" in roster["Payton Pritchard"].positions and "C" not in roster["Payton Pritchard"].positions
