@@ -83,7 +83,7 @@ class DailyTrade:
         self.league = league
         self.day = day
         self.model = CategoryModel(league)
-        self.perceived = PerceivedValue(league)
+        self.perceived = PerceivedValue(league, self.model)
         self.teams = league.teams
         self.cat_names = [c.name for c in self.model.cats]
         self.finders = [TradeFinder(league, self.model, i, set()) for i in range(len(self.teams))]
