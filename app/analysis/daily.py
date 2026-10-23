@@ -27,6 +27,7 @@ from app import schemas
 from app.analysis.model import CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import simulate_season
+from app.analysis.tiers import tier
 from app.analysis.trades import Deal, TradeFinder, acceptance_label
 from app.espn.parse import League, Player
 
@@ -134,6 +135,7 @@ class DailyTrade:
             percent_owned=round(p.percent_owned, 1),
             value=round(self.model.value(p), 2),
             perceived_value=round(self.perceived.value(p), 1),
+            tier=tier(p),
         )
 
     def side(
