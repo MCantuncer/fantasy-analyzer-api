@@ -47,6 +47,10 @@ class PlayerRef(BaseModel):
     percent_owned: float
     value: float = Field(description="Generic z-score value summed over the league's categories")
     perceived_value: float = Field(description="What owners think he's worth, in auction dollars")
+    tier: Literal["core", "tradeable", "droppable", "injured"] = Field(
+        description="core: kept by you. tradeable: has a market, trade rather than drop. "
+        "droppable: replaceable from free agency. injured: out right now."
+    )
 
 
 class CategoryOutlook(BaseModel):
@@ -89,6 +93,9 @@ class TradeIdea(BaseModel):
 class PickupIdea(BaseModel):
     add: PlayerRef
     drop: PlayerRef
+    open_spot_by_trade: bool = Field(
+        description="The spot would come from trading `drop` (he has trade value), not from releasing him"
+    )
     availability: str
     my_cats_gain: float
     playoff_pct_before: float

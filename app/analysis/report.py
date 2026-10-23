@@ -11,6 +11,7 @@ from app import schemas
 from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import EACH_CATEGORY, simulate_season
+from app.analysis.tiers import has_market, tier
 from app.analysis.trades import TradeFinder, acceptance_label
 from app.espn.parse import League, Player, Team
 
@@ -18,6 +19,8 @@ SEASON_SIMS = 4000
 WHAT_IF_SIMS = 2000
 TRADE_RESULTS = 10
 PICKUP_SIM_TOP = 8
+PICKUP_VIA_TRADE = 2  # at most this many "trade X to open a spot" ideas
+MIN_SAMPLE_GAMES = 5  # a free agent with no projection or last season needs this many games
 LOCKED, LOST = 0.70, 0.30
 SUPPORTED_SCORING = {"H2H_CATEGORY", "H2H_MOST_CATEGORIES"}
 
@@ -67,6 +70,7 @@ class Analyzer:
             percent_owned=round(p.percent_owned, 1),
             value=round(self.model.value(p), 2),
             perceived_value=round(self.perceived.value(p), 1),
+            tier=tier(p, self.keep),
         )
 
     def avg_cat_win(self, i: int, dists: list[Dist]) -> np.ndarray:
@@ -156,31 +160,41 @@ class Analyzer:
     def pickups(self) -> list[schemas.PickupIdea]:
         base = self.model.strength(self.idx, self.dists)
         base_cats = self.avg_cat_win(self.idx, self.dists)
-        droppable = [p for p in self.me.roster if p.id not in self.keep]
+        # Only players with no trade value are ever released. A swap that needs a
+        # player with a market is shown as "trade him to open the spot" instead.
+        outgoing = [p for p in self.me.roster if p.id not in self.keep and p.available]
         candidates = []
         for fa in self.league.free_agents:
-            if not fa.available:
+            if not fa.available or (not fa.has_prior and fa.games_played < MIN_SAMPLE_GAMES):
                 continue
-            best = None
-            for drop in droppable:
+            best: dict[bool, tuple] = {}
+            for drop in outgoing:
                 roster = [p for p in self.me.roster if p.id != drop.id] + [fa]
                 dists = list(self.dists)
                 dists[self.idx] = self.model.dist(roster)
                 gain = self.model.strength(self.idx, dists) - base
-                if best is None or gain > best[0]:
-                    best = (gain, drop, dists)
-            if best and best[0] > 0.02:
-                candidates.append((best[0], fa, best[1], best[2]))
+                via_trade = has_market(drop)
+                if via_trade not in best or gain > best[via_trade][0]:
+                    best[via_trade] = (gain, drop, dists)
+            for via_trade, (gain, drop, dists) in best.items():
+                if gain > 0.02:
+                    candidates.append((gain, fa, drop, dists, via_trade))
 
         candidates.sort(key=lambda c: c[0], reverse=True)
+        released = [c for c in candidates if not c[4]][:PICKUP_SIM_TOP]
+        traded = [c for c in candidates if c[4]]
+        # A trade-first idea is worth showing only if it beats every straight pickup.
+        top_release = released[0][0] if released else 0.0
+        traded = [c for c in traded if c[0] > top_release + 0.05][:PICKUP_VIA_TRADE]
         before = self.playoff_pct(self.dists)
         ideas = []
-        for gain, fa, drop, dists in candidates[:PICKUP_SIM_TOP]:
+        for gain, fa, drop, dists, via_trade in released + traded:
             cats = self.avg_cat_win(self.idx, dists) - base_cats
             ideas.append(
                 schemas.PickupIdea(
                     add=self.ref(fa),
                     drop=self.ref(drop),
+                    open_spot_by_trade=via_trade,
                     availability=fa.status,
                     my_cats_gain=round(gain, 3),
                     playoff_pct_before=round(before, 3),
@@ -189,7 +203,7 @@ class Analyzer:
                 )
             )
         ideas = [p for p in ideas if p.playoff_pct_after >= p.playoff_pct_before]
-        ideas.sort(key=lambda p: (p.playoff_pct_after, p.my_cats_gain), reverse=True)
+        ideas.sort(key=lambda p: (not p.open_spot_by_trade, p.playoff_pct_after, p.my_cats_gain), reverse=True)
         return ideas
 
     def season(self) -> list[schemas.SeasonRow]:

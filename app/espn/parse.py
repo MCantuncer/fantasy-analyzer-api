@@ -35,6 +35,7 @@ UNAVAILABLE = {"OUT", "INJURY_RESERVE", "SUSPENSION"}
 
 # Weight on actual stats grows with games played; projections dominate early.
 ACTUAL_WEIGHT_GAMES = 20.0
+MIN_PRIOR_GAMES = 10  # last season counts as a prior only with this many games
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class Player:
     lineup_slot: int | None
     per_game: dict[int, float]  # stat id -> projected per-game value
     games_played: int  # this season so far
+    has_prior: bool = True  # False: no projection or last season, so stats are a small sample
     status: str = "ONTEAM"  # FREEAGENT / WAIVERS for free agents
     # What owners see when they judge a trade:
     espn_rank: int | None = None  # ESPN's preseason rank for category leagues
@@ -115,26 +117,35 @@ class League:
         return next((t for t in self.teams if t.id == team_id), None)
 
 
-def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int]:
-    """Per-game stats: ESPN's season projection blended with this season's actuals."""
+def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int, bool]:
+    """Per-game stats: a prior blended with this season's actuals as games are played.
+
+    The prior is ESPN's season projection, or last season's per-game stats for players
+    ESPN doesn't project (many free agents). Without either, a hot game or two would
+    count at face value, so the third value says whether there was a prior at all.
+    """
     proj: dict[int, float] = {}
+    last: dict[int, float] = {}
     actual: dict[int, float] = {}
     for s in player.get("stats", []):
-        if s.get("seasonId") != season or s.get("statSplitTypeId") != 0:
+        if s.get("statSplitTypeId") != 0:
             continue
         avg = {int(k): float(v) for k, v in (s.get("averageStats") or {}).items()}
-        if s.get("statSourceId") == 1:
+        if s.get("seasonId") == season and s.get("statSourceId") == 1:
             proj = avg
-        elif s.get("statSourceId") == 0:
+        elif s.get("seasonId") == season and s.get("statSourceId") == 0:
             actual = avg
+        elif s.get("seasonId") == season - 1 and s.get("statSourceId") == 0:
+            last = avg
+    prior = proj or (last if last.get(GAMES_PLAYED, 0) >= MIN_PRIOR_GAMES else {})
     gp = int(actual.get(GAMES_PLAYED, 0) or 0)
-    if not proj:
-        return actual, gp
+    if not prior:
+        return actual, gp, False
     if gp <= 0:
-        return proj, gp
+        return prior, gp, True
     w = gp / (gp + ACTUAL_WEIGHT_GAMES)
-    keys = set(proj) | set(actual)
-    return {k: (1 - w) * proj.get(k, 0.0) + w * actual.get(k, proj.get(k, 0.0)) for k in keys}, gp
+    keys = set(prior) | set(actual)
+    return {k: (1 - w) * prior.get(k, 0.0) + w * actual.get(k, prior.get(k, 0.0)) for k in keys}, gp, True
 
 
 def _draft_rank(p: dict) -> tuple[int | None, float]:
@@ -146,7 +157,7 @@ def _draft_rank(p: dict) -> tuple[int | None, float]:
 
 def parse_player(entry: dict, season: int, lineup_slot: int | None = None) -> Player:
     p = entry.get("player") or entry.get("playerPoolEntry", {}).get("player", {})
-    per_game, gp = _blend_stats(p, season)
+    per_game, gp, has_prior = _blend_stats(p, season)
     positions = [POSITIONS[s] for s in p.get("eligibleSlots", []) if s in POSITIONS]
     espn_rank, espn_av = _draft_rank(p)
     season_rank = ((entry.get("ratings") or {}).get("0") or {}).get("totalRanking") or None
@@ -161,6 +172,7 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None) -> Pl
         lineup_slot=lineup_slot,
         per_game=per_game,
         games_played=gp,
+        has_prior=has_prior,
         status=entry.get("status", "ONTEAM"),
         espn_rank=espn_rank,
         espn_auction_value=espn_av,

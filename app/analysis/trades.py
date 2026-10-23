@@ -22,6 +22,7 @@ import numpy as np
 
 from app.analysis.model import CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
+from app.analysis.tiers import droppable
 from app.espn.parse import League, Player, Team
 
 MIN_MY_GAIN = 0.05  # expected categories won per week
@@ -112,8 +113,18 @@ class TradeFinder:
         return float(change[~self.punts[j]].sum())
 
     def _worst(self, roster: list[Player], protected: set[int]) -> Player | None:
-        """The player an owner would cut to make room: lowest model value, not protected."""
+        """The player an owner would cut to make room: the least valuable droppable one.
+
+        If every candidate has a market, the owner still has to cut someone, and the
+        value lost counts against the deal on paper.
+        """
         options = [p for p in roster if p.id not in protected]
+        cuttable = droppable(options) or options
+        return min(cuttable, key=self.model.value) if cuttable else None
+
+    def _my_cut(self, roster: list[Player], protected: set[int]) -> Player | None:
+        """Who I cut when I take back more players than I send: never someone with trade value."""
+        options = droppable([p for p in roster if p.id not in protected], self.keep)
         return min(options, key=self.model.value) if options else None
 
     def _stars(self, team: Team) -> set[int]:
@@ -128,7 +139,9 @@ class TradeFinder:
         their_roster = [p for p in partner.roster if p.id not in get_ids] + give
         my_drop = their_drop = None
         if len(get) > len(give):
-            my_drop = self._worst(my_roster, self.keep | get_ids)
+            my_drop = self._my_cut(my_roster, self.keep | get_ids)
+            if my_drop is None:
+                return None
             my_roster = [p for p in my_roster if p is not my_drop]
         if len(give) > len(get):
             their_drop = self._worst(their_roster, give_ids)
