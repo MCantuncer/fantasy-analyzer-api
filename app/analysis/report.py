@@ -75,7 +75,7 @@ class Analyzer:
 
     def avg_cat_win(self, i: int, dists: list[Dist]) -> np.ndarray:
         """(C,) average weekly win probability per category against the rest of the league."""
-        return np.mean([self.model.cat_win_prob(dists[i], d) for j, d in enumerate(dists) if j != i], axis=0)
+        return self.model.avg_cat_win(i, dists)
 
     def period_dists(self, changed: dict[int, list[Player]] | None = None) -> dict[int, list[Dist]] | None:
         """Each team's projection for every remaining matchup period, with changed rosters swapped in."""

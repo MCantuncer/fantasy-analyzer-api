@@ -15,6 +15,7 @@ pitching it. Deals are ranked by playoff-odds gain weighted by that estimate.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Literal
@@ -176,24 +177,11 @@ class TradeFinder:
         pv = self.perceived
         me, partner = self.teams[self.me_idx], self.teams[j]
         give_ids, get_ids = {p.id for p in give}, {p.id for p in get}
-        my_roster = [p for p in me.roster if p.id not in give_ids] + get
         their_roster = [p for p in partner.roster if p.id not in get_ids] + give
-        my_drop = their_drop = None
-        if len(get) > len(give):
-            my_drop = self._my_cut(my_roster, self.keep | get_ids)
-            if my_drop is None:
-                return None
-            my_roster = [p for p in my_roster if p is not my_drop]
+        their_drop = None
         if len(give) > len(get):
             their_drop = self._worst(their_roster, give_ids)
             their_roster = [p for p in their_roster if p is not their_drop]
-        # The side that sends more players gets an open spot and fills it from free agency.
-        # In a daily league that spot plays real games, so leaving it empty would undersell the deal.
-        my_add = self.filler if len(give) > len(get) else None
-        if my_add is not None:
-            my_roster = my_roster + [my_add]
-        if len(get) > len(give) and self.filler is not None:
-            their_roster = their_roster + [self.filler]
 
         give_v = pv.package(give)
         get_v = pv.package(get)
@@ -205,6 +193,21 @@ class TradeFinder:
         min_ratio = EDGE_MIN_RATIO if self.mode == "edge" else MIN_VALUE_RATIO
         if ratio < min_ratio or ratio > MAX_VALUE_RATIO:
             return None
+
+        my_roster = [p for p in me.roster if p.id not in give_ids] + get
+        my_drop = None
+        if len(get) > len(give):
+            my_drop = self._my_cut(my_roster, self.keep | get_ids)
+            if my_drop is None:
+                return None
+            my_roster = [p for p in my_roster if p is not my_drop]
+        # The side that sends more players gets an open spot and fills it from free agency.
+        # In a daily league that spot plays real games, so leaving it empty would undersell the deal.
+        my_add = self.filler if len(give) > len(get) else None
+        if my_add is not None:
+            my_roster = my_roster + [my_add]
+        if len(get) > len(give) and self.filler is not None:
+            their_roster = their_roster + [self.filler]
 
         dists = list(self.dists)
         dists[self.me_idx] = self.model.dist(my_roster)
@@ -291,13 +294,14 @@ class TradeFinder:
             out.append("They're outside the playoff spots, so they have reason to shake things up.")
         return out
 
-    def candidates(self) -> list[Deal]:
+    def candidates(self, partners: Iterable[int] | None = None) -> list[Deal]:
         me = self.teams[self.me_idx]
         mine = [p for p in me.roster if p.id not in self.keep]
         deals: list[Deal] = []
-        for j, partner in enumerate(self.teams):
+        for j in range(len(self.teams)) if partners is None else partners:
             if j == self.me_idx:
                 continue
+            partner = self.teams[j]
             stars = self._stars(partner)
             theirs = partner.roster
             for give in mine:
@@ -368,7 +372,7 @@ class TradeFinder:
         return "Helps their " + " and ".join(parts) + "."
 
     def _avg_win(self, i: int, dists: list[Dist]) -> np.ndarray:
-        return np.mean([self.model.cat_win_prob(dists[i], d) for k, d in enumerate(dists) if k != i], axis=0)
+        return self.model.avg_cat_win(i, dists)
 
 
 def _ours(dollars: float) -> str:

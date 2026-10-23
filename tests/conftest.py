@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.espn.client import EspnClient
 from app.espn.parse import parse_league
 from app.main import create_app
+from app.store import MemoryStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "chill_primera_2027.json.gz"
 SCHEDULE = Path(__file__).parent / "fixtures" / "pro_schedule_2027.json.gz"
@@ -71,5 +72,5 @@ def fake_espn(recorded, pro_schedule):
 
 @pytest.fixture
 def client(fake_espn):
-    app = create_app(EspnClient(transport=httpx.MockTransport(fake_espn.handler)))
+    app = create_app(EspnClient(transport=httpx.MockTransport(fake_espn.handler)), store=MemoryStore())
     return TestClient(app)

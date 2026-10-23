@@ -13,3 +13,9 @@ services:
       # Comma-separated web origins allowed to call the API, e.g. https://fantasy-analyzer-web.vercel.app
       - key: CORS_ORIGINS
         sync: false
+      # Postgres for the trade of the day and its poll, e.g. a free Neon database. Optional.
+      - key: DATABASE_URL
+        sync: false
+      # Signs the league chat's team-link codes. Render generates a random value.
+      - key: SECRET_KEY
+        generateValue: true

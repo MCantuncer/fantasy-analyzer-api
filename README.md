@@ -26,6 +26,17 @@ uv run ruff check .
 | --- | --- | --- | --- |
 | POST | `/api/league` | `{league_id, season?}` | League name, categories and teams, for the team picker |
 | POST | `/api/analyze` | `{league_id, team_id, season?, keep_player_ids?}` | Full analysis report |
+| POST | `/api/trade-of-the-day` | `{league_id, season?}` | Today's best win-win trade between any two teams, with poll votes |
+| POST | `/api/trade-of-the-day/vote` | `{league_id, season?, date, team_id, take, voter}` | Records a "Would you take it?" vote and returns the updated pick |
+| POST | `/api/team-link/start` | `{league_id, season?, team_id}` | A code to set as the team's ESPN abbreviation, and a signed challenge |
+| POST | `/api/team-link/verify` | `{challenge}` | Checks the abbreviation on ESPN; returns a session token for that team |
+| POST | `/api/team-link/me` | `{league_id, season?}` | The linked team (needs the token) |
+| POST | `/api/team-link/unlink` | | Forgets the token |
+| POST | `/api/feed` | `{league_id, season?, page?}` | A week of moves (claims, losing bids, adds, drops, trades); with a token also the chat, reactions and reply counts |
+| POST | `/api/feed/replies` | `{league_id, season?, target}` | Replies on a move or a post |
+| POST | `/api/posts` | `{league_id, season?, body, target?}` | Posts to the chat, or replies when `target` is set |
+| POST | `/api/posts/delete` | `{league_id, season?, post_id}` | Deletes your own post |
+| POST | `/api/reactions` | `{league_id, season?, target, reaction, on?}` | Toggles `steal`, `smart`, `overpay`, `lol`, or a `won:<team id>` trade vote |
 | GET | `/api/health` | | `{ok: true}` |
 
 `season` defaults to the current ESPN season (2026-27 is `2027`). `keep_player_ids` are never offered in trades or suggested as drops.
@@ -35,6 +46,14 @@ The schema is in `openapi.json`. Regenerate it after changing `app/schemas.py`:
 ```sh
 uv run python -m scripts.export_openapi openapi.json
 ```
+
+## League chat and linking a team
+
+ESPN has no login for other sites, so a manager proves a team is theirs by changing its abbreviation on ESPN to a 4-character code from `/api/team-link/start` and calling `/api/team-link/verify`. Only the team's owner and the league manager can edit it, and the API reads it back from ESPN's league data. The code rides in an HMAC-signed challenge that expires after 30 minutes, so nothing is stored until the check passes. Then the device gets a random token, sent as `Authorization: Bearer <token>`; only its SHA-256 hash is stored. No ESPN password or cookie is kept.
+
+Set `SECRET_KEY` (any long random string) so challenges survive a restart. Posts, reactions and links use `DATABASE_URL` like the trade of the day, and live in memory without it.
+
+The feed pages through the season a week (seven scoring periods) at a time. Transactions come from ESPN's `mTransactions2` view, one call per day: past days are cached for six hours, today for a minute.
 
 ## Private leagues
 
@@ -56,6 +75,7 @@ ESPN answers `401` for a private league without cookies, and the API passes that
     - gives them at least 85% of the value they send as owners see it: ESPN's rankings and auction values, this league's draft prices, and this season's rank as games are played (`app/analysis/perceived.py`).
 
   Each deal gets rough acceptance odds and a one-line pitch on why it helps them. Deals are ranked by playoff-odds gain weighted by those odds.
+- **Trade of the day:** every pair of teams, scanned with the same finder from both sides (`app/analysis/daily.py`). A deal qualifies only if both owners see fair value and both teams gain in the categories they compete in; the top few must also keep both teams' playoff odds from dropping in the simulation. Deals are ranked by the smaller of the two gains, weighted by the chance both owners say yes. Teams take turns in the spotlight (one a day, fixed order per league), and the spotlight team's best deal wins when it's close to the overall best, so the pick moves around the league. The pick is fixed per league per UTC day. The scan takes a few seconds (longer on the free plan), so the endpoint answers `status: "pending"` after `DAILY_TRADE_WAIT_SECONDS` (default 20) and the client asks again.
 - **Pickups:** every healthy free agent against every possible drop, keeping the best drop.
 - **Season:** 4,000 simulations of the remaining schedule with the league's real format: each category counts in "H2H each category" leagues, one result per matchup in "most categories" leagues (`app/analysis/sim.py`).
 
@@ -71,4 +91,4 @@ uv run python -m scripts.record_fixture 744636428 2027 tests/fixtures/chill_prim
 
 ## Deploy
 
-`render.yaml` deploys the API to [Render](https://render.com): New > Blueprint, pick this repo, then set `CORS_ORIGINS` to the web app's URL (for example `https://fantasy-analyzer-web.vercel.app`). The free plan sleeps when idle; switch `plan` to `starter` for an always-on server. Access logs are turned off so request details are never written to Render's logs.
+`render.yaml` deploys the API to [Render](https://render.com): New > Blueprint, pick this repo, then set `CORS_ORIGINS` to the web app's URL (for example `https://fantasy-analyzer-web.vercel.app`). For the trade of the day to stay the same all day and for poll votes to be kept across restarts, also set `DATABASE_URL` to a Postgres connection string (a free [Neon](https://neon.tech) database is plenty; the tables are created on start). Without it, picks and votes live in memory and reset when the server sleeps. The free plan sleeps when idle; switch `plan` to `starter` for an always-on server. Access logs are turned off so request details are never written to Render's logs.

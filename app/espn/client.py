@@ -14,6 +14,9 @@ import httpx
 
 BASE_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/fba"
 
+# Light views for the league feed: names, owners, FAAB and the current scoring period.
+FEED_VIEWS = ["mTeam", "mSettings", "mStatus"]
+
 LEAGUE_VIEWS = ["mSettings", "mTeam", "mRoster", "mStandings", "mMatchupScore", "mScoreboard", "mDraftDetail"]
 
 
@@ -101,6 +104,31 @@ class EspnClient:
                 "sortPercOwned": {"sortPriority": 1, "sortAsc": False},
             }
         }
+        data = await self._get(
+            self._league_url(season, league_id),
+            [("view", "kona_player_info")],
+            creds,
+            headers={"X-Fantasy-Filter": json.dumps(flt)},
+        )
+        return data.get("players", [])
+
+    async def feed_basics(self, season: int, league_id: int, creds: EspnCredentials | None) -> dict:
+        params = [("view", v) for v in FEED_VIEWS]
+        return await self._get(self._league_url(season, league_id), params, creds)
+
+    async def transactions(
+        self, season: int, league_id: int, scoring_period: int, creds: EspnCredentials | None
+    ) -> list[dict]:
+        """Every transaction in one scoring period (a day): adds, drops, waiver bids won and lost, trades."""
+        params = [("view", "mTransactions2"), ("scoringPeriodId", str(scoring_period))]
+        data = await self._get(self._league_url(season, league_id), params, creds)
+        return data.get("transactions", [])
+
+    async def players(
+        self, season: int, league_id: int, player_ids: list[int], creds: EspnCredentials | None
+    ) -> list[dict]:
+        # ESPN refuses a "limit" without a sort; filterIds alone returns every id asked for.
+        flt = {"players": {"filterIds": {"value": player_ids}}}
         data = await self._get(
             self._league_url(season, league_id),
             [("view", "kona_player_info")],

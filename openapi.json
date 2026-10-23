@@ -188,6 +188,907 @@
           }
         }
       }
+    },
+    "/api/trade-of-the-day": {
+      "post": {
+        "summary": "Trade Of Day",
+        "operationId": "trade_of_day_api_trade_of_the_day_post",
+        "parameters": [
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeagueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeOfTheDay"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trade-of-the-day/vote": {
+      "post": {
+        "summary": "Vote",
+        "operationId": "vote_api_trade_of_the_day_vote_post",
+        "parameters": [
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeOfTheDay"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/team-link/start": {
+      "post": {
+        "summary": "Team Link Start",
+        "operationId": "team_link_start_api_team_link_start_post",
+        "parameters": [
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamLinkStart"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamLinkChallenge"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/team-link/verify": {
+      "post": {
+        "summary": "Team Link Verify",
+        "operationId": "team_link_verify_api_team_link_verify_post",
+        "parameters": [
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamLinkVerify"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedTeam"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/team-link/me": {
+      "post": {
+        "summary": "Team Link Me",
+        "operationId": "team_link_me_api_team_link_me_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeagueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedTeam"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/team-link/unlink": {
+      "post": {
+        "summary": "Team Link Unlink",
+        "operationId": "team_link_unlink_api_team_link_unlink_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Team Link Unlink Api Team Link Unlink Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/feed": {
+      "post": {
+        "summary": "Feed",
+        "description": "A week of moves, newest first. With a linked team: the chat, reactions and reply counts too.",
+        "operationId": "feed_api_feed_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/feed/replies": {
+      "post": {
+        "summary": "Replies",
+        "operationId": "replies_api_feed_replies_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepliesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepliesPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/posts": {
+      "post": {
+        "summary": "Create Post",
+        "operationId": "create_post_api_posts_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedItem"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/posts/delete": {
+      "post": {
+        "summary": "Delete Post",
+        "operationId": "delete_post_api_posts_delete_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeletePostRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Post Api Posts Delete Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reactions": {
+      "post": {
+        "summary": "React",
+        "operationId": "react_api_reactions_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReactRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionsOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -409,6 +1310,38 @@
         ],
         "title": "CategoryOutlook"
       },
+      "DeletePostRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "post_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Post Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "post_id"
+        ],
+        "title": "DeletePostRequest"
+      },
       "ErrorBody": {
         "properties": {
           "code": {
@@ -426,6 +1359,305 @@
           "message"
         ],
         "title": "ErrorBody"
+      },
+      "FeedBid": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "bid": {
+            "type": "integer",
+            "title": "Bid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "bid"
+        ],
+        "title": "FeedBid"
+      },
+      "FeedItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "tx:<id> for an ESPN move, post:<id> for a message; also the reply/reaction target"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "waiver",
+              "free_agent",
+              "trade",
+              "post"
+            ],
+            "title": "Kind"
+          },
+          "at": {
+            "type": "string",
+            "title": "At",
+            "description": "ISO time"
+          },
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id",
+            "description": "The team that made the move or wrote the post"
+          },
+          "team_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Team Ids",
+            "description": "Every team in the move"
+          },
+          "bid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bid"
+          },
+          "moves": {
+            "items": {
+              "$ref": "#/components/schemas/FeedMove"
+            },
+            "type": "array",
+            "title": "Moves"
+          },
+          "losing_bids": {
+            "items": {
+              "$ref": "#/components/schemas/FeedBid"
+            },
+            "type": "array",
+            "title": "Losing Bids",
+            "description": "Bids this claim beat, highest first"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "reactions": {
+            "$ref": "#/components/schemas/Reactions"
+          },
+          "replies": {
+            "type": "integer",
+            "title": "Replies",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "at",
+          "team_id"
+        ],
+        "title": "FeedItem"
+      },
+      "FeedMove": {
+        "properties": {
+          "player": {
+            "$ref": "#/components/schemas/FeedPlayer"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "add",
+              "drop",
+              "trade"
+            ],
+            "title": "Kind"
+          },
+          "from_team_id": {
+            "type": "integer",
+            "title": "From Team Id",
+            "description": "0 = free agency"
+          },
+          "to_team_id": {
+            "type": "integer",
+            "title": "To Team Id",
+            "description": "0 = free agency"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player",
+          "kind",
+          "from_team_id",
+          "to_team_id"
+        ],
+        "title": "FeedMove"
+      },
+      "FeedPage": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "title": "League Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeedItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "teams": {
+            "items": {
+              "$ref": "#/components/schemas/FeedTeam"
+            },
+            "type": "array",
+            "title": "Teams"
+          },
+          "faab_budget": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Faab Budget"
+          },
+          "me": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LinkedTeam"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The linked team; chat and reactions need one"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "season",
+          "page",
+          "has_more",
+          "items",
+          "teams"
+        ],
+        "title": "FeedPage"
+      },
+      "FeedPlayer": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "position": {
+            "type": "string",
+            "title": "Position"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "position"
+        ],
+        "title": "FeedPlayer"
+      },
+      "FeedRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "page": {
+            "type": "integer",
+            "maximum": 60.0,
+            "minimum": 0.0,
+            "title": "Page",
+            "description": "0 = the last 7 days, 1 = the 7 before that, ...",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id"
+        ],
+        "title": "FeedRequest"
+      },
+      "FeedTeam": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "abbrev": {
+            "type": "string",
+            "title": "Abbrev"
+          },
+          "faab_spent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Faab Spent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "abbrev"
+        ],
+        "title": "FeedTeam"
       },
       "HTTPValidationError": {
         "properties": {
@@ -535,6 +1767,46 @@
           "supported"
         ],
         "title": "LeagueSummary"
+      },
+      "LinkedTeam": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "title": "League Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token",
+            "description": "Only on a fresh link: send it as 'Authorization: Bearer <token>' from now on"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "season",
+          "team_id",
+          "team_name"
+        ],
+        "title": "LinkedTeam"
       },
       "PickupIdea": {
         "properties": {
@@ -646,6 +1918,202 @@
         ],
         "title": "PlayerRef"
       },
+      "PollTally": {
+        "properties": {
+          "yes": {
+            "type": "integer",
+            "title": "Yes",
+            "default": 0
+          },
+          "no": {
+            "type": "integer",
+            "title": "No",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "PollTally"
+      },
+      "PostRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Body"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(tx|post):[A-Za-z0-9-]{1,64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target",
+            "description": "None = chat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "body"
+        ],
+        "title": "PostRequest"
+      },
+      "ReactRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "target": {
+            "type": "string",
+            "pattern": "^(tx|post):[A-Za-z0-9-]{1,64}$",
+            "title": "Target"
+          },
+          "reaction": {
+            "type": "string",
+            "pattern": "^(steal|smart|overpay|lol|won:\\d{1,4})$",
+            "title": "Reaction"
+          },
+          "on": {
+            "type": "boolean",
+            "title": "On",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "target",
+          "reaction"
+        ],
+        "title": "ReactRequest"
+      },
+      "Reactions": {
+        "properties": {
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Counts"
+          },
+          "mine": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Mine",
+            "description": "Reactions from the linked team"
+          }
+        },
+        "type": "object",
+        "title": "Reactions"
+      },
+      "ReactionsOut": {
+        "properties": {
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "reactions": {
+            "$ref": "#/components/schemas/Reactions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target",
+          "reactions"
+        ],
+        "title": "ReactionsOut"
+      },
+      "RepliesPage": {
+        "properties": {
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeedItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target",
+          "items"
+        ],
+        "title": "RepliesPage"
+      },
+      "RepliesRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "target": {
+            "type": "string",
+            "pattern": "^(tx|post):[A-Za-z0-9-]{1,64}$",
+            "title": "Target"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "target"
+        ],
+        "title": "RepliesRequest"
+      },
       "SeasonRow": {
         "properties": {
           "team_id": {
@@ -746,6 +2214,93 @@
           "expected_cats_won"
         ],
         "title": "TeamBuild"
+      },
+      "TeamLinkChallenge": {
+        "properties": {
+          "challenge": {
+            "type": "string",
+            "title": "Challenge",
+            "description": "Signed challenge to send back to /api/team-link/verify"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "Set this as the team's abbreviation on ESPN"
+          },
+          "expires_at": {
+            "type": "string",
+            "title": "Expires At"
+          },
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "current_abbrev": {
+            "type": "string",
+            "title": "Current Abbrev"
+          }
+        },
+        "type": "object",
+        "required": [
+          "challenge",
+          "code",
+          "expires_at",
+          "team_id",
+          "team_name",
+          "current_abbrev"
+        ],
+        "title": "TeamLinkChallenge"
+      },
+      "TeamLinkStart": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id"
+        ],
+        "title": "TeamLinkStart"
+      },
+      "TeamLinkVerify": {
+        "properties": {
+          "challenge": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 10,
+            "title": "Challenge"
+          }
+        },
+        "type": "object",
+        "required": [
+          "challenge"
+        ],
+        "title": "TeamLinkVerify"
       },
       "TeamSummary": {
         "properties": {
@@ -922,6 +2477,206 @@
         ],
         "title": "TradeIdea"
       },
+      "TradeOfTheDay": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "pending",
+              "none"
+            ],
+            "title": "Status",
+            "description": "pending: still being worked out, ask again shortly; none: no deal works for both sides today"
+          },
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "description": "UTC day this pick is for, YYYY-MM-DD"
+          },
+          "league_id": {
+            "type": "integer",
+            "title": "League Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "headline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headline"
+          },
+          "sides": {
+            "items": {
+              "$ref": "#/components/schemas/TradeSide"
+            },
+            "type": "array",
+            "title": "Sides",
+            "description": "The two teams; the spotlight team first"
+          },
+          "spotlight_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spotlight Team Id"
+          },
+          "team_pairs": {
+            "type": "integer",
+            "title": "Team Pairs",
+            "default": 0
+          },
+          "win_win_deals": {
+            "type": "integer",
+            "title": "Win Win Deals",
+            "description": "Deals found that work for both sides",
+            "default": 0
+          },
+          "votes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PollTally"
+            },
+            "type": "object",
+            "title": "Votes",
+            "description": "'Would you take it?' votes, by team id"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "date",
+          "league_id",
+          "season"
+        ],
+        "title": "TradeOfTheDay"
+      },
+      "TradeSide": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "abbrev": {
+            "type": "string",
+            "title": "Abbrev"
+          },
+          "sends": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Sends"
+          },
+          "drop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who this team cuts to make room"
+          },
+          "cats_gain": {
+            "type": "number",
+            "title": "Cats Gain",
+            "description": "Change in expected categories won per week, ignoring this team's punts"
+          },
+          "category_changes": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Category Changes",
+            "description": "Change in weekly win % per category"
+          },
+          "punts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Punts"
+          },
+          "acceptance": {
+            "type": "number",
+            "title": "Acceptance",
+            "description": "Rough chance this owner says yes (heuristic)"
+          },
+          "acceptance_label": {
+            "type": "string",
+            "enum": [
+              "likely",
+              "possible",
+              "long_shot"
+            ],
+            "title": "Acceptance Label"
+          },
+          "pitch": {
+            "type": "string",
+            "title": "Pitch",
+            "description": "Why the deal helps this team"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "playoff_pct_before": {
+            "type": "number",
+            "title": "Playoff Pct Before"
+          },
+          "playoff_pct_after": {
+            "type": "number",
+            "title": "Playoff Pct After"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "abbrev",
+          "sends",
+          "cats_gain",
+          "category_changes",
+          "punts",
+          "acceptance",
+          "acceptance_label",
+          "pitch",
+          "reasons",
+          "playoff_pct_before",
+          "playoff_pct_after"
+        ],
+        "title": "TradeSide"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -961,6 +2716,60 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VoteRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "title": "Date"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id",
+            "description": "The side being voted on"
+          },
+          "take": {
+            "type": "boolean",
+            "title": "Take",
+            "description": "True: that team should take the deal"
+          },
+          "voter": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9-]+$",
+            "title": "Voter",
+            "description": "Random id kept by the browser"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "date",
+          "team_id",
+          "take",
+          "voter"
+        ],
+        "title": "VoteRequest"
       }
     }
   }
