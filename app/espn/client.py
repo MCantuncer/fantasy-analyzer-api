@@ -16,6 +16,8 @@ BASE_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/fba"
 
 # Light views for the league feed: names, owners, FAAB and the current scoring period.
 FEED_VIEWS = ["mTeam", "mSettings", "mStatus"]
+# The league-only overview adds this week's category scores.
+OVERVIEW_VIEWS = [*FEED_VIEWS, "mMatchupScore"]
 
 LEAGUE_VIEWS = ["mSettings", "mTeam", "mRoster", "mStandings", "mMatchupScore", "mScoreboard", "mDraftDetail"]
 
@@ -114,6 +116,10 @@ class EspnClient:
 
     async def feed_basics(self, season: int, league_id: int, creds: EspnCredentials | None) -> dict:
         params = [("view", v) for v in FEED_VIEWS]
+        return await self._get(self._league_url(season, league_id), params, creds)
+
+    async def overview(self, season: int, league_id: int, creds: EspnCredentials | None) -> dict:
+        params = [("view", v) for v in OVERVIEW_VIEWS]
         return await self._get(self._league_url(season, league_id), params, creds)
 
     async def transactions(

@@ -20,6 +20,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import schemas
+from app.accounts import (
+    PASSWORD_MIN,
+    AccountStore,
+    EmailTaken,
+    FollowedLeague,
+    Seat,
+    User,
+    check_password,
+    create_account_store,
+    hash_password,
+    normalize_email,
+    team_of,
+    verify_google,
+)
 from app.analysis.daily import trade_of_the_day
 from app.analysis.report import Analyzer, league_summary
 from app.cache import TTLCache, credentials_key
@@ -30,7 +44,6 @@ from app.social import (
     CHALLENGE_SECONDS,
     Challenge,
     Post,
-    Session,
     SocialStore,
     create_social_store,
     hash_token,
@@ -53,7 +66,9 @@ DAILY_WAIT = float(os.getenv("DAILY_TRADE_WAIT_SECONDS", "20"))
 # The feed pages through the season a week (seven scoring periods) at a time.
 FEED_PAGE_PERIODS = 7
 POSTS_PER_MINUTE = 10
-NOT_LINKED = {"code": "not_linked", "message": "Link your ESPN team to join the league chat."}
+NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
+NOT_LINKED = {"code": "not_linked", "message": "Verify your team in this league first."}
+NOT_YOUR_TEAM = {"code": "not_your_team", "message": "Only this team's verified manager can see its analysis."}
 
 
 def current_season(now: datetime | None = None) -> int:
@@ -85,7 +100,11 @@ def iso(dt: datetime) -> str:
 
 
 def create_app(
-    espn: EspnClient | None = None, store: Store | None = None, social: SocialStore | None = None
+    espn: EspnClient | None = None,
+    store: Store | None = None,
+    social: SocialStore | None = None,
+    accounts: AccountStore | None = None,
+    google_transport=None,
 ) -> FastAPI:
     app = FastAPI(title="Fantasy Analyzer API", version="0.1.0")
     app.state.espn = espn or EspnClient()
@@ -95,7 +114,11 @@ def create_app(
     app.state.daily = TTLCache(36 * 3600)
     app.state.daily_jobs = {}
     app.state.social = social or create_social_store()
+    app.state.accounts = accounts or create_account_store()
+    app.state.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip() or None
+    app.state.login_attempts = defaultdict(deque)
     app.state.basics = TTLCache(60)
+    app.state.overviews = TTLCache(120)
     app.state.tx_recent = TTLCache(60)
     app.state.tx_past = TTLCache(6 * 3600, max_items=4096)
     app.state.players = TTLCache(24 * 3600, max_items=20000)
@@ -141,24 +164,191 @@ def create_app(
     async def health() -> dict:
         return {"ok": True}
 
+    # Accounts ------------------------------------------------------------------
+
+    async def current_user(authorization: str | None, required: bool = True) -> User | None:
+        token = bearer(authorization)
+        user = await run_in_threadpool(app.state.accounts.session_user, hash_token(token)) if token else None
+        if user is None and required:
+            raise HTTPException(401, detail=NOT_SIGNED_IN)
+        return user
+
+    async def seat_for(user: User | None, league_id: int, season: int) -> Seat | None:
+        if user is None:
+            return None
+        team_id = await run_in_threadpool(team_of, app.state.accounts, user.id, league_id, season)
+        return Seat(user.id, league_id, season, team_id) if team_id is not None else None
+
+    async def linked(authorization: str | None, league_id: int, season: int, required: bool = False) -> Seat | None:
+        seat = await seat_for(await current_user(authorization, required=required), league_id, season)
+        if seat is None and required:
+            raise HTTPException(403, detail=NOT_LINKED)
+        return seat
+
+    async def me_for(user: User) -> schemas.Me:
+        accounts = app.state.accounts
+        followed = await run_in_threadpool(accounts.followed, user.id)
+        teams = await run_in_threadpool(accounts.managed_teams, user.id)
+        notices = await run_in_threadpool(accounts.notices, user.id)
+        return schemas.Me(
+            id=user.id,
+            email=user.email,
+            has_google=user.has_google,
+            leagues=[
+                schemas.MyLeague(
+                    league_id=f.league_id, season=f.season, name=f.name, team_id=teams.get((f.league_id, f.season))
+                )
+                for f in followed
+            ],
+            notices=[schemas.Notice(id=n.id, text=n.text, at=iso(n.created_at)) for n in notices],
+        )
+
+    async def signed_in(user: User) -> schemas.AuthResult:
+        token = secrets.token_urlsafe(32)
+        await run_in_threadpool(app.state.accounts.save_session, hash_token(token), user.id)
+        return schemas.AuthResult(token=token, me=await me_for(user))
+
+    def throttle_login(email: str) -> None:
+        recent = app.state.login_attempts[email]
+        now = time.monotonic()
+        while recent and now - recent[0] > 300:
+            recent.popleft()
+        if len(recent) >= 10:
+            raise HTTPException(429, detail={"code": "slow_down", "message": "Too many tries. Wait a few minutes."})
+        recent.append(now)
+
+    @app.get("/api/auth/config", response_model=schemas.AuthConfig)
+    async def auth_config() -> schemas.AuthConfig:
+        return schemas.AuthConfig(google_client_id=app.state.google_client_id)
+
+    @app.post("/api/auth/signup", response_model=schemas.AuthResult, responses={409: {"model": schemas.ErrorBody}})
+    async def signup(body: schemas.SignUpRequest) -> schemas.AuthResult:
+        email = normalize_email(body.email)
+        if len(body.password) < PASSWORD_MIN:
+            raise HTTPException(422, detail={"code": "weak_password", "message": "Use at least 8 characters."})
+        try:
+            user = await run_in_threadpool(app.state.accounts.create_user, email, hash_password(body.password))
+        except EmailTaken:
+            raise HTTPException(
+                409, detail={"code": "email_taken", "message": "That email already has an account. Sign in instead."}
+            ) from None
+        return await signed_in(user)
+
+    @app.post(
+        "/api/auth/login",
+        response_model=schemas.AuthResult,
+        responses={401: {"model": schemas.ErrorBody}, 429: {"model": schemas.ErrorBody}},
+    )
+    async def login(body: schemas.SignUpRequest) -> schemas.AuthResult:
+        email = normalize_email(body.email)
+        throttle_login(email)
+        found = await run_in_threadpool(app.state.accounts.login_lookup, email)
+        ok = found is not None and await run_in_threadpool(check_password, body.password, found[1])
+        if not ok:
+            raise HTTPException(
+                401, detail={"code": "bad_credentials", "message": "That email and password don't match."}
+            )
+        return await signed_in(found[0])
+
+    @app.post(
+        "/api/auth/google",
+        response_model=schemas.AuthResult,
+        responses={401: {"model": schemas.ErrorBody}, 503: {"model": schemas.ErrorBody}},
+    )
+    async def google(body: schemas.GoogleSignIn) -> schemas.AuthResult:
+        client_id = app.state.google_client_id
+        if not client_id:
+            raise HTTPException(503, detail={"code": "google_off", "message": "Google sign-in isn't turned on yet."})
+        who = await verify_google(body.credential, client_id, google_transport)
+        if who is None:
+            raise HTTPException(
+                401, detail={"code": "bad_google_token", "message": "Google sign-in failed. Try again."}
+            )
+        accounts = app.state.accounts
+        user = await run_in_threadpool(accounts.user_by_google, who.sub)
+        if user is None and who.email:
+            # Same verified email as a password account: that account gains Google sign-in.
+            found = await run_in_threadpool(accounts.login_lookup, who.email)
+            if found is not None:
+                user = found[0]
+                await run_in_threadpool(accounts.attach_google, user.id, who.sub)
+                user.has_google = True
+        if user is None:
+            user = await run_in_threadpool(accounts.create_user, who.email, None, who.sub)
+        return await signed_in(user)
+
+    @app.post("/api/auth/logout")
+    async def logout(authorization: str | None = Header(default=None)) -> dict:
+        if token := bearer(authorization):
+            await run_in_threadpool(app.state.accounts.drop_session, hash_token(token))
+        return {"ok": True}
+
+    @app.post("/api/me", response_model=schemas.Me, responses={401: {"model": schemas.ErrorBody}})
+    async def me(authorization: str | None = Header(default=None)) -> schemas.Me:
+        return await me_for(await current_user(authorization))
+
+    @app.post("/api/me/notices/clear", response_model=schemas.Me)
+    async def clear_notices(authorization: str | None = Header(default=None)) -> schemas.Me:
+        user = await current_user(authorization)
+        await run_in_threadpool(app.state.accounts.clear_notices, user.id)
+        return await me_for(user)
+
+    @app.post(
+        "/api/my-leagues/add",
+        response_model=schemas.Me,
+        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+    )
+    async def add_league(
+        body: schemas.LeagueRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.Me:
+        user = await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        basics = await feed_basics(body.league_id, season, creds)
+        name = ((basics.get("settings") or {}).get("name") or f"League {body.league_id}").strip()
+        await run_in_threadpool(app.state.accounts.follow, user.id, FollowedLeague(body.league_id, season, name))
+        return await me_for(user)
+
+    @app.post("/api/my-leagues/remove", response_model=schemas.Me)
+    async def remove_league(
+        body: schemas.LeagueRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.Me:
+        user = await current_user(authorization)
+        await run_in_threadpool(app.state.accounts.unfollow, user.id, body.league_id, body.season or current_season())
+        return await me_for(user)
+
     @app.post("/api/league", response_model=schemas.LeagueSummary, responses={401: {"model": schemas.ErrorBody}})
     async def league(
         body: schemas.LeagueRequest,
+        authorization: str | None = Header(default=None),
         x_espn_s2: str | None = Header(default=None),
         x_espn_swid: str | None = Header(default=None),
     ) -> schemas.LeagueSummary:
+        await current_user(authorization)
         creds = read_credentials(x_espn_s2, x_espn_swid)
         lg = await load_league(body.league_id, body.season or current_season(), creds, with_fa=False)
         return league_summary(lg)
 
-    @app.post("/api/analyze", response_model=schemas.AnalysisReport, responses={401: {"model": schemas.ErrorBody}})
+    @app.post(
+        "/api/analyze",
+        response_model=schemas.AnalysisReport,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
     async def analyze(
         body: schemas.AnalyzeRequest,
+        authorization: str | None = Header(default=None),
         x_espn_s2: str | None = Header(default=None),
         x_espn_swid: str | None = Header(default=None),
     ) -> schemas.AnalysisReport:
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
+        # A team's analysis is for its verified manager only.
+        seat = await linked(authorization, body.league_id, season, required=True)
+        if seat.team_id != body.team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
         key = (
             body.league_id,
             season,
@@ -216,9 +406,11 @@ def create_app(
     )
     async def trade_of_day(
         body: schemas.LeagueRequest,
+        authorization: str | None = Header(default=None),
         x_espn_s2: str | None = Header(default=None),
         x_espn_swid: str | None = Header(default=None),
     ) -> schemas.TradeOfTheDay:
+        await current_user(authorization)
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
         key: TradeKey = (body.league_id, season, credentials_key(creds), today())
@@ -245,9 +437,11 @@ def create_app(
     )
     async def vote(
         body: schemas.VoteRequest,
+        authorization: str | None = Header(default=None),
         x_espn_s2: str | None = Header(default=None),
         x_espn_swid: str | None = Header(default=None),
     ) -> schemas.TradeOfTheDay:
+        await current_user(authorization)
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
         key: TradeKey = (body.league_id, season, credentials_key(creds), body.date)
@@ -298,15 +492,6 @@ def create_app(
                 out[pid] = p
         return out
 
-    async def linked(authorization: str | None, league_id: int, season: int, required: bool = False) -> Session | None:
-        token = bearer(authorization)
-        session = await run_in_threadpool(app.state.social.session, hash_token(token)) if token else None
-        if session is not None and (session.league_id, session.season) != (league_id, season):
-            session = None
-        if session is None and required:
-            raise HTTPException(401, detail=NOT_LINKED)
-        return session
-
     def team_rows(basics: dict) -> list[schemas.FeedTeam]:
         return [
             schemas.FeedTeam(
@@ -318,11 +503,9 @@ def create_app(
             for t in basics.get("teams", [])
         ]
 
-    def linked_team(session: Session, teams: list[schemas.FeedTeam], token: str | None = None) -> schemas.LinkedTeam:
-        name = next((t.name for t in teams if t.id == session.team_id), f"Team {session.team_id}")
-        return schemas.LinkedTeam(
-            league_id=session.league_id, season=session.season, team_id=session.team_id, team_name=name, token=token
-        )
+    def linked_team(seat: Seat, teams: list[schemas.FeedTeam]) -> schemas.LinkedTeam:
+        name = next((t.name for t in teams if t.id == seat.team_id), f"Team {seat.team_id}")
+        return schemas.LinkedTeam(league_id=seat.league_id, season=seat.season, team_id=seat.team_id, team_name=name)
 
     def tx_item(tx: Transaction, names: dict[int, PlayerName]) -> schemas.FeedItem:
         def player(pid: int) -> schemas.FeedPlayer:
@@ -349,7 +532,7 @@ def create_app(
         return schemas.FeedItem(id=f"post:{p.id}", kind="post", at=iso(p.created_at), team_id=p.team_id, body=p.body)
 
     async def with_social(
-        items: list[schemas.FeedItem], league_id: int, season: int, session: Session
+        items: list[schemas.FeedItem], league_id: int, season: int, session: Seat
     ) -> list[schemas.FeedItem]:
         targets = [i.id for i in items]
         social = app.state.social
@@ -367,9 +550,11 @@ def create_app(
     )
     async def team_link_start(
         body: schemas.TeamLinkStart,
+        authorization: str | None = Header(default=None),
         x_espn_s2: str | None = Header(default=None),
         x_espn_swid: str | None = Header(default=None),
     ) -> schemas.TeamLinkChallenge:
+        user = await current_user(authorization)
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
         team = next(
@@ -379,7 +564,8 @@ def create_app(
             raise HTTPException(
                 404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
             )
-        c = Challenge(body.league_id, season, body.team_id, new_code(team.abbrev), int(time.time()) + CHALLENGE_SECONDS)
+        expires = int(time.time()) + CHALLENGE_SECONDS
+        c = Challenge(body.league_id, season, body.team_id, new_code(team.abbrev), expires, user.id)
         return schemas.TeamLinkChallenge(
             challenge=sign_challenge(c),
             code=c.code,
@@ -396,12 +582,14 @@ def create_app(
     )
     async def team_link_verify(
         body: schemas.TeamLinkVerify,
+        authorization: str | None = Header(default=None),
         x_espn_s2: str | None = Header(default=None),
         x_espn_swid: str | None = Header(default=None),
     ) -> schemas.LinkedTeam:
+        user = await current_user(authorization)
         creds = read_credentials(x_espn_s2, x_espn_swid)
         c = read_challenge(body.challenge)
-        if c is None:
+        if c is None or c.user_id != user.id:
             raise HTTPException(
                 410, detail={"code": "challenge_expired", "message": "That code expired. Get a new one."}
             )
@@ -417,28 +605,19 @@ def create_app(
                     "message": f"ESPN still shows {now}. Save {c.code} as your abbreviation on ESPN, then check again.",
                 },
             )
-        token = secrets.token_urlsafe(32)
-        session = Session(c.league_id, c.season, c.team_id)
-        await run_in_threadpool(app.state.social.save_session, hash_token(token), session)
-        return linked_team(session, teams, token)
-
-    @app.post("/api/team-link/me", response_model=schemas.LinkedTeam, responses={401: {"model": schemas.ErrorBody}})
-    async def team_link_me(
-        body: schemas.LeagueRequest,
-        authorization: str | None = Header(default=None),
-        x_espn_s2: str | None = Header(default=None),
-        x_espn_swid: str | None = Header(default=None),
-    ) -> schemas.LinkedTeam:
-        creds = read_credentials(x_espn_s2, x_espn_swid)
-        season = body.season or current_season()
-        session = await linked(authorization, body.league_id, season, required=True)
-        return linked_team(session, team_rows(await feed_basics(body.league_id, season, creds)))
-
-    @app.post("/api/team-link/unlink")
-    async def team_link_unlink(authorization: str | None = Header(default=None)) -> dict:
-        if token := bearer(authorization):
-            await run_in_threadpool(app.state.social.drop_session, hash_token(token))
-        return {"ok": True}
+        accounts = app.state.accounts
+        previous = await run_in_threadpool(accounts.set_manager, c.league_id, c.season, c.team_id, user.id)
+        basics = await feed_basics(c.league_id, c.season, creds)
+        league_name = ((basics.get("settings") or {}).get("name") or f"League {c.league_id}").strip()
+        await run_in_threadpool(accounts.follow, user.id, FollowedLeague(c.league_id, c.season, league_name))
+        if previous is not None:
+            await run_in_threadpool(
+                accounts.add_notice,
+                previous,
+                f"Another account verified {team.name} in {league_name}, so you are no longer its manager here. "
+                "If you do manage it, verify it again.",
+            )
+        return linked_team(Seat(user.id, c.league_id, c.season, c.team_id), teams)
 
     @app.post("/api/feed", response_model=schemas.FeedPage, responses={401: {"model": schemas.ErrorBody}})
     async def feed(
@@ -447,10 +626,10 @@ def create_app(
         x_espn_s2: str | None = Header(default=None),
         x_espn_swid: str | None = Header(default=None),
     ) -> schemas.FeedPage:
-        """A week of moves, newest first. With a linked team: the chat, reactions and reply counts too."""
+        """A week of moves, newest first. For a verified manager: the chat, reactions and reply counts too."""
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
-        session = await linked(authorization, body.league_id, season)
+        session = await seat_for(await current_user(authorization), body.league_id, season)
         basics = await feed_basics(body.league_id, season, creds)
         status = basics.get("status") or {}
         current = int(status.get("latestScoringPeriod") or basics.get("scoringPeriodId") or 1)
@@ -554,6 +733,106 @@ def create_app(
         rc = marks.get(body.target)
         out = schemas.Reactions(counts=rc.counts, mine=sorted(rc.mine)) if rc else schemas.Reactions()
         return schemas.ReactionsOut(target=body.target, reactions=out)
+
+    @app.post(
+        "/api/league-overview", response_model=schemas.LeagueOverview, responses={401: {"model": schemas.ErrorBody}}
+    )
+    async def league_overview(
+        body: schemas.LeagueRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.LeagueOverview:
+        """League-level only, for anyone signed in: this week's matchups, the MVP candidate and the league's pulse."""
+        user = await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        key = (body.league_id, season, credentials_key(creds))
+        raw = app.state.overviews.get(key)
+        if raw is None:
+            raw = await app.state.espn.overview(season, body.league_id, creds)
+            app.state.overviews.set(key, raw)
+        seat = await seat_for(user, body.league_id, season)
+        managers = await run_in_threadpool(app.state.accounts.managers, body.league_id, season)
+        status = raw.get("status") or {}
+        period = int(status.get("currentMatchupPeriod") or 1)
+
+        def record(t: dict) -> str:
+            r = (t.get("record") or {}).get("overall") or {}
+            return f"{r.get('wins', 0)}-{r.get('losses', 0)}" + (f"-{r['ties']}" if r.get("ties") else "")
+
+        teams = [
+            schemas.OverviewTeam(
+                id=int(t["id"]),
+                name=t.get("name") or f"{t.get('location', '')} {t.get('nickname', '')}".strip(),
+                abbrev=t.get("abbrev", ""),
+                record=record(t),
+                has_manager=int(t["id"]) in managers,
+                mine=seat is not None and seat.team_id == int(t["id"]),
+            )
+            for t in raw.get("teams", [])
+        ]
+
+        def side(m: dict) -> schemas.MatchupSide:
+            score = m.get("cumulativeScore") or {}
+            return schemas.MatchupSide(
+                team_id=int(m["teamId"]),
+                wins=int(score.get("wins", 0)),
+                losses=int(score.get("losses", 0)),
+                ties=int(score.get("ties", 0)),
+            )
+
+        matchups = [
+            schemas.OverviewMatchup(home=side(m["home"]), away=side(m["away"]))
+            for m in raw.get("schedule", [])
+            if m.get("matchupPeriodId") == period and "home" in m and "away" in m
+        ]
+        sides = [(m.home, m.away) for m in matchups] + [(m.away, m.home) for m in matchups]
+        mvp = None
+        if sides:
+            records = {t.id: t.record for t in teams}
+            best, opp = max(sides, key=lambda p: (p[0].wins - p[0].losses, p[0].wins))
+            if best.wins > best.losses:
+                mvp = schemas.MvpCandidate(
+                    team_id=best.team_id,
+                    opponent_id=opp.team_id,
+                    wins=best.wins,
+                    losses=best.losses,
+                    ties=best.ties,
+                    season_record=records.get(best.team_id, ""),
+                )
+
+        spent = {
+            int(t["id"]): (t.get("transactionCounter") or {}).get("acquisitionBudgetSpent") or 0
+            for t in raw.get("teams", [])
+        }
+        leader = max(spent, key=lambda tid: spent[tid]) if spent and max(spent.values()) > 0 else None
+        acq = (raw.get("settings") or {}).get("acquisitionSettings") or {}
+        current = int(status.get("latestScoringPeriod") or raw.get("scoringPeriodId") or 1)
+        first = int(status.get("firstScoringPeriod") or 1)
+        periods = range(max(first, current - FEED_PAGE_PERIODS + 1), current + 1)
+        days = await asyncio.gather(*(period_transactions(body.league_id, season, p, current, creds) for p in periods))
+        claims = sum(1 for tx in parse_transactions([t for d in days for t in d]) if tx.kind != "trade")
+        trades = sum((t.get("transactionCounter") or {}).get("trades") or 0 for t in raw.get("teams", [])) // 2
+        pulse = schemas.LeaguePulse(
+            faab_leader_id=leader,
+            faab_leader_spent=spent.get(leader) if leader is not None else None,
+            faab_budget=acq.get("acquisitionBudget") if acq.get("isUsingAcquisitionBudget") else None,
+            claims_last_7_days=claims,
+            trades_this_season=trades,
+            close_matchups=sum(1 for m in matchups if abs(m.home.wins - m.away.wins) <= 1),
+        )
+        return schemas.LeagueOverview(
+            league_id=body.league_id,
+            season=season,
+            name=((raw.get("settings") or {}).get("name") or f"League {body.league_id}").strip(),
+            matchup_period=period,
+            teams=teams,
+            matchups=matchups,
+            mvp=mvp,
+            pulse=pulse,
+            my_team_id=seat.team_id if seat else None,
+        )
 
     return app
 

@@ -24,22 +24,30 @@ uv run ruff check .
 
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
-| POST | `/api/league` | `{league_id, season?}` | League name, categories and teams, for the team picker |
-| POST | `/api/analyze` | `{league_id, team_id, season?, keep_player_ids?}` | Full analysis report |
+| GET | `/api/auth/config` | | `{google_client_id}`, null while Google sign-in is off |
+| POST | `/api/auth/signup` | `{email, password}` | `{token, me}` for a new account |
+| POST | `/api/auth/login` | `{email, password}` | `{token, me}` |
+| POST | `/api/auth/google` | `{credential}` | `{token, me}` from a Google Identity Services ID token |
+| POST | `/api/auth/logout` | | Ends the session |
+| POST | `/api/me` | | The account, its leagues (with the verified team, if any) and notices |
+| POST | `/api/me/notices/clear` | | Clears the notices |
+| POST | `/api/my-leagues/add` | `{league_id, season?}` | Follows a league (no team yet) |
+| POST | `/api/my-leagues/remove` | `{league_id, season?}` | Unfollows it |
+| POST | `/api/league-overview` | `{league_id, season?}` | League-only view: this week's matchups, the MVP candidate, league pulse, which teams have a manager |
+| POST | `/api/league` | `{league_id, season?}` | League name, categories and teams |
+| POST | `/api/analyze` | `{league_id, team_id, season?, keep_player_ids?}` | Full analysis report, only for the team you verified |
 | POST | `/api/trade-of-the-day` | `{league_id, season?}` | Today's best win-win trade between any two teams, with poll votes |
 | POST | `/api/trade-of-the-day/vote` | `{league_id, season?, date, team_id, take, voter}` | Records a "Would you take it?" vote and returns the updated pick |
 | POST | `/api/team-link/start` | `{league_id, season?, team_id}` | A code to set as the team's ESPN abbreviation, and a signed challenge |
-| POST | `/api/team-link/verify` | `{challenge}` | Checks the abbreviation on ESPN; returns a session token for that team |
-| POST | `/api/team-link/me` | `{league_id, season?}` | The linked team (needs the token) |
-| POST | `/api/team-link/unlink` | | Forgets the token |
-| POST | `/api/feed` | `{league_id, season?, page?}` | A week of moves (claims, losing bids, adds, drops, trades); with a token also the chat, reactions and reply counts |
+| POST | `/api/team-link/verify` | `{challenge}` | Checks the abbreviation on ESPN and makes the account that team's manager |
+| POST | `/api/feed` | `{league_id, season?, page?}` | A week of moves (claims, losing bids, adds, drops, trades); for a verified manager also the chat, reactions and reply counts |
 | POST | `/api/feed/replies` | `{league_id, season?, target}` | Replies on a move or a post |
 | POST | `/api/posts` | `{league_id, season?, body, target?}` | Posts to the chat, or replies when `target` is set |
 | POST | `/api/posts/delete` | `{league_id, season?, post_id}` | Deletes your own post |
 | POST | `/api/reactions` | `{league_id, season?, target, reaction, on?}` | Toggles `steal`, `smart`, `overpay`, `lol`, or a `won:<team id>` trade vote |
 | GET | `/api/health` | | `{ok: true}` |
 
-`season` defaults to the current ESPN season (2026-27 is `2027`). `keep_player_ids` are never offered in trades or suggested as drops.
+Every endpoint except `/api/health` and `/api/auth/*` needs `Authorization: Bearer <token>` from sign-up or sign-in. `season` defaults to the current ESPN season (2026-27 is `2027`). `keep_player_ids` are never offered in trades or suggested as drops.
 
 The schema is in `openapi.json`. Regenerate it after changing `app/schemas.py`:
 
@@ -47,11 +55,15 @@ The schema is in `openapi.json`. Regenerate it after changing `app/schemas.py`:
 uv run python -m scripts.export_openapi openapi.json
 ```
 
-## League chat and linking a team
+## Accounts and verified managers
 
-ESPN has no login for other sites, so a manager proves a team is theirs by changing its abbreviation on ESPN to a 4-character code from `/api/team-link/start` and calling `/api/team-link/verify`. Only the team's owner and the league manager can edit it, and the API reads it back from ESPN's league data. The code rides in an HMAC-signed challenge that expires after 30 minutes, so nothing is stored until the check passes. Then the device gets a random token, sent as `Authorization: Bearer <token>`; only its SHA-256 hash is stored. No ESPN password or cookie is kept.
+People sign up with an email and password (scrypt-hashed) or with Google, then add leagues by ID. Following a league shows only league-wide data (`/api/league-overview`, the moves feed). Anything about one team, like the analysis, the chat and reactions, needs the account to be that team's verified manager.
 
-Set `SECRET_KEY` (any long random string) so challenges survive a restart. Posts, reactions and links use `DATABASE_URL` like the trade of the day, and live in memory without it.
+ESPN has no login for other sites, so a manager proves a team is theirs by changing its abbreviation on ESPN to a 4-character code from `/api/team-link/start` and calling `/api/team-link/verify`. Only the team's owner and the league manager can edit it, and the API reads it back from ESPN's league data. The code rides in an HMAC-signed challenge bound to the account that asked, which expires after 30 minutes, so nothing is stored until the check passes.
+
+Each team has one manager and each account manages one team per league. The newest successful check wins: if another account verified the team before, it loses the team and gets a notice. This also recovers a team after a lost password. Sessions are random tokens kept for 90 days; only their SHA-256 hash is stored. No ESPN password or cookie is kept.
+
+Set `SECRET_KEY` (any long random string) so challenges survive a restart, and `GOOGLE_CLIENT_ID` (a Google OAuth web client ID) to turn on Google sign-in. Accounts, posts and reactions use `DATABASE_URL` like the trade of the day, and live in memory without it.
 
 The feed pages through the season a week (seven scoring periods) at a time. Transactions come from ESPN's `mTransactions2` view, one call per day: past days are cached for six hours, today for a minute.
 

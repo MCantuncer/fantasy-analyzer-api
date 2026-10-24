@@ -1,14 +1,15 @@
-"""League chat: who is posting, and what they posted.
+"""League chat: verifying a team's manager, and what managers post.
 
-**Linking a team.** ESPN has no login for other sites, so a manager proves a team is
-theirs by setting its abbreviation on ESPN to a short code we hand out. Only the
-team's owner (and the league manager) can change it, and we read it back from
-ESPN's league data. The code travels in a signed, expiring challenge, so nothing is
-stored until the check passes. A passed check gives the device a random session
-token; only its SHA-256 hash is stored. No ESPN password or cookie is ever kept.
+**Verifying a team.** ESPN has no login for other sites, so a signed-in account
+proves it manages a team by setting the team's abbreviation on ESPN to a short code
+we hand out. Only the team's owner (and the league manager) can change it, and we
+read it back from ESPN's league data. The code travels in a signed, expiring
+challenge bound to the account, so nothing is stored until the check passes; then
+``app.accounts`` records the account as the team's manager. No ESPN password or
+cookie is ever kept.
 
-**Storage.** Posts, reactions and sessions live in the same Postgres as the trade of
-the day (``DATABASE_URL``), in memory without it.
+**Storage.** Posts and reactions live in the same Postgres as the trade of the day
+(``DATABASE_URL``), in memory without it.
 """
 
 from __future__ import annotations
@@ -28,7 +29,6 @@ from typing import Protocol
 CODE_ALPHABET = "ACDEFGHJKMNPQRTUVWXY34679"
 CODE_LENGTH = 4
 CHALLENGE_SECONDS = 30 * 60
-SESSION_DAYS = 365
 
 POST_MAX_CHARS = 500
 REACTIONS = ("steal", "smart", "overpay", "lol")
@@ -60,10 +60,11 @@ class Challenge:
     team_id: int
     code: str
     expires: int  # unix seconds
+    user_id: int
 
 
 def sign_challenge(c: Challenge) -> str:
-    body = _b64(json.dumps([c.league_id, c.season, c.team_id, c.code, c.expires]).encode())
+    body = _b64(json.dumps([c.league_id, c.season, c.team_id, c.code, c.expires, c.user_id]).encode())
     mac = _b64(hmac.new(_SECRET, body.encode(), hashlib.sha256).digest())
     return f"{body}.{mac}"
 
@@ -75,12 +76,12 @@ def read_challenge(token: str, now: float | None = None) -> Challenge | None:
         want = _b64(hmac.new(_SECRET, body.encode(), hashlib.sha256).digest())
         if not hmac.compare_digest(mac, want):
             return None
-        league_id, season, team_id, code, expires = json.loads(_unb64(body))
+        league_id, season, team_id, code, expires, user_id = json.loads(_unb64(body))
     except (ValueError, TypeError):
         return None
     if expires < (now if now is not None else time.time()):
         return None
-    return Challenge(int(league_id), int(season), int(team_id), str(code), int(expires))
+    return Challenge(int(league_id), int(season), int(team_id), str(code), int(expires), int(user_id))
 
 
 def hash_token(token: str) -> str:
@@ -93,13 +94,6 @@ def valid_reaction(reaction: str, team_ids: list[int]) -> bool:
         return True
     rest = reaction.removeprefix(WON_PREFIX)
     return rest != reaction and rest.isdigit() and int(rest) in team_ids
-
-
-@dataclass
-class Session:
-    league_id: int
-    season: int
-    team_id: int
 
 
 @dataclass
@@ -121,13 +115,6 @@ class ReactionCounts:
 
 
 SCHEMA = """
-create table if not exists team_sessions (
-    token_hash text primary key,
-    league_id bigint not null,
-    season int not null,
-    team_id int not null,
-    created_at timestamptz not null default now()
-);
 create table if not exists league_posts (
     id bigserial primary key,
     league_id bigint not null,
@@ -153,9 +140,6 @@ create table if not exists league_reactions (
 
 
 class SocialStore(Protocol):
-    def save_session(self, token_hash: str, s: Session) -> None: ...
-    def session(self, token_hash: str) -> Session | None: ...
-    def drop_session(self, token_hash: str) -> None: ...
     def add_post(self, league_id: int, season: int, team_id: int, target: str | None, body: str) -> Post: ...
     def post(self, league_id: int, season: int, post_id: int) -> Post | None: ...
     def delete_post(self, league_id: int, season: int, post_id: int) -> None: ...
@@ -168,18 +152,8 @@ class SocialStore(Protocol):
 
 class MemorySocialStore:
     def __init__(self) -> None:
-        self.sessions: dict[str, Session] = {}
         self.posts: list[Post] = []
         self.marks: set[tuple[int, int, str, int, str]] = set()
-
-    def save_session(self, token_hash: str, s: Session) -> None:
-        self.sessions[token_hash] = s
-
-    def session(self, token_hash: str) -> Session | None:
-        return self.sessions.get(token_hash)
-
-    def drop_session(self, token_hash: str) -> None:
-        self.sessions.pop(token_hash, None)
 
     def add_post(self, league_id: int, season: int, team_id: int, target: str | None, body: str) -> Post:
         post = Post(len(self.posts) + 1, league_id, season, team_id, target, body, datetime.now(UTC))
@@ -237,34 +211,14 @@ class MemorySocialStore:
 
 
 class PostgresSocialStore:
+    _POST_COLS = "id, league_id, season, team_id, target, body, created_at, deleted"
+
     def __init__(self, url: str):
         import psycopg
 
         self._connect = lambda: psycopg.connect(url, autocommit=True)
         with self._connect() as conn:
             conn.execute(SCHEMA)
-
-    def save_session(self, token_hash: str, s: Session) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                "insert into team_sessions (token_hash, league_id, season, team_id) values (%s, %s, %s, %s)",
-                (token_hash, s.league_id, s.season, s.team_id),
-            )
-
-    def session(self, token_hash: str) -> Session | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                "select league_id, season, team_id from team_sessions where token_hash=%s "
-                f"and created_at > now() - interval '{SESSION_DAYS} days'",
-                (token_hash,),
-            ).fetchone()
-        return Session(*row) if row else None
-
-    def drop_session(self, token_hash: str) -> None:
-        with self._connect() as conn:
-            conn.execute("delete from team_sessions where token_hash=%s", (token_hash,))
-
-    _POST_COLS = "id, league_id, season, team_id, target, body, created_at, deleted"
 
     def add_post(self, league_id: int, season: int, team_id: int, target: str | None, body: str) -> Post:
         with self._connect() as conn:

@@ -8,6 +8,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.accounts import MemoryAccountStore, PostgresAccountStore
 from app.espn.client import EspnClient
 from app.feed import parse_transactions
 from app.main import create_app
@@ -58,31 +59,46 @@ def espn(recorded):
 
 
 @pytest.fixture(params=["memory", "postgres"])
-def social(request):
+def stores(request):
     if request.param == "memory":
-        return MemorySocialStore()
+        return MemorySocialStore(), MemoryAccountStore()
     url = os.getenv("TEST_DATABASE_URL")
     if not url:
         pytest.skip("set TEST_DATABASE_URL to test against Postgres")
-    store = PostgresSocialStore(url)
-    with store._connect() as conn:
-        conn.execute("truncate team_sessions, league_posts, league_reactions")
-    return store
+    social, accounts = PostgresSocialStore(url), PostgresAccountStore(url)
+    with social._connect() as conn:
+        conn.execute("truncate league_posts, league_reactions, users, user_sessions cascade")
+    return social, accounts
 
 
 @pytest.fixture
-def client(espn, social):
-    app = create_app(EspnClient(transport=httpx.MockTransport(espn.handler)), store=MemoryStore(), social=social)
+def client(espn, stores):
+    social, accounts = stores
+    app = create_app(
+        EspnClient(transport=httpx.MockTransport(espn.handler)), store=MemoryStore(), social=social, accounts=accounts
+    )
     return TestClient(app)
 
 
-def link(client, espn, team_id=MY_TEAM) -> dict[str, str]:
-    start = client.post("/api/team-link/start", json={"league_id": LEAGUE_ID, "season": SEASON, "team_id": team_id})
-    assert start.status_code == 200
-    espn.set_abbrev(team_id, start.json()["code"].lower())  # ESPN may store it in any case
-    r = client.post("/api/team-link/verify", json={"challenge": start.json()["challenge"]})
+_n = iter(range(1, 10_000))
+
+
+def account(client) -> dict[str, str]:
+    r = client.post("/api/auth/signup", json={"email": f"manager{next(_n)}@example.com", "password": "hunter22!"})
     assert r.status_code == 200
     return {"Authorization": f"Bearer {r.json()['token']}"}
+
+
+def link(client, espn, team_id=MY_TEAM, auth=None) -> dict[str, str]:
+    auth = auth or account(client)
+    start = client.post(
+        "/api/team-link/start", json={"league_id": LEAGUE_ID, "season": SEASON, "team_id": team_id}, headers=auth
+    )
+    assert start.status_code == 200
+    espn.set_abbrev(team_id, start.json()["code"].lower())  # ESPN may store it in any case
+    r = client.post("/api/team-link/verify", json={"challenge": start.json()["challenge"]}, headers=auth)
+    assert r.status_code == 200
+    return auth
 
 
 def league(**extra) -> dict:
@@ -120,7 +136,8 @@ def test_parse_trade_and_dedupe():
 
 
 def test_feed_without_a_link_shows_moves_only(client, espn):
-    r = client.post("/api/feed", json=league())
+    assert client.post("/api/feed", json=league()).status_code == 401
+    r = client.post("/api/feed", json=league(), headers=account(client))
     assert r.status_code == 200
     body = r.json()
     assert body["me"] is None and body["has_more"] is False
@@ -133,41 +150,62 @@ def test_feed_without_a_link_shows_moves_only(client, espn):
 
 
 def test_link_needs_the_code_on_espn(client, espn):
-    start = client.post("/api/team-link/start", json=league(team_id=MY_TEAM)).json()
+    auth = account(client)
+    assert client.post("/api/team-link/start", json=league(team_id=MY_TEAM)).status_code == 401
+    start = client.post("/api/team-link/start", json=league(team_id=MY_TEAM), headers=auth).json()
     assert start["team_name"] == "Kucukesat Aspavas" and start["current_abbrev"] == "KEA"
     assert len(start["code"]) == 4 and start["code"] != "KEA"
 
-    r = client.post("/api/team-link/verify", json={"challenge": start["challenge"]})
+    r = client.post("/api/team-link/verify", json={"challenge": start["challenge"]}, headers=auth)
     assert r.status_code == 409 and r.json()["detail"]["code"] == "abbrev_mismatch"
 
     espn.set_abbrev(MY_TEAM, start["code"])
-    r = client.post("/api/team-link/verify", json={"challenge": start["challenge"]})
+    # Someone else holding the challenge can't use it: it is bound to the account that asked.
+    r = client.post("/api/team-link/verify", json={"challenge": start["challenge"]}, headers=account(client))
+    assert r.status_code == 410
+    r = client.post("/api/team-link/verify", json={"challenge": start["challenge"]}, headers=auth)
     assert r.status_code == 200
-    me = r.json()
-    assert (me["team_id"], me["team_name"]) == (MY_TEAM, "Kucukesat Aspavas") and me["token"]
+    assert (r.json()["team_id"], r.json()["team_name"]) == (MY_TEAM, "Kucukesat Aspavas")
 
-    auth = {"Authorization": f"Bearer {me['token']}"}
-    r = client.post("/api/team-link/me", json=league(), headers=auth)
-    assert r.status_code == 200 and r.json()["token"] is None
-    assert client.post("/api/team-link/me", json=league(season=2026), headers=auth).status_code == 401
+    me = client.post("/api/me", headers=auth).json()
+    assert me["leagues"] == [
+        {"league_id": LEAGUE_ID, "season": SEASON, "name": "Chill Primera Division", "team_id": MY_TEAM}
+    ]
 
-    client.post("/api/team-link/unlink", headers=auth)
-    assert client.post("/api/team-link/me", json=league(), headers=auth).status_code == 401
+
+def test_a_newer_check_takes_the_team_over(client, espn):
+    first = link(client, espn)
+    second = link(client, espn)
+    assert client.post("/api/me", headers=second).json()["leagues"][0]["team_id"] == MY_TEAM
+    me = client.post("/api/me", headers=first).json()
+    assert me["leagues"][0]["team_id"] is None
+    assert len(me["notices"]) == 1 and "Kucukesat Aspavas" in me["notices"][0]["text"]
+    assert client.post("/api/posts", json=league(body="still me?"), headers=first).status_code == 403
+    assert client.post("/api/me/notices/clear", headers=first).json()["notices"] == []
+
+
+def test_one_team_per_account_per_league(client, espn):
+    auth = link(client, espn)
+    link(client, espn, OTHER_TEAM, auth=auth)
+    assert client.post("/api/me", headers=auth).json()["leagues"][0]["team_id"] == OTHER_TEAM
+    overview = client.post("/api/league-overview", json=league(), headers=account(client)).json()
+    managed = {t["id"] for t in overview["teams"] if t["has_manager"]}
+    assert managed == {OTHER_TEAM}
 
 
 def test_challenges_are_signed_and_expire():
-    c = Challenge(LEAGUE_ID, SEASON, MY_TEAM, "K7QX", int(time.time()) + 60)
+    c = Challenge(LEAGUE_ID, SEASON, MY_TEAM, "K7QX", int(time.time()) + 60, 1)
     token = sign_challenge(c)
     assert read_challenge(token) == c
     assert read_challenge(token, now=time.time() + 120) is None
     body, mac = token.split(".")
-    forged = sign_challenge(Challenge(LEAGUE_ID, SEASON, OTHER_TEAM, "K7QX", c.expires)).split(".")[0]
+    forged = sign_challenge(Challenge(LEAGUE_ID, SEASON, OTHER_TEAM, "K7QX", c.expires, 1)).split(".")[0]
     assert read_challenge(f"{forged}.{mac}") is None
     assert read_challenge("garbage") is None
 
 
 def test_expired_challenge_is_refused(client):
-    r = client.post("/api/team-link/verify", json={"challenge": "not-a-real-challenge"})
+    r = client.post("/api/team-link/verify", json={"challenge": "not-a-real-challenge"}, headers=account(client))
     assert r.status_code == 410
 
 
@@ -234,4 +272,20 @@ def test_posting_is_rate_limited(client, espn):
 def test_a_link_only_works_in_its_league(client, espn):
     me = link(client, espn)
     r = client.post("/api/posts", json={"league_id": LEAGUE_ID + 1, "season": SEASON, "body": "hi"}, headers=me)
-    assert r.status_code == 401
+    assert r.status_code == 403
+
+
+def test_league_overview(client, espn):
+    auth = account(client)
+    r = client.post("/api/league-overview", json=league(), headers=auth)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "Chill Primera Division" and body["matchup_period"] == 1
+    assert len(body["matchups"]) == 5 and body["my_team_id"] is None
+    mvp = body["mvp"]
+    assert (mvp["team_id"], mvp["wins"], mvp["losses"], mvp["opponent_id"]) == (10, 7, 2, 5)
+    pulse = body["pulse"]
+    assert (pulse["faab_leader_id"], pulse["faab_leader_spent"], pulse["faab_budget"]) == (OTHER_TEAM, 9, 100)
+    assert pulse["close_matchups"] == 4 and pulse["claims_last_7_days"] == 9
+    assert not any(t["has_manager"] for t in body["teams"])
+    assert client.post("/api/league-overview", json=league()).status_code == 401
