@@ -195,7 +195,14 @@ class TradeFinder:
         options = droppable([p for p in roster if p.id not in protected], self.keep)
         return min(options, key=self.model.value) if options else None
 
-    def _evaluate(self, j: int, give: list[Player], get: list[Player]) -> Deal | None:
+    def _evaluate(
+        self,
+        j: int,
+        give: list[Player],
+        get: list[Player],
+        min_my_gain: float = MIN_MY_GAIN,
+        min_their_gain: float = MIN_THEIR_GAIN,
+    ) -> Deal | None:
         pv = self.perceived
         me, partner = self.teams[self.me_idx], self.teams[j]
         give_ids, get_ids = {p.id for p in give}, {p.id for p in get}
@@ -236,13 +243,13 @@ class TradeFinder:
         dists[self.me_idx] = self.model.dist(my_roster)
         dists[j] = self.model.dist(their_roster)
         my_gain = self.model.strength(self.me_idx, dists) - self.base[self.me_idx]
-        if my_gain < MIN_MY_GAIN:
+        if my_gain < min_my_gain:
             return None
         their_gain = self.fit_gain(j, dists)
         if self.mode == "edge":
             if their_gain < EDGE_MIN_THEIR_GAIN or my_gain - their_gain < EDGE_MIN_MARGIN:
                 return None
-        elif their_gain < MIN_THEIR_GAIN:
+        elif their_gain < min_their_gain:
             return None
         struggling = j in self.struggling
         reasons = self._reasons(j, give, get, dists, struggling)
