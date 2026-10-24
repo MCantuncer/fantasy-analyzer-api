@@ -38,6 +38,7 @@ uv run ruff check .
 | POST | `/api/posts/delete` | `{league_id, season?, post_id}` | Deletes your own post |
 | POST | `/api/reactions` | `{league_id, season?, target, reaction, on?}` | Toggles `steal`, `smart`, `overpay`, `lol`, or a `won:<team id>` trade vote |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
+| POST | `/api/scores` | `{league_id, season?, day?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league |
 | GET | `/api/health` | | `{ok: true}` |
 
 `season` defaults to the current ESPN season (2026-27 is `2027`). `keep_player_ids` are never offered in trades or suggested as drops.
@@ -55,6 +56,12 @@ ESPN has no login for other sites, so a manager proves a team is theirs by chang
 Set `SECRET_KEY` (any long random string) so challenges survive a restart. Posts, reactions and links use `DATABASE_URL` like the trade of the day, and live in memory without it.
 
 The feed pages through the season a week (seven scoring periods) at a time. Transactions come from ESPN's `mTransactions2` view, one call per day: past days are cached for six hours, today for a minute.
+
+## NBA scores
+
+ESPN's fantasy API has no scoreboard, but for any day it returns every player's line for each game. `/api/scores` adds those up into team scores and box scores, and takes start times from the NBA calendar. There is no quarter or clock, so a game counts as live from tip-off until ESPN marks its stats official or three hours pass.
+
+A day is the same in every league. While a game is on, the day is fetched at most once a minute for everyone. Once a day's games are over (five hours after the last tip-off), it is saved to `DATABASE_URL` (table `nba_days`) and never fetched again. Other features can read finished games from there instead of calling ESPN.
 
 ## Private leagues
 

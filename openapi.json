@@ -1254,6 +1254,89 @@
           }
         }
       }
+    },
+    "/api/scores": {
+      "post": {
+        "summary": "Scores",
+        "description": "A day of NBA games with scores and box scores, each player tagged with his fantasy team here.",
+        "operationId": "scores_api_scores_post",
+        "parameters": [
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoresRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreDay"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1840,6 +1923,182 @@
           "abbrev"
         ],
         "title": "FeedTeam"
+      },
+      "Game": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "UTC start time, ISO 8601"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "live",
+              "final"
+            ],
+            "title": "Status"
+          },
+          "away": {
+            "$ref": "#/components/schemas/GameSide"
+          },
+          "home": {
+            "$ref": "#/components/schemas/GameSide"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/GameLine"
+            },
+            "type": "array",
+            "title": "Lines",
+            "description": "Everyone who played, most minutes first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "start",
+          "status",
+          "away",
+          "home",
+          "lines"
+        ],
+        "title": "Game"
+      },
+      "GameLine": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pro_team_id": {
+            "type": "integer",
+            "title": "Pro Team Id"
+          },
+          "owner_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team Id",
+            "description": "Fantasy team in this league; none = free agent"
+          },
+          "minutes": {
+            "type": "integer",
+            "title": "Minutes"
+          },
+          "pts": {
+            "type": "integer",
+            "title": "Pts"
+          },
+          "reb": {
+            "type": "integer",
+            "title": "Reb"
+          },
+          "ast": {
+            "type": "integer",
+            "title": "Ast"
+          },
+          "stl": {
+            "type": "integer",
+            "title": "Stl"
+          },
+          "blk": {
+            "type": "integer",
+            "title": "Blk"
+          },
+          "tpm": {
+            "type": "integer",
+            "title": "Tpm"
+          },
+          "to": {
+            "type": "integer",
+            "title": "To"
+          },
+          "fgm": {
+            "type": "integer",
+            "title": "Fgm"
+          },
+          "fga": {
+            "type": "integer",
+            "title": "Fga"
+          },
+          "ftm": {
+            "type": "integer",
+            "title": "Ftm"
+          },
+          "fta": {
+            "type": "integer",
+            "title": "Fta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pro_team_id",
+          "minutes",
+          "pts",
+          "reb",
+          "ast",
+          "stl",
+          "blk",
+          "tpm",
+          "to",
+          "fgm",
+          "fga",
+          "ftm",
+          "fta"
+        ],
+        "title": "GameLine"
+      },
+      "GameSide": {
+        "properties": {
+          "pro_team_id": {
+            "type": "integer",
+            "title": "Pro Team Id"
+          },
+          "abbrev": {
+            "type": "string",
+            "title": "Abbrev"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score",
+            "description": "None before tip-off"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pro_team_id",
+          "abbrev",
+          "name"
+        ],
+        "title": "GameSide"
       },
       "HTTPValidationError": {
         "properties": {
@@ -2443,6 +2702,138 @@
           "target"
         ],
         "title": "RepliesRequest"
+      },
+      "ScoreDay": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "title": "League Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date",
+            "description": "US date of the games"
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/Game"
+            },
+            "type": "array",
+            "title": "Games"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/ScoreDayRef"
+            },
+            "type": "array",
+            "title": "Days",
+            "description": "Every day of the season with games, for the date picker"
+          },
+          "live": {
+            "type": "boolean",
+            "title": "Live",
+            "description": "A game is on; ask again in about a minute"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "season",
+          "day",
+          "games",
+          "days",
+          "live",
+          "updated_at"
+        ],
+        "title": "ScoreDay"
+      },
+      "ScoreDayRef": {
+        "properties": {
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day",
+          "games"
+        ],
+        "title": "ScoreDayRef"
+      },
+      "ScoresRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 250.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day",
+            "description": "ESPN scoring period (a day). Default: the last day a game started"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id"
+        ],
+        "title": "ScoresRequest"
       },
       "SeasonRow": {
         "properties": {
