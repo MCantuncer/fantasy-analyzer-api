@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import numpy as np
 
 from app import schemas
+from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import EACH_CATEGORY, simulate_season
@@ -48,7 +49,13 @@ def league_summary(league: League) -> schemas.LeagueSummary:
 
 
 class Analyzer:
-    def __init__(self, league: League, team_id: int, keep_player_ids: list[int] | None = None):
+    def __init__(
+        self,
+        league: League,
+        team_id: int,
+        keep_player_ids: list[int] | None = None,
+        not_for_sale_player_ids: list[int] | None = None,
+    ):
         self.league = league
         self.model = CategoryModel(league)
         self.teams = league.teams
@@ -58,6 +65,9 @@ class Analyzer:
         self.dists = [self.model.dist(t.roster) for t in self.teams]
         self.cat_names = [c.name for c in self.model.cats]
         self.perceived = PerceivedValue(league, self.model)
+        mine = {p.id for p in self.me.roster}
+        not_for_sale = {pid for pid in not_for_sale_player_ids or [] if pid not in mine}
+        self.premium = OwnerPremium(league, self.model, self.perceived, not_for_sale)
 
     # ---- helpers -----------------------------------------------------------------------
 
@@ -71,6 +81,8 @@ class Analyzer:
             value=round(self.model.value(p), 2),
             perceived_value=round(self.perceived.value(p), 1),
             tier=tier(p, self.keep),
+            badges=badge_refs(self.premium, p),
+            owner_premium=round(self.premium.dollars(p), 1),
         )
 
     def avg_cat_win(self, i: int, dists: list[Dist]) -> np.ndarray:
@@ -150,6 +162,8 @@ class Analyzer:
             edge=round(d.edge, 3),
             value_they_get=round(d.give_value, 1),
             value_they_give=round(d.get_value, 1),
+            owner_premium=round(d.premium, 1),
+            warnings=d.warnings,
             acceptance=round(d.acceptance, 2),
             acceptance_label=acceptance_label(d.acceptance),
             pitch=finder.pitch(d),
@@ -160,7 +174,7 @@ class Analyzer:
         )
 
     def trades(self, mode: Mode = "fair") -> list[schemas.TradeIdea]:
-        finder = TradeFinder(self.league, self.model, self.idx, self.keep, mode)
+        finder = TradeFinder(self.league, self.model, self.idx, self.keep, mode, premium=self.premium)
         base_cats = self.avg_cat_win(self.idx, self.dists)
         before = self.playoff_pct(self.dists)
         ideas = []
@@ -279,6 +293,9 @@ class Analyzer:
                     "Only lightly owned players are ever suggested as drops. One star counts for more "
                     "than two players adding up to the same dollars, and a player they'd have to cut counts "
                     "against the deal. Acceptance odds are a rough estimate, not a prediction.",
+                    "Owners want a premium for players they hold on to: jewels (star names), keystones "
+                    "(players who carry a category for their team) and fresh signings. Your own jewels and "
+                    "keystones are only offered in deals near the top of what the finder sees.",
                 ],
             ),
             generated_at=datetime.now(UTC).isoformat(timespec="seconds"),

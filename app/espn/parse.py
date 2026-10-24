@@ -72,6 +72,8 @@ class Player:
     season_rank: int | None = None  # ESPN's rank on this season's stats, once games are played
     recent_rank: int | None = None  # ESPN's rank over the last 15 days
     slots: tuple[int, ...] = ()  # lineup slot ids he can fill (PG..C, G, F, UTIL, ...)
+    acquisition_type: str = ""  # DRAFT / ADD / TRADE, for rostered players
+    acquired_ms: int | None = None  # when his current team got him, epoch milliseconds
 
     @property
     def available(self) -> bool:
@@ -88,6 +90,9 @@ class Team:
     losses: int
     ties: int
     faab_remaining: int | None
+    trades: int = 0  # trades made this season
+    acquisitions: int = 0  # free-agent and waiver pickups this season
+    trade_block: dict[int, str] = field(default_factory=dict)  # player id -> ON_THE_BLOCK / UNTOUCHABLE
 
 
 @dataclass
@@ -177,7 +182,7 @@ def _draft_rank(p: dict) -> tuple[int | None, float]:
     return (int(rank) if rank else None), float(r.get("auctionValue") or 0.0)
 
 
-def parse_player(entry: dict, season: int, lineup_slot: int | None = None) -> Player:
+def parse_player(entry: dict, season: int, lineup_slot: int | None = None, roster_entry: dict | None = None) -> Player:
     p = entry.get("player") or entry.get("playerPoolEntry", {}).get("player", {})
     per_game, gp, has_prior = _blend_stats(p, season)
     positions = [POSITIONS[s] for s in p.get("eligibleSlots", []) if s in POSITIONS]
@@ -185,6 +190,7 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None) -> Pl
     ratings = entry.get("ratings") or {}
     season_rank = (ratings.get("0") or {}).get("totalRanking") or None
     recent_rank = (ratings.get("2") or {}).get("totalRanking") or None  # last 15 days
+    acq = roster_entry or {}
     return Player(
         id=int(p["id"]),
         name=p.get("fullName", str(p["id"])),
@@ -204,7 +210,15 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None) -> Pl
         season_rank=int(season_rank) if season_rank else None,
         recent_rank=int(recent_rank) if recent_rank else None,
         slots=tuple(int(s) for s in p.get("eligibleSlots", [])),
+        acquisition_type=acq.get("acquisitionType") or "",
+        acquired_ms=int(acq["acquisitionDate"]) if acq.get("acquisitionDate") else None,
     )
+
+
+def _trade_block(raw: dict | None) -> dict[int, str]:
+    """ESPN's trade block: players an owner lists as available, or marks untouchable."""
+    players = (raw or {}).get("players") or {}
+    return {int(pid): str(status) for pid, status in players.items() if str(pid).lstrip("-").isdigit()}
 
 
 def _starter_slots(roster_settings: dict) -> int:
@@ -290,9 +304,10 @@ def parse_league(raw: dict, free_agents: list[dict] | None = None, pro_schedule:
         for e in (t.get("roster") or {}).get("entries", []):
             pool = dict(e["playerPoolEntry"])
             pool.setdefault("onTeamId", t["id"])
-            roster.append(parse_player(pool, season, lineup_slot=e.get("lineupSlotId")))
+            roster.append(parse_player(pool, season, lineup_slot=e.get("lineupSlotId"), roster_entry=e))
         rec = (t.get("record") or {}).get("overall", {})
-        spent = (t.get("transactionCounter") or {}).get("acquisitionBudgetSpent")
+        counter = t.get("transactionCounter") or {}
+        spent = counter.get("acquisitionBudgetSpent")
         acq = settings.get("acquisitionSettings") or {}
         budget = acq.get("acquisitionBudget") if acq.get("isUsingAcquisitionBudget") else None
         teams.append(
@@ -305,6 +320,9 @@ def parse_league(raw: dict, free_agents: list[dict] | None = None, pro_schedule:
                 losses=int(rec.get("losses", 0)),
                 ties=int(rec.get("ties", 0)),
                 faab_remaining=(budget - spent) if budget is not None and spent is not None else None,
+                trades=int(counter.get("trades") or 0),
+                acquisitions=int(counter.get("acquisitions") or 0),
+                trade_block=_trade_block(t.get("tradeBlock")),
             )
         )
 

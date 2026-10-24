@@ -66,16 +66,18 @@ class ShopAnalyzer(Analyzer):
         offer_player_ids: list[int],
         keep_player_ids: list[int] | None = None,
         faab_max: int | None = None,
+        not_for_sale_player_ids: list[int] | None = None,
     ):
         offered = set(offer_player_ids)
         # A player you're shopping can't also be one you keep.
-        super().__init__(league, team_id, [i for i in keep_player_ids or [] if i not in offered])
+        keep = [i for i in keep_player_ids or [] if i not in offered]
+        super().__init__(league, team_id, keep, not_for_sale_player_ids)
         by_id = {p.id: p for p in self.me.roster}
         missing = offered - by_id.keys()
         if missing:
             raise ShopError("not_your_player", "Pick players from your own roster.")
         self.offered = [by_id[i] for i in offer_player_ids if i in by_id]
-        self.finder = TradeFinder(league, self.model, self.idx, self.keep, mode="edge")
+        self.finder = TradeFinder(league, self.model, self.idx, self.keep, mode="edge", premium=self.premium)
         self.faab_left = self.me.faab_remaining or 0
         cap = round(FAAB_CAP_SHARE * self.faab_left) if faab_max is None else faab_max
         self.faab_cap = max(0, min(cap, self.faab_left))
@@ -116,12 +118,11 @@ class ShopAnalyzer(Analyzer):
                     out += [(list(give), get) for get in gets[n]]
         return out
 
-    def _try(self, j: int, give: list[Player], get: list[Player], stars: set[int], faab: int = 0) -> Deal | None:
+    def _try(self, j: int, give: list[Player], get: list[Player], faab: int = 0) -> Deal | None:
         d = self.finder._evaluate(
             j,
             give,
             get,
-            stars,
             min_ratio=MIN_RATIO,
             min_my_gain=MIN_MY_GAIN,
             min_their_gain=MIN_THEIR_GAIN_SHOP,
@@ -134,7 +135,7 @@ class ShopAnalyzer(Analyzer):
             return None
         return replace(d, faab=faab)
 
-    def _sweeten(self, j: int, give: list[Player], get: list[Player], stars: set[int], plain: Deal | None):
+    def _sweeten(self, j: int, give: list[Player], get: list[Player], plain: Deal | None):
         """The smallest FAAB add that gets the deal done or makes a yes clearly likelier, if any."""
         if not self.faab_cap:
             return None
@@ -143,18 +144,18 @@ class ShopAnalyzer(Analyzer):
         def ok(d: Deal | None) -> bool:
             return d is not None and d.acceptance >= floor
 
-        best = self._try(j, give, get, stars, self.faab_cap)
+        best = self._try(j, give, get, self.faab_cap)
         if not ok(best):
             return None
         lo, hi = 1, self.faab_cap  # trade value rises with FAAB, so the first amount that works is the one
         while lo < hi:
             mid = (lo + hi) // 2
-            d = self._try(j, give, get, stars, mid)
+            d = self._try(j, give, get, mid)
             if ok(d):
                 best, hi = d, mid
             else:
                 lo = mid + 1
-        return best if best.faab == lo else self._try(j, give, get, stars, lo)
+        return best if best.faab == lo else self._try(j, give, get, lo)
 
     def _faab_cost(self, faab: int) -> float:
         return min(FAAB_COST * faab / self.faab_left, 1.0) if self.faab_left else 0.0
@@ -164,11 +165,10 @@ class ShopAnalyzer(Analyzer):
         return d.acceptance * aimed * (1.0 - self._faab_cost(d.faab))
 
     def deals(self, j: int) -> list[Deal]:
-        stars = self.finder._stars(self.teams[j])
         found = []
         for give, get in self.packages(j):
-            plain = self._try(j, give, get, stars)
-            sweet = self._sweeten(j, give, get, stars, plain)
+            plain = self._try(j, give, get)
+            sweet = self._sweeten(j, give, get, plain)
             # One version per package: with FAAB only when it ranks higher after its cost.
             options = [d for d in (plain, sweet) if d and self.target_gain(d) >= TARGET_MIN_GAIN]
             if options:
