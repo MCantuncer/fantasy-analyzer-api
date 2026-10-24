@@ -38,6 +38,7 @@ SIM_TOP = 12
 MAX_PER_PARTNER = 3
 MAX_PER_GET = 2
 RESULTS = 10
+MIN_ODDS_GAIN = 0.005  # a deal must move your playoff odds by at least half a point in the season sim
 
 FAAB_CAP_SHARE = 0.10  # default most FAAB to add to one deal, as a share of what you have left
 # FAAB buys waiver-level players, so a FAAB dollar is worth far less than a draft dollar in a trade.
@@ -211,7 +212,7 @@ class ShopAnalyzer(Analyzer):
         for d in self._to_sim(by_team):
             after = self.playoff_pct(d.dists, d.rosters)
             # Small category gains can vanish in the full simulation; only keep moves that hold up there.
-            if after < before:
+            if after - before < MIN_ODDS_GAIN:
                 continue
             idea = self.trade_idea(self.finder, d, before, after, base_cats)
             if d.faab:

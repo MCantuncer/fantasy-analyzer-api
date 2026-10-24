@@ -4,6 +4,7 @@ from app.analysis.shop import (
     FAAB_CAP_SHARE,
     FAAB_MAX_SHARE,
     FAAB_RATE,
+    MIN_ODDS_GAIN,
     MIN_RATIO,
     TARGET_MIN_GAIN,
     TARGETS,
@@ -30,7 +31,7 @@ def test_deals_send_only_shopped_players(league):
         # Looks even or better for them on paper, and does more for me than for them.
         assert d.value_they_get >= MIN_RATIO * d.value_they_give - 0.2
         assert d.my_cats_gain >= d.their_cats_gain
-        assert d.playoff_pct_after >= d.playoff_pct_before
+        assert d.playoff_pct_after - d.playoff_pct_before >= MIN_ODDS_GAIN - 0.001
         assert d.kind in {"win_win", "paper_win"}
     payoff = [shop._payoff(d) for d in rep.deals]
     assert payoff == sorted(payoff, reverse=True)
