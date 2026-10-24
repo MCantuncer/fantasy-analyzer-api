@@ -24,6 +24,7 @@ from datetime import UTC, date, datetime
 import numpy as np
 
 from app import schemas
+from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.model import CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import simulate_season
@@ -86,7 +87,8 @@ class DailyTrade:
         self.perceived = PerceivedValue(league, self.model)
         self.teams = league.teams
         self.cat_names = [c.name for c in self.model.cats]
-        self.finders = [TradeFinder(league, self.model, i, set()) for i in range(len(self.teams))]
+        self.premium = OwnerPremium(league, self.model, self.perceived)
+        self.finders = [TradeFinder(league, self.model, i, set(), premium=self.premium) for i in range(len(self.teams))]
         self.dists: list[Dist] = self.finders[0].dists
         self.spotlight = spotlight_index(league, day)
 
@@ -97,7 +99,7 @@ class DailyTrade:
         for i in range(n):
             for a in self.finders[i].candidates(partners=range(i + 1, n)):
                 j = a.partner_idx
-                b = self.finders[j]._evaluate(i, a.get, a.give, self.finders[j]._stars(self.teams[i]))
+                b = self.finders[j]._evaluate(i, a.get, a.give)
                 if b is not None:
                     out.append(Pair(a=a, b=b, i=i, j=j))
         return sorted(out, key=lambda p: p.score, reverse=True)
@@ -136,6 +138,8 @@ class DailyTrade:
             value=round(self.model.value(p), 2),
             perceived_value=round(self.perceived.value(p), 1),
             tier=tier(p),
+            badges=badge_refs(self.premium, p),
+            owner_premium=round(self.premium.dollars(p), 1),
         )
 
     def side(

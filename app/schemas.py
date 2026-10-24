@@ -17,6 +17,9 @@ class AnalyzeRequest(LeagueRequest):
     keep_player_ids: list[int] = Field(
         default_factory=list, description="Players never offered in trades or suggested as drops"
     )
+    not_for_sale_player_ids: list[int] = Field(
+        default_factory=list, description="Other teams' players their owners won't move: never targeted in trades"
+    )
 
 
 class TeamSummary(BaseModel):
@@ -39,6 +42,15 @@ class LeagueSummary(BaseModel):
     unsupported_reason: str | None = None
 
 
+class PlayerBadge(BaseModel):
+    kind: Literal["jewel", "keystone", "fresh_signing", "not_for_sale", "on_the_block"] = Field(
+        description="jewel: star name. keystone: carries a category for his team. fresh_signing: just traded for "
+        "or picked up. not_for_sale: untouchable. on_the_block: on his owner's ESPN trade block."
+    )
+    category: str | None = Field(default=None, description="The category a keystone carries")
+    reason: str
+
+
 class PlayerRef(BaseModel):
     id: int
     name: str
@@ -53,6 +65,10 @@ class PlayerRef(BaseModel):
     tier: Literal["core", "tradeable", "droppable", "injured"] = Field(
         description="core: kept by you. tradeable: has a market, trade rather than drop. "
         "droppable: replaceable from free agency. injured: out right now."
+    )
+    badges: list[PlayerBadge] = Field(default_factory=list, description="Why his owner holds on to him")
+    owner_premium: float = Field(
+        default=0.0, description="What his owner wants on top of trade value, in auction dollars"
     )
 
 
@@ -87,7 +103,15 @@ class TradeIdea(BaseModel):
     their_cats_gain: float = Field(description="Change in theirs, ignoring the categories they punt")
     edge: float = Field(description="My gain minus theirs: how much more the deal does for me")
     value_they_get: float = Field(description="Perceived value they receive, in auction dollars")
-    value_they_give: float = Field(description="Perceived value they send, in auction dollars")
+    value_they_give: float = Field(
+        description="Perceived value they send, in auction dollars, including their owner premium"
+    )
+    owner_premium: float = Field(
+        default=0.0, description="Part of value_they_give that is owner premium on their badged players"
+    )
+    warnings: list[str] = Field(
+        default_factory=list, description="Jewels or keystones you give up: only suggested for a clearly better deal"
+    )
     acceptance: float = Field(description="Rough chance the other owner accepts (heuristic)")
     acceptance_label: Literal["likely", "possible", "long_shot"]
     pitch: str = Field(description="Why the deal helps them, to use when you propose it")

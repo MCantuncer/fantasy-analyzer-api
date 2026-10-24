@@ -32,9 +32,8 @@ def test_dollars_at_rank_is_non_increasing(league):
 
 
 def test_acceptance_odds_follow_value_and_need():
-    assert acceptance_odds(1.2, 0.2, False) > acceptance_odds(0.9, 0.2, False)
-    assert acceptance_odds(1.0, 0.2, False) > acceptance_odds(1.0, 0.03, False)
-    assert acceptance_odds(1.0, 0.1, True) < acceptance_odds(1.0, 0.1, False)
+    assert acceptance_odds(1.2, 0.2) > acceptance_odds(0.9, 0.2)
+    assert acceptance_odds(1.0, 0.2) > acceptance_odds(1.0, 0.03)
     assert acceptance_label(0.7) == "likely" and acceptance_label(0.45) == "possible"
     assert acceptance_label(0.2) == "long_shot"
 
@@ -84,7 +83,7 @@ def test_their_gain_ignores_their_punts(league):
 
 
 def test_struggling_teams_are_more_open():
-    assert acceptance_odds(1.0, 0.1, False, struggling=True) > acceptance_odds(1.0, 0.1, False)
+    assert acceptance_odds(1.0, 0.1, struggling=True) > acceptance_odds(1.0, 0.1)
 
 
 def test_draft_dollars_fade_as_games_are_played(league):

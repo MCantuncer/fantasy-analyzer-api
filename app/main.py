@@ -159,7 +159,14 @@ def create_app(
     ) -> schemas.AnalysisReport:
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
-        key = (body.league_id, season, body.team_id, tuple(sorted(body.keep_player_ids)), credentials_key(creds))
+        key = (
+            body.league_id,
+            season,
+            body.team_id,
+            tuple(sorted(body.keep_player_ids)),
+            tuple(sorted(body.not_for_sale_player_ids)),
+            credentials_key(creds),
+        )
         cached = app.state.reports.get(key)
         if cached is not None:
             return cached
@@ -171,7 +178,9 @@ def create_app(
         summary = league_summary(lg)
         if not summary.supported:
             raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
-        report = await run_in_threadpool(lambda: Analyzer(lg, body.team_id, body.keep_player_ids).report())
+        report = await run_in_threadpool(
+            lambda: Analyzer(lg, body.team_id, body.keep_player_ids, body.not_for_sale_player_ids).report()
+        )
         app.state.reports.set(key, report)
         return report
 

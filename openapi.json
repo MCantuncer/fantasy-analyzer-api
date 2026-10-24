@@ -1230,6 +1230,14 @@
             "type": "array",
             "title": "Keep Player Ids",
             "description": "Players never offered in trades or suggested as drops"
+          },
+          "not_for_sale_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Not For Sale Player Ids",
+            "description": "Other teams' players their owners won't move: never targeted in trades"
           }
         },
         "type": "object",
@@ -1858,6 +1866,44 @@
         ],
         "title": "PickupIdea"
       },
+      "PlayerBadge": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "jewel",
+              "keystone",
+              "fresh_signing",
+              "not_for_sale",
+              "on_the_block"
+            ],
+            "title": "Kind",
+            "description": "jewel: star name. keystone: carries a category for his team. fresh_signing: just traded for or picked up. not_for_sale: untouchable. on_the_block: on his owner's ESPN trade block."
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category",
+            "description": "The category a keystone carries"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "reason"
+        ],
+        "title": "PlayerBadge"
+      },
       "PlayerRef": {
         "properties": {
           "id": {
@@ -1903,6 +1949,20 @@
             ],
             "title": "Tier",
             "description": "core: kept by you. tradeable: has a market, trade rather than drop. droppable: replaceable from free agency. injured: out right now."
+          },
+          "badges": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerBadge"
+            },
+            "type": "array",
+            "title": "Badges",
+            "description": "Why his owner holds on to him"
+          },
+          "owner_premium": {
+            "type": "number",
+            "title": "Owner Premium",
+            "description": "What his owner wants on top of trade value, in auction dollars",
+            "default": 0.0
           }
         },
         "type": "object",
@@ -2410,7 +2470,21 @@
           "value_they_give": {
             "type": "number",
             "title": "Value They Give",
-            "description": "Perceived value they send, in auction dollars"
+            "description": "Perceived value they send, in auction dollars, including their owner premium"
+          },
+          "owner_premium": {
+            "type": "number",
+            "title": "Owner Premium",
+            "description": "Part of value_they_give that is owner premium on their badged players",
+            "default": 0.0
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Jewels or keystones you give up: only suggested for a clearly better deal"
           },
           "acceptance": {
             "type": "number",
