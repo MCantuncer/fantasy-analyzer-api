@@ -45,7 +45,7 @@ JEWEL_STICKY_RANK = 20
 # Keystone: swapping him for the best free agent costs his team this much weekly win rate
 # in one category it competes in, and he supplies this share of the team's production
 # above free-agent level there.
-KEYSTONE_SWING = 0.15
+KEYSTONE_SWING = 0.12  # with weekly spreads as wide as backtests show; 0.15 under the old, too-narrow ones
 KEYSTONE_SHARE = 0.30
 KEYSTONE_MIN_WIN = 0.5
 KEYSTONE_PREMIUM = 0.15

@@ -24,11 +24,15 @@ GAMES_PER_WEEK = 3.4
 DISPERSION = {0: 7.0, 1: 1.3, 2: 1.0, 3: 2.0, 4: 1.5, 5: 2.0, 6: 2.5, 11: 1.2, 17: 1.3}
 DEFAULT_DISPERSION = 1.5
 SCHEDULE_CV = 0.08  # weekly games played varies by about 8%
-KNOWN_SCHEDULE_CV = 0.04  # with the real calendar, only rest days and minutes vary
+KNOWN_SCHEDULE_CV = 0.10  # with the real calendar: rest days, DNPs and minutes (measured 9% in 2025-26)
 # ESPN gives no return dates, so a status means an expected number of days out.
 DAYS_OUT = {"DAY_TO_DAY": 2, "SUSPENSION": 5, "OUT": 14, "INJURY_RESERVE": 28}
 IR_DAYS_OUT = 28
 RATIO_OVERDISPERSION = 1.5
+# Share of scheduled starts that turn into games: rest, DNPs and late scratches, net of
+# the bench filling in. League A lineups got 0.95 (2025) and 0.92 (2026) of the starts the
+# calendar gave them.
+AVAILABILITY = 0.93
 
 
 def norm_cdf(x: np.ndarray) -> np.ndarray:
@@ -146,7 +150,7 @@ class CategoryModel:
         if not starts.any():
             return self._empty()
         # row() is one week at self.g games; scale each player to his starts per week.
-        rows = np.array([self.row(p) for p in roster]) * (starts / (self.g * weeks))[:, None, None]
+        rows = np.array([self.row(p) for p in roster]) * (AVAILABILITY * starts / (self.g * weeks))[:, None, None]
         total, att, var = rows.sum(0)
         return self._dist(total, att, var, KNOWN_SCHEDULE_CV)
 
