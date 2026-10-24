@@ -17,7 +17,7 @@ from app.analysis.trades import Deal, Mode, TradeFinder, acceptance_label
 from app.espn.parse import League, Player, Team
 
 SEASON_SIMS = 4000
-WHAT_IF_SIMS = 2000
+WHAT_IF_SIMS = 4000  # what-if gains are paired differences: ~0.5 point noise at 4000, ~1 at 2000
 TRADE_RESULTS = 10
 PICKUP_SIM_TOP = 8
 PICKUP_VIA_TRADE = 2  # at most this many "trade X to open a spot" ideas
