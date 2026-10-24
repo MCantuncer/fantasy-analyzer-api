@@ -11,6 +11,57 @@ from app.espn.parse import League
 
 EACH_CATEGORY = "H2H_CATEGORY"
 
+# How a team's weekly surprises line up across categories, measured on League A's 2025 and
+# 2026 seasons (actual minus projected, in projected sds). Counting stats move together
+# because they all follow games played; FG% and FT% barely do. Pairs not listed are 0.
+CATEGORY_LINKS = {
+    ("PTS", "REB"): 0.66,
+    ("PTS", "AST"): 0.60,
+    ("PTS", "STL"): 0.46,
+    ("PTS", "BLK"): 0.37,
+    ("PTS", "3PM"): 0.67,
+    ("PTS", "TO"): 0.55,
+    ("PTS", "FG%"): 0.31,
+    ("PTS", "FT%"): 0.18,
+    ("REB", "AST"): 0.49,
+    ("REB", "STL"): 0.40,
+    ("REB", "BLK"): 0.42,
+    ("REB", "3PM"): 0.36,
+    ("REB", "TO"): 0.50,
+    ("REB", "FG%"): 0.13,
+    ("AST", "STL"): 0.35,
+    ("AST", "BLK"): 0.26,
+    ("AST", "3PM"): 0.42,
+    ("AST", "TO"): 0.54,
+    ("AST", "FT%"): 0.13,
+    ("STL", "BLK"): 0.25,
+    ("STL", "3PM"): 0.29,
+    ("STL", "TO"): 0.35,
+    ("BLK", "3PM"): 0.22,
+    ("BLK", "TO"): 0.23,
+    ("3PM", "TO"): 0.39,
+    ("3PM", "FG%"): 0.13,
+    ("3PM", "FT%"): 0.10,
+    ("TO", "FT%"): 0.13,
+}
+# Injuries, trades and role changes last: each simulated season gives every team a shock
+# per category, in sds of one week, that holds for the rest of that season.
+TEAM_DRIFT = 0.5
+
+
+def category_links(names: list[str]) -> np.ndarray:
+    """Correlation matrix for these categories, from CATEGORY_LINKS."""
+    n = len(names)
+    m = np.eye(n)
+    for i in range(n):
+        for j in range(i + 1, n):
+            m[i, j] = m[j, i] = CATEGORY_LINKS.get((names[i], names[j]), CATEGORY_LINKS.get((names[j], names[i]), 0.0))
+    # Keep it a valid correlation matrix whatever categories a league uses.
+    vals, vecs = np.linalg.eigh(m)
+    m = vecs @ np.diag(np.clip(vals, 1e-6, None)) @ vecs.T
+    d = np.sqrt(np.diag(m))
+    return m / d[:, None] / d[None, :]
+
 
 def _add_banked(draws: np.ndarray, i: int, banked: dict[int, float], league: League, rest: Dist) -> None:
     """Turn team i's draws for the days left into full-week totals."""
@@ -34,6 +85,8 @@ class SeasonResult:
     playoff_pct: np.ndarray  # (T,) 0..1
     first_seed_pct: np.ndarray
     mean_rank: np.ndarray
+    win_pct: np.ndarray  # (T,) mean final winning percentage
+    win_pct_sd: np.ndarray  # (T,) its spread across simulated seasons
 
 
 def simulate_season(
@@ -51,6 +104,10 @@ def simulate_season(
     For the matchup period being played, `period_dists` covers only the days left, so the
     stats each team has already banked are added on top.
 
+    Categories are drawn together (CATEGORY_LINKS), and each team carries a lasting
+    shock per category for the whole simulated season (TEAM_DRIFT): without them the
+    simulated records spread too little and the odds come out too sure.
+
     Uses a fixed seed so that two runs differing only in one roster share the same
     random draws, which makes "before vs after" comparisons much less noisy.
     """
@@ -64,6 +121,8 @@ def simulate_season(
     losses = np.tile(np.array([t.losses for t in league.teams], float), (n_sims, 1))
     ties = np.tile(np.array([t.ties for t in league.teams], float), (n_sims, 1))
     each_cat = league.scoring_type == EACH_CATEGORY
+    chol = np.linalg.cholesky(category_links([c.name for c in league.categories]))
+    drift = rng.normal(0.0, TEAM_DRIFT, size=(n_sims, n_teams, len(league.categories)))
 
     periods = sorted({m.period for m in league.schedule if m.winner == "UNDECIDED"})
     for period in periods:
@@ -73,7 +132,8 @@ def simulate_season(
         week = (period_dists or {}).get(period, dists)
         mu = np.array([d.mu for d in week])
         sd = np.array([d.sd for d in week])
-        draws = rng.normal(mu, sd, size=(n_sims, n_teams, mu.shape[1]))
+        z = rng.standard_normal(size=(n_sims, n_teams, mu.shape[1])) @ chol.T
+        draws = mu + sd * (z + drift)
         if period == league.current_period and period in (period_dists or {}):
             for m in games:
                 for tid, banked in ((m.home, m.home_totals), (m.away, m.away_totals)):
@@ -116,4 +176,6 @@ def simulate_season(
         playoff_pct=(rank < playoff_teams).mean(0),
         first_seed_pct=(rank == 0).mean(0),
         mean_rank=rank.mean(0) + 1,
+        win_pct=pct.mean(0),
+        win_pct_sd=pct.std(0),
     )

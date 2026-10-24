@@ -16,6 +16,8 @@ BASE_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/fba"
 
 # Light views for the league feed: names, owners, FAAB and the current scoring period.
 FEED_VIEWS = ["mTeam", "mSettings", "mStatus"]
+# The league-only overview adds this week's category scores.
+OVERVIEW_VIEWS = [*FEED_VIEWS, "mMatchupScore"]
 
 LEAGUE_VIEWS = ["mSettings", "mTeam", "mRoster", "mStandings", "mMatchupScore", "mScoreboard", "mDraftDetail"]
 
@@ -116,6 +118,10 @@ class EspnClient:
         params = [("view", v) for v in FEED_VIEWS]
         return await self._get(self._league_url(season, league_id), params, creds)
 
+    async def overview(self, season: int, league_id: int, creds: EspnCredentials | None) -> dict:
+        params = [("view", v) for v in OVERVIEW_VIEWS]
+        return await self._get(self._league_url(season, league_id), params, creds)
+
     async def transactions(
         self, season: int, league_id: int, scoring_period: int, creds: EspnCredentials | None
     ) -> list[dict]:
@@ -151,6 +157,24 @@ class EspnClient:
         data = await self._get(
             self._league_url(season, league_id),
             [("view", "kona_player_info"), ("scoringPeriodId", str(day))],
+            creds,
+            headers={"X-Fantasy-Filter": json.dumps(flt)},
+        )
+        return data.get("players", [])
+
+    async def rosters_on_day(self, season: int, league_id: int, day: int, creds: EspnCredentials | None) -> dict:
+        """Every team's roster and lineup slots as they stood on one scoring period, past seasons included."""
+        params = [("view", "mRoster"), ("scoringPeriodId", str(day))]
+        return await self._get(self._league_url(season, league_id), params, creds)
+
+    async def player_pool(
+        self, season: int, league_id: int, creds: EspnCredentials | None, limit: int = 1500
+    ) -> list[dict]:
+        """The most-owned players with their season stats, rostered or not."""
+        flt = {"players": {"limit": limit, "sortPercOwned": {"sortPriority": 1, "sortAsc": False}}}
+        data = await self._get(
+            self._league_url(season, league_id),
+            [("view", "kona_player_info")],
             creds,
             headers={"X-Fantasy-Filter": json.dumps(flt)},
         )

@@ -258,9 +258,6 @@ class LinkedTeam(BaseModel):
     season: int
     team_id: int
     team_name: str
-    token: str | None = Field(
-        default=None, description="Only on a fresh link: send it as 'Authorization: Bearer <token>' from now on"
-    )
 
 
 class FeedPlayer(BaseModel):
@@ -349,6 +346,96 @@ class ReactRequest(LeagueRequest):
 class ReactionsOut(BaseModel):
     target: str
     reactions: Reactions
+
+
+class SignUpRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    password: str = Field(min_length=8, max_length=200)
+
+
+class GoogleSignIn(BaseModel):
+    credential: str = Field(min_length=20, max_length=4096, description="The ID token from Google Identity Services")
+
+
+class MyLeague(BaseModel):
+    league_id: int
+    season: int
+    name: str
+    team_id: int | None = Field(default=None, description="The team this account is the verified manager of")
+
+
+class Notice(BaseModel):
+    id: int
+    text: str
+    at: str
+
+
+class Me(BaseModel):
+    id: int
+    email: str | None
+    has_google: bool
+    leagues: list[MyLeague]
+    notices: list[Notice]
+
+
+class AuthResult(BaseModel):
+    token: str = Field(description="Send as 'Authorization: Bearer <token>'")
+    me: Me
+
+
+class AuthConfig(BaseModel):
+    google_client_id: str | None = Field(default=None, description="Set when Google sign-in is turned on")
+
+
+class OverviewTeam(BaseModel):
+    id: int
+    name: str
+    abbrev: str
+    record: str
+    has_manager: bool = Field(description="Some account has verified it")
+    mine: bool = False
+
+
+class MatchupSide(BaseModel):
+    team_id: int
+    wins: int
+    losses: int
+    ties: int
+
+
+class OverviewMatchup(BaseModel):
+    home: MatchupSide
+    away: MatchupSide
+
+
+class MvpCandidate(BaseModel):
+    team_id: int
+    opponent_id: int
+    wins: int
+    losses: int
+    ties: int
+    season_record: str
+
+
+class LeaguePulse(BaseModel):
+    faab_leader_id: int | None = None
+    faab_leader_spent: int | None = None
+    faab_budget: int | None = None
+    claims_last_7_days: int = 0
+    trades_this_season: int = 0
+    close_matchups: int = Field(default=0, description="Matchups one category or less apart")
+
+
+class LeagueOverview(BaseModel):
+    league_id: int
+    season: int
+    name: str
+    matchup_period: int
+    teams: list[OverviewTeam]
+    matchups: list[OverviewMatchup]
+    mvp: MvpCandidate | None = Field(default=None, description="The team with the best category record this week")
+    pulse: LeaguePulse
+    my_team_id: int | None = None
 
 
 class ShopRequest(AnalyzeRequest):
@@ -454,6 +541,7 @@ class ScoresRequest(LeagueRequest):
     day: int | None = Field(
         default=None, ge=1, le=250, description="ESPN scoring period (a day). Default: the last day a game started"
     )
+    team_id: int | None = Field(default=None, gt=0, description="Your team: this week's fixtures name your players")
 
 
 class GameLine(BaseModel):
@@ -491,6 +579,26 @@ class Game(BaseModel):
     lines: list[GameLine] = Field(description="Everyone who played, most minutes first")
 
 
+class FixturePlayer(BaseModel):
+    player_id: int
+    name: str
+    injury_status: str
+
+
+class Fixture(BaseModel):
+    id: int
+    start: str = Field(description="UTC start time, ISO 8601")
+    away: GameSide
+    home: GameSide
+    my_players: list[FixturePlayer] = Field(description="Your players in this game; empty without team_id")
+
+
+class FixtureDay(BaseModel):
+    day: int
+    date: str | None = None
+    games: list[Fixture]
+
+
 class ScoreDayRef(BaseModel):
     day: int
     date: str | None = None
@@ -505,4 +613,7 @@ class ScoreDay(BaseModel):
     games: list[Game]
     days: list[ScoreDayRef] = Field(description="Every day of the season with games, for the date picker")
     live: bool = Field(description="A game is on; ask again in about a minute")
+    week: list[FixtureDay] = Field(
+        description="Games still to tip off this week (Monday to Sunday), whatever day is shown"
+    )
     updated_at: str

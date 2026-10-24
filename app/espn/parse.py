@@ -239,8 +239,8 @@ def parse_calendar(pro_schedule: dict, raw: dict) -> Calendar | None:
 
     ESPN doesn't publish the matchup -> day mapping, so it is rebuilt the way ESPN
     builds it: Monday-to-Sunday weeks up to the league's last scoring day, with the
-    All-Star break week (the longest run of days without games) folded into the week
-    before it until the count matches.
+    week the All-Star break starts in (February's longest run of days without games)
+    folded together with the week after it, as ESPN did in 2025 and 2026.
     """
     team_days: dict[int, set[int]] = {}
     opening: date | None = None
@@ -274,9 +274,27 @@ def parse_calendar(pro_schedule: dict, raw: dict) -> Calendar | None:
             best = max(best, run)
         return best
 
+    def all_star_week() -> int | None:
+        """Index of the week in which February's longest run of days without games begins."""
+        best, start, run = 0, None, 0
+        for day in range(1, last_day + 1):
+            if (opening + timedelta(days=day - 1)).month != 2 or day in game_days:
+                run = 0
+                continue
+            run += 1
+            if run > best:
+                best, start = run, day - run + 1
+        if start is None or best < 2:
+            return None
+        return next(k for k, w in enumerate(weeks) if start in w)
+
+    # ESPN folds the week the All-Star break starts in together with the week after it.
+    k = all_star_week()
+    if n_periods and len(weeks) > n_periods and k is not None and k + 1 < len(weeks):
+        weeks[k : k + 2] = [weeks[k] + weeks[k + 1]]
     while n_periods and len(weeks) > n_periods:
-        # The All-Star break is in February. Early in the season December's NBA Cup
-        # games are still unscheduled, so a December week can look emptier than it is.
+        # Fallback for other calendars. Early in the season December's NBA Cup games are
+        # still unscheduled, so a December week can look emptier than it is.
         feb = [k for k in range(1, len(weeks)) if (opening + timedelta(days=weeks[k][0] - 1)).month == 2]
         i = max(feb or range(1, len(weeks)), key=lambda k: idle_run(weeks[k]))
         weeks[i - 1 : i + 1] = [weeks[i - 1] + weeks[i]]

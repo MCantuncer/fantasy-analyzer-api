@@ -24,24 +24,32 @@ uv run ruff check .
 
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
-| POST | `/api/league` | `{league_id, season?}` | League name, categories and teams, for the team picker |
-| POST | `/api/analyze` | `{league_id, team_id, season?, keep_player_ids?}` | Full analysis report |
+| GET | `/api/auth/config` | | `{google_client_id}`, null while Google sign-in is off |
+| POST | `/api/auth/signup` | `{email, password}` | `{token, me}` for a new account |
+| POST | `/api/auth/login` | `{email, password}` | `{token, me}` |
+| POST | `/api/auth/google` | `{credential}` | `{token, me}` from a Google Identity Services ID token |
+| POST | `/api/auth/logout` | | Ends the session |
+| POST | `/api/me` | | The account, its leagues (with the verified team, if any) and notices |
+| POST | `/api/me/notices/clear` | | Clears the notices |
+| POST | `/api/my-leagues/add` | `{league_id, season?}` | Follows a league (no team yet) |
+| POST | `/api/my-leagues/remove` | `{league_id, season?}` | Unfollows it |
+| POST | `/api/league-overview` | `{league_id, season?}` | League-only view: this week's matchups, the MVP candidate, league pulse, which teams have a manager |
+| POST | `/api/league` | `{league_id, season?}` | League name, categories and teams |
+| POST | `/api/analyze` | `{league_id, team_id, season?, keep_player_ids?}` | Full analysis report, only for the team you verified |
 | POST | `/api/trade-of-the-day` | `{league_id, season?}` | Today's best win-win trade between any two teams, with poll votes |
 | POST | `/api/trade-of-the-day/vote` | `{league_id, season?, date, team_id, take, voter}` | Records a "Would you take it?" vote and returns the updated pick |
 | POST | `/api/team-link/start` | `{league_id, season?, team_id}` | A code to set as the team's ESPN abbreviation, and a signed challenge |
-| POST | `/api/team-link/verify` | `{challenge}` | Checks the abbreviation on ESPN; returns a session token for that team |
-| POST | `/api/team-link/me` | `{league_id, season?}` | The linked team (needs the token) |
-| POST | `/api/team-link/unlink` | | Forgets the token |
-| POST | `/api/feed` | `{league_id, season?, page?}` | A week of moves (claims, losing bids, adds, drops, trades); with a token also the chat, reactions and reply counts |
+| POST | `/api/team-link/verify` | `{challenge}` | Checks the abbreviation on ESPN and makes the account that team's manager |
+| POST | `/api/feed` | `{league_id, season?, page?}` | A week of moves (claims, losing bids, adds, drops, trades); for a verified manager also the chat, reactions and reply counts |
 | POST | `/api/feed/replies` | `{league_id, season?, target}` | Replies on a move or a post |
 | POST | `/api/posts` | `{league_id, season?, body, target?}` | Posts to the chat, or replies when `target` is set |
 | POST | `/api/posts/delete` | `{league_id, season?, post_id}` | Deletes your own post |
 | POST | `/api/reactions` | `{league_id, season?, target, reaction, on?}` | Toggles `steal`, `smart`, `overpay`, `lol`, or a `won:<team id>` trade vote |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
-| POST | `/api/scores` | `{league_id, season?, day?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league |
+| POST | `/api/scores` | `{league_id, season?, day?, team_id?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
 | GET | `/api/health` | | `{ok: true}` |
 
-`season` defaults to the current ESPN season (2026-27 is `2027`). `keep_player_ids` are never offered in trades or suggested as drops.
+Every endpoint except `/api/health` and `/api/auth/*` needs `Authorization: Bearer <token>` from sign-up or sign-in. `season` defaults to the current ESPN season (2026-27 is `2027`). `keep_player_ids` are never offered in trades or suggested as drops.
 
 The schema is in `openapi.json`. Regenerate it after changing `app/schemas.py`:
 
@@ -49,11 +57,15 @@ The schema is in `openapi.json`. Regenerate it after changing `app/schemas.py`:
 uv run python -m scripts.export_openapi openapi.json
 ```
 
-## League chat and linking a team
+## Accounts and verified managers
 
-ESPN has no login for other sites, so a manager proves a team is theirs by changing its abbreviation on ESPN to a 4-character code from `/api/team-link/start` and calling `/api/team-link/verify`. Only the team's owner and the league manager can edit it, and the API reads it back from ESPN's league data. The code rides in an HMAC-signed challenge that expires after 30 minutes, so nothing is stored until the check passes. Then the device gets a random token, sent as `Authorization: Bearer <token>`; only its SHA-256 hash is stored. No ESPN password or cookie is kept.
+People sign up with an email and password (scrypt-hashed) or with Google, then add leagues by ID. Following a league shows only league-wide data (`/api/league-overview`, the moves feed). Anything about one team, like the analysis, the chat and reactions, needs the account to be that team's verified manager.
 
-Set `SECRET_KEY` (any long random string) so challenges survive a restart. Posts, reactions and links use `DATABASE_URL` like the trade of the day, and live in memory without it.
+ESPN has no login for other sites, so a manager proves a team is theirs by changing its abbreviation on ESPN to a 4-character code from `/api/team-link/start` and calling `/api/team-link/verify`. Only the team's owner and the league manager can edit it, and the API reads it back from ESPN's league data. The code rides in an HMAC-signed challenge bound to the account that asked, which expires after 30 minutes, so nothing is stored until the check passes.
+
+Each team has one manager and each account manages one team per league. The newest successful check wins: if another account verified the team before, it loses the team and gets a notice. This also recovers a team after a lost password. Sessions are random tokens kept for 90 days; only their SHA-256 hash is stored. No ESPN password or cookie is kept.
+
+Set `SECRET_KEY` (any long random string) so challenges survive a restart, and `GOOGLE_CLIENT_ID` (a Google OAuth web client ID) to turn on Google sign-in. Accounts, posts and reactions use `DATABASE_URL` like the trade of the day, and live in memory without it.
 
 The feed pages through the season a week (seven scoring periods) at a time. Transactions come from ESPN's `mTransactions2` view, one call per day: past days are cached for six hours, today for a minute.
 
@@ -86,9 +98,19 @@ ESPN answers `401` for a private league without cookies, and the API passes that
 - **Trade of the day:** every pair of teams, scanned with the same finder from both sides (`app/analysis/daily.py`). A deal qualifies only if both owners see fair value and both teams gain in the categories they compete in; the top few must also keep both teams' playoff odds from dropping in the simulation. Deals are ranked by the smaller of the two gains, weighted by the chance both owners say yes. Teams take turns in the spotlight (one a day, fixed order per league), and the spotlight team's best deal wins when it's close to the overall best, so the pick moves around the league. The pick is fixed per league per UTC day. The scan takes a few seconds (longer on the free plan), so the endpoint answers `status: "pending"` after `DAILY_TRADE_WAIT_SECONDS` (default 20) and the client asks again.
 - **Trading for one player:** pick any rostered player and get his fit with your build (category changes and playoff odds if you added him), his owner's build, needs and which of your players help them, and up to three offers (`app/analysis/target.py`). Offers use the trade finder's rules, except any gain for you counts and the owner's build only has to stay about even. Packages are one or two of your players for him, or two or three for him plus one of their low-value players. The best offer maximises playoff gain weighted by acceptance; fallbacks are the likeliest to be accepted and the cheapest on paper. If nothing keeps the owner's build even, the best long shots are shown with a note.
 - **Pickups:** every healthy free agent against every possible drop, keeping the best drop.
-- **Season:** 4,000 simulations of the remaining schedule with the league's real format: each category counts in "H2H each category" leagues, one result per matchup in "most categories" leagues (`app/analysis/sim.py`).
+- **Season:** 4,000 simulations of the remaining schedule with the league's real format: each category counts in "H2H each category" leagues, one result per matchup in "most categories" leagues (`app/analysis/sim.py`). Categories are drawn together, since counting stats rise and fall with games played, and each team carries a lasting shock for the whole simulated season, which stands in for injuries, trades and role changes.
 
 Only ESPN head-to-head category leagues are supported for now.
+
+## Backtest
+
+Replays finished seasons of a public league week by week through the live model, using only what was known on each week's first day (rosters, lineups and box scores before that day), and scores the weekly category odds and the playoff odds against what happened (`app/backtest/`):
+
+```sh
+uv run python -m scripts.backtest 744636428 2025 2026
+```
+
+The first run of a season downloads it from ESPN into `.cache/backtest/` (a couple of minutes); later runs read the cache. Lower Brier and log loss are better; a spread of 1.0 means the model is exactly as unsure as it should be, above 1 it is overconfident. Keep a model change only if it helps every season.
 
 ## Test fixture
 

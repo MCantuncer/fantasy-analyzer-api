@@ -1,8 +1,9 @@
 import numpy as np
 
+import app.analysis.sim as sim
 from app.analysis.model import CategoryModel, norm_cdf
 from app.analysis.report import Analyzer
-from app.analysis.sim import simulate_season
+from app.analysis.sim import category_links, simulate_season
 
 
 def test_norm_cdf_matches_known_values():
@@ -48,6 +49,27 @@ def test_season_sim_is_reproducible(league):
     a = simulate_season(league, dists, model.reverse, n_sims=300)
     b = simulate_season(league, dists, model.reverse, n_sims=300)
     assert np.array_equal(a.playoff_pct, b.playoff_pct)
+
+
+def test_category_links_are_a_valid_correlation_matrix():
+    names = ["PTS", "REB", "AST", "STL", "BLK", "3PM", "TO", "FG%", "FT%", "OREB"]
+    m = category_links(names)
+    assert np.allclose(m, m.T) and np.allclose(np.diag(m), 1.0)
+    assert np.linalg.eigvalsh(m).min() > 0
+    assert m[0, 1] > 0.5  # points and rebounds move together
+    assert abs(m[7, 8]) < 0.05 and abs(m[0, 9]) < 0.05  # FG% vs FT%, and a pair with no link
+
+
+def test_drift_and_links_spread_the_simulated_records(league, monkeypatch):
+    model = CategoryModel(league)
+    dists = [model.dist(t.roster) for t in league.teams]
+    linked = simulate_season(league, dists, model.reverse, n_sims=1000)
+    monkeypatch.setattr(sim, "TEAM_DRIFT", 0.0)
+    monkeypatch.setattr(sim, "category_links", lambda names: np.eye(len(names)))
+    independent = simulate_season(league, dists, model.reverse, n_sims=1000)
+    # Less certain: the favourite's odds come down, the long shots' go up.
+    assert linked.playoff_pct.max() < independent.playoff_pct.max()
+    assert linked.playoff_pct.min() > independent.playoff_pct.min()
 
 
 def test_report_sections(league):
