@@ -56,3 +56,11 @@ def test_target_endpoint(client, league):
     bad = client.post("/api/target", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM, "player_id": 1})
     assert bad.status_code == 400
     assert bad.json()["detail"]["code"] == "player_not_rostered"
+
+
+def test_report_lists_other_rosters(client):
+    r = client.post("/api/analyze", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM, "season": 2027})
+    rosters = r.json()["league_rosters"]
+    assert len(rosters) == 9
+    assert all(t["team_id"] != MY_TEAM for t in rosters)
+    assert all(t["players"] for t in rosters)
