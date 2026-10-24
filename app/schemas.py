@@ -454,6 +454,7 @@ class ScoresRequest(LeagueRequest):
     day: int | None = Field(
         default=None, ge=1, le=250, description="ESPN scoring period (a day). Default: the last day a game started"
     )
+    team_id: int | None = Field(default=None, gt=0, description="Your team: this week's fixtures name your players")
 
 
 class GameLine(BaseModel):
@@ -491,6 +492,26 @@ class Game(BaseModel):
     lines: list[GameLine] = Field(description="Everyone who played, most minutes first")
 
 
+class FixturePlayer(BaseModel):
+    player_id: int
+    name: str
+    injury_status: str
+
+
+class Fixture(BaseModel):
+    id: int
+    start: str = Field(description="UTC start time, ISO 8601")
+    away: GameSide
+    home: GameSide
+    my_players: list[FixturePlayer] = Field(description="Your players in this game; empty without team_id")
+
+
+class FixtureDay(BaseModel):
+    day: int
+    date: str | None = None
+    games: list[Fixture]
+
+
 class ScoreDayRef(BaseModel):
     day: int
     date: str | None = None
@@ -505,4 +526,7 @@ class ScoreDay(BaseModel):
     games: list[Game]
     days: list[ScoreDayRef] = Field(description="Every day of the season with games, for the date picker")
     live: bool = Field(description="A game is on; ask again in about a minute")
+    week: list[FixtureDay] = Field(
+        description="Games still to tip off this week (Monday to Sunday), whatever day is shown"
+    )
     updated_at: str

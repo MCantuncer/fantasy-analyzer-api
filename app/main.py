@@ -28,7 +28,7 @@ from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
 from app.espn.parse import League, parse_league
 from app.feed import PlayerName, Transaction, parse_players, parse_transactions
-from app.scores import build_day, needs_stats, parse_schedule, settled
+from app.scores import build_day, needs_stats, parse_schedule, settled, week_fixtures
 from app.social import (
     CHALLENGE_SECONDS,
     Challenge,
@@ -706,6 +706,34 @@ def create_app(
             schemas.ScoreDayRef(day=d, date=_iso_date(sched.date_of(d)), games=len(gs))
             for d, gs in sorted(sched.games.items())
         ]
+        team = lg.team(body.team_id) if body.team_id else None
+        roster = team.roster if team else []
+
+        def fixture_side(pro_team_id: int) -> schemas.GameSide:
+            abbrev, name = sched.teams.get(pro_team_id, ("", ""))
+            return schemas.GameSide(pro_team_id=pro_team_id, abbrev=abbrev, name=name)
+
+        week = [
+            schemas.FixtureDay(
+                day=d,
+                date=_iso_date(sched.date_of(d)),
+                games=[
+                    schemas.Fixture(
+                        id=g.id,
+                        start=iso(g.start),
+                        away=fixture_side(g.away),
+                        home=fixture_side(g.home),
+                        my_players=[
+                            schemas.FixturePlayer(player_id=p.id, name=p.name, injury_status=p.injury_status)
+                            for p in roster
+                            if p.pro_team_id in (g.away, g.home)
+                        ],
+                    )
+                    for g in gs
+                ],
+            )
+            for d, gs in week_fixtures(sched, now)
+        ]
         return schemas.ScoreDay(
             league_id=body.league_id,
             season=season,
@@ -714,6 +742,7 @@ def create_app(
             games=games,
             days=days,
             live=any(g.status == "live" for g in games),
+            week=week,
             updated_at=iso(now),
         )
 

@@ -1924,6 +1924,97 @@
         ],
         "title": "FeedTeam"
       },
+      "Fixture": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "UTC start time, ISO 8601"
+          },
+          "away": {
+            "$ref": "#/components/schemas/GameSide"
+          },
+          "home": {
+            "$ref": "#/components/schemas/GameSide"
+          },
+          "my_players": {
+            "items": {
+              "$ref": "#/components/schemas/FixturePlayer"
+            },
+            "type": "array",
+            "title": "My Players",
+            "description": "Your players in this game; empty without team_id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "start",
+          "away",
+          "home",
+          "my_players"
+        ],
+        "title": "Fixture"
+      },
+      "FixtureDay": {
+        "properties": {
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/Fixture"
+            },
+            "type": "array",
+            "title": "Games"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day",
+          "games"
+        ],
+        "title": "FixtureDay"
+      },
+      "FixturePlayer": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "injury_status": {
+            "type": "string",
+            "title": "Injury Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "injury_status"
+        ],
+        "title": "FixturePlayer"
+      },
       "Game": {
         "properties": {
           "id": {
@@ -2749,6 +2840,14 @@
             "title": "Live",
             "description": "A game is on; ask again in about a minute"
           },
+          "week": {
+            "items": {
+              "$ref": "#/components/schemas/FixtureDay"
+            },
+            "type": "array",
+            "title": "Week",
+            "description": "Games still to tip off this week (Monday to Sunday), whatever day is shown"
+          },
           "updated_at": {
             "type": "string",
             "title": "Updated At"
@@ -2762,6 +2861,7 @@
           "games",
           "days",
           "live",
+          "week",
           "updated_at"
         ],
         "title": "ScoreDay"
@@ -2827,6 +2927,19 @@
             ],
             "title": "Day",
             "description": "ESPN scoring period (a day). Default: the last day a game started"
+          },
+          "team_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id",
+            "description": "Your team: this week's fixtures name your players"
           }
         },
         "type": "object",
