@@ -21,6 +21,8 @@ class SeasonResult:
     playoff_pct: np.ndarray  # (T,) 0..1
     first_seed_pct: np.ndarray
     mean_rank: np.ndarray
+    win_pct: np.ndarray  # (T,) mean final winning percentage
+    win_pct_sd: np.ndarray  # (T,) its spread across simulated seasons
 
 
 def simulate_season(
@@ -95,4 +97,6 @@ def simulate_season(
         playoff_pct=(rank < playoff_teams).mean(0),
         first_seed_pct=(rank == 0).mean(0),
         mean_rank=rank.mean(0) + 1,
+        win_pct=pct.mean(0),
+        win_pct_sd=pct.std(0),
     )
