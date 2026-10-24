@@ -129,6 +129,17 @@ class Assumptions(BaseModel):
     notes: list[str]
 
 
+class TradeTarget(BaseModel):
+    player: PlayerRef
+    my_cats_gain: float = Field(description="Change in my expected categories won if I added him")
+
+
+class TeamRoster(BaseModel):
+    team_id: int
+    team_name: str
+    players: list[TradeTarget]
+
+
 class AnalysisReport(BaseModel):
     league: LeagueSummary
     team_id: int
@@ -142,6 +153,7 @@ class AnalysisReport(BaseModel):
     )
     pickups: list[PickupIdea]
     season: list[SeasonRow]
+    league_rosters: list[TeamRoster] = Field(description="Every other team's players, for picking a trade target")
     faab_remaining: int | None
     assumptions: Assumptions
     generated_at: str

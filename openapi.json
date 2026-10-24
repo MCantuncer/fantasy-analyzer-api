@@ -1239,6 +1239,14 @@
             "type": "array",
             "title": "Season"
           },
+          "league_rosters": {
+            "items": {
+              "$ref": "#/components/schemas/TeamRoster"
+            },
+            "type": "array",
+            "title": "League Rosters",
+            "description": "Every other team's players, for picking a trade target"
+          },
           "faab_remaining": {
             "anyOf": [
               {
@@ -1274,6 +1282,7 @@
           "edge_trades",
           "pickups",
           "season",
+          "league_rosters",
           "faab_remaining",
           "assumptions",
           "generated_at",
@@ -2826,6 +2835,32 @@
         ],
         "title": "TeamLinkVerify"
       },
+      "TeamRoster": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/TradeTarget"
+            },
+            "type": "array",
+            "title": "Players"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "players"
+        ],
+        "title": "TeamRoster"
+      },
       "TeamSummary": {
         "properties": {
           "id": {
@@ -3200,6 +3235,24 @@
           "playoff_pct_after"
         ],
         "title": "TradeSide"
+      },
+      "TradeTarget": {
+        "properties": {
+          "player": {
+            "$ref": "#/components/schemas/PlayerRef"
+          },
+          "my_cats_gain": {
+            "type": "number",
+            "title": "My Cats Gain",
+            "description": "Change in my expected categories won if I added him"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player",
+          "my_cats_gain"
+        ],
+        "title": "TradeTarget"
       },
       "ValidationError": {
         "properties": {
