@@ -15,6 +15,7 @@ Every rank is priced on one curve built from ESPN's own rank -> auction dollars.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -110,9 +111,13 @@ class PerceivedValue:
     def total(self, players: list[Player]) -> float:
         return sum(self.value(p) for p in players)
 
-    def package(self, players: list[Player]) -> float:
-        """What a group of players is worth together in a trade, with the premium for stars."""
-        return float(sum(self.value(p) ** STUD_POWER for p in players) ** (1 / STUD_POWER)) if players else 0.0
+    def package(self, players: list[Player], price: Callable[[Player], float] | None = None) -> float:
+        """What a group of players is worth together in a trade, with the premium for stars.
+
+        ``price`` replaces trade value per player, e.g. with an owner's premium added.
+        """
+        each = price or self.value
+        return float(sum(max(each(p), 0.0) ** STUD_POWER for p in players) ** (1 / STUD_POWER)) if players else 0.0
 
     @cached_property
     def replacement(self) -> float:

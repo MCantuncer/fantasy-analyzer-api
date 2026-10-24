@@ -9,6 +9,11 @@ A deal is suggested only when
 adding up to the same dollars, and a player they must cut to make room counts
 against the deal unless waivers have someone as good.
 
+Owners also hold on to some players beyond their trade value: stars, players who
+carry a category, fresh signings (see badges.py). Getting one of those costs their
+owner premium on top of trade value, and giving up one of yours takes a deal near
+the top of what the finder sees.
+
 Each surviving deal gets an acceptance estimate and a list of reasons to use when
 pitching it. Deals are ranked by playoff-odds gain weighted by that estimate.
 """
@@ -22,6 +27,7 @@ from typing import Literal
 
 import numpy as np
 
+from app.analysis.badges import OwnerPremium
 from app.analysis.model import CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.tiers import droppable
@@ -31,7 +37,6 @@ MIN_MY_GAIN = 0.05  # expected categories won per week
 MIN_THEIR_GAIN = 0.02
 MIN_VALUE_RATIO = 0.85  # they must get back at least this share of perceived value
 MAX_VALUE_RATIO = 1.4  # never overpay by more than this on paper
-TOP_PLAYERS_PROTECTED = 2
 SHORTLIST = 14
 MAX_PER_TARGET = 2
 MAX_PER_PARTNER = 4
@@ -48,6 +53,14 @@ EDGE_MIN_MARGIN = 0.10  # my gain minus theirs, in expected categories won per w
 WASTED_SHARE = 0.4  # a player whose positive value is at least this much in punted categories
 RIVAL_SPOTS = 2  # teams within this many standings places of me are playoff rivals
 RIVAL_DISCOUNT = 0.8  # in edge mode, deals that also help a rival rank lower
+
+# Giving up one of your own jewels or keystones takes a deal in the top share of what the
+# finder sees that day, and never less than twice the usual bar.
+SPECTACULAR_PERCENTILE = 90
+SPECTACULAR_FLOOR = 2 * MIN_MY_GAIN
+# A deal that takes a team's keystone category away without giving it back.
+KEYSTONE_LOSS = 0.10  # weekly win rate lost in that category
+KEYSTONE_PENALTY = 0.10  # acceptance
 
 LIKELY, POSSIBLE = 0.6, 0.4
 
@@ -71,6 +84,8 @@ class Deal:
     rival: bool = False
     rosters: dict[int, list[Player]] = field(default_factory=dict)  # team index -> roster after the deal
     my_add: Player | None = None  # free agent I pick up for the spot a 2-for-1 opens
+    premium: float = 0.0  # owner premium included in get_value, in dollars
+    warnings: list[str] = field(default_factory=list)  # what I give up that's hard to replace
 
     @property
     def edge(self) -> float:
@@ -82,15 +97,17 @@ class Deal:
         return self.acceptance * self.my_gain
 
 
-def acceptance_odds(ratio: float, their_gain: float, gives_star: bool, struggling: bool = False) -> float:
-    """Rough chance the other owner says yes. A heuristic, not a fitted model."""
+def acceptance_odds(ratio: float, their_gain: float, struggling: bool = False) -> float:
+    """Rough chance the other owner says yes. A heuristic, not a fitted model.
+
+    ``ratio`` already counts the owner premium on what they send, so stars and
+    keystones need a bigger offer for the same odds.
+    """
     p = float(np.interp(ratio, [0.85, 0.95, 1.05, 1.2, 1.4], [0.2, 0.4, 0.55, 0.7, 0.8]))
     if their_gain >= 0.15:
         p += 0.1
     elif their_gain < 0.05:
         p -= 0.1
-    if gives_star and ratio < 1.15:
-        p -= 0.2
     if struggling:
         p += STRUGGLING_BONUS
     return float(np.clip(p, 0.05, 0.9))
@@ -101,13 +118,22 @@ def acceptance_label(p: float) -> str:
 
 
 class TradeFinder:
-    def __init__(self, league: League, model: CategoryModel, me_idx: int, keep: set[int], mode: Mode = "fair"):
+    def __init__(
+        self,
+        league: League,
+        model: CategoryModel,
+        me_idx: int,
+        keep: set[int],
+        mode: Mode = "fair",
+        premium: OwnerPremium | None = None,
+    ):
         self.mode = mode
         self.league = league
         self.model = model
         self.me_idx = me_idx
         self.keep = keep
-        self.perceived = PerceivedValue(league, model)
+        self.perceived = premium.perceived if premium is not None else PerceivedValue(league, model)
+        self.premium = premium or OwnerPremium(league, model, self.perceived)
         self.teams = league.teams
         self.dists = [model.dist(t.roster) for t in self.teams]
         self.base = [model.strength(i, self.dists) for i in range(len(self.teams))]
@@ -169,16 +195,11 @@ class TradeFinder:
         options = droppable([p for p in roster if p.id not in protected], self.keep)
         return min(options, key=self.model.value) if options else None
 
-    def _stars(self, team: Team) -> set[int]:
-        top = sorted(team.roster, key=self.perceived.value, reverse=True)[:TOP_PLAYERS_PROTECTED]
-        return {p.id for p in top}
-
     def _evaluate(
         self,
         j: int,
         give: list[Player],
         get: list[Player],
-        stars: set[int],
         min_my_gain: float = MIN_MY_GAIN,
         min_their_gain: float = MIN_THEIR_GAIN,
     ) -> Deal | None:
@@ -192,7 +213,8 @@ class TradeFinder:
             their_roster = [p for p in their_roster if p is not their_drop]
 
         give_v = pv.package(give)
-        get_v = pv.package(get)
+        get_v = pv.package(get, self.premium.price)
+        premium = get_v - pv.package(get)
         if their_drop is not None:
             get_v += max(pv.value(their_drop) - pv.replacement, 0.0)
         if get_v <= 0:
@@ -229,9 +251,13 @@ class TradeFinder:
                 return None
         elif their_gain < min_their_gain:
             return None
-        gives_star = bool(get_ids & stars)
         struggling = j in self.struggling
         reasons = self._reasons(j, give, get, dists, struggling)
+        acceptance = acceptance_odds(ratio, their_gain, struggling)
+        lost = self._keystones_lost(j, get, dists)
+        if lost:
+            acceptance = max(acceptance - KEYSTONE_PENALTY, 0.05)
+            reasons.append(f"It takes away their {', '.join(lost)} keystone without replacing it: a harder sell.")
         rival = j in self.rivals
         if self.mode == "edge":
             reasons = self._edge_reasons(j, give, get, ratio, rival) + reasons
@@ -245,13 +271,34 @@ class TradeFinder:
             their_gain=their_gain,
             give_value=give_v,
             get_value=get_v,
-            acceptance=acceptance_odds(ratio, their_gain, gives_star, struggling),
+            acceptance=acceptance,
             dists=dists,
             reasons=reasons,
             rival=rival,
             rosters={self.me_idx: my_roster, j: their_roster},
             my_add=my_add,
+            premium=premium,
+            warnings=self._warnings(give),
         )
+
+    def _keystones_lost(self, j: int, get: list[Player], dists: list[Dist]) -> list[str]:
+        """Categories a team loses its keystone in, with nothing in the deal making up for it."""
+        cats = {self.premium.keystone(p) for p in get} - {None}
+        if not cats:
+            return []
+        change = self._avg_win(j, dists) - self.base_cats[j]
+        names = [c.name for c in self.model.cats]
+        return [c for c in sorted(cats) if change[names.index(c)] <= -KEYSTONE_LOSS]
+
+    def _warnings(self, give: list[Player]) -> list[str]:
+        out = []
+        for p in give:
+            for b in self.premium.badges(p):
+                if b.kind == "jewel":
+                    out.append(f"You give up {p.name}, one of the league's jewels.")
+                elif b.kind == "keystone":
+                    out.append(f"You give up {p.name}, your {b.category} keystone.")
+        return out
 
     def _wasted(self, p: Player, punts: np.ndarray) -> list[str]:
         """Categories a player's value mostly comes from that this team punts."""
@@ -304,29 +351,27 @@ class TradeFinder:
 
     def candidates(self, partners: Iterable[int] | None = None) -> list[Deal]:
         me = self.teams[self.me_idx]
-        mine = [p for p in me.roster if p.id not in self.keep]
+        mine = [p for p in me.roster if p.id not in self.keep and not self.premium.not_for_sale(p)]
         deals: list[Deal] = []
         for j in range(len(self.teams)) if partners is None else partners:
             if j == self.me_idx:
                 continue
-            partner = self.teams[j]
-            stars = self._stars(partner)
-            theirs = partner.roster
+            theirs = [p for p in self.teams[j].roster if not self.premium.not_for_sale(p)]
             for give in mine:
                 for get in theirs:
-                    d = self._evaluate(j, [give], [get], stars)
+                    d = self._evaluate(j, [give], [get])
                     if d:
                         deals.append(d)
             # 2-for-1: package two of mine for one of theirs.
             for give_pair in combinations(mine, 2):
                 for get in theirs:
-                    d = self._evaluate(j, list(give_pair), [get], stars)
+                    d = self._evaluate(j, list(give_pair), [get])
                     if d:
                         deals.append(d)
             # 1-for-2: one of mine for two of theirs.
             for give in mine:
                 for get_pair in combinations(theirs, 2):
-                    d = self._evaluate(j, [give], list(get_pair), stars)
+                    d = self._evaluate(j, [give], list(get_pair))
                     if d:
                         deals.append(d)
         return deals
@@ -336,8 +381,17 @@ class TradeFinder:
             return d.score * (RIVAL_DISCOUNT if d.rival and d.their_gain > 0 else 1.0)
         return d.score
 
+    def spectacular(self, deals: list[Deal]) -> float:
+        """The gain a deal needs before it gives up one of my jewels or keystones."""
+        if not deals:
+            return SPECTACULAR_FLOOR
+        return max(SPECTACULAR_FLOOR, float(np.percentile([d.my_gain for d in deals], SPECTACULAR_PERCENTILE)))
+
     def shortlist(self) -> list[Deal]:
-        deals = sorted(self.candidates(), key=self.rank_key, reverse=True)
+        deals = self.candidates()
+        bar = self.spectacular(deals)
+        deals = [d for d in deals if d.my_gain >= bar or not any(self.premium.is_attached(p) for p in d.give)]
+        deals = sorted(deals, key=self.rank_key, reverse=True)
         picked: list[Deal] = []
         per_target: dict[int, int] = {}
         per_partner: dict[int, int] = {}

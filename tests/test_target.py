@@ -64,3 +64,11 @@ def test_report_lists_other_rosters(client):
     assert len(rosters) == 9
     assert all(t["team_id"] != MY_TEAM for t in rosters)
     assert all(t["players"] for t in rosters)
+
+
+def test_not_for_sale_target_gets_no_offers(league):
+    giddey = player(league, "Josh Giddey")
+    report = TargetAnalyzer(league, MY_TEAM, giddey.id, not_for_sale_player_ids=[giddey.id]).target_report()
+    assert report.offers == []
+    assert "not for sale" in report.note
+    assert any(b.kind == "not_for_sale" for b in report.target.badges)

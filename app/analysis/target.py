@@ -1,12 +1,14 @@
 """Trade for a player: how a chosen player fits you, what his owner needs, and the best offer to send.
 
-Offers come from the trade finder's rules (perceived value, acceptance odds, punt-aware
-gain, pitch lines) with two changes for a player you already want:
+Offers come from the trade finder's rules (perceived value plus owner premium, acceptance
+odds, punt-aware gain, pitch lines) with two changes for a player you already want:
   * any gain for you counts, since you picked him, and
   * the owner's build only has to stay about even, because owners mostly judge on paper.
 
 Packages are one or two of your players for him, or two or three for him plus one of
 the owner's low-value players, so nobody has to cut more than one player.
+Players marked not for sale are never offered or asked for. Your own jewels and keystones
+can be offered, since you picked the target, and each offer warns when it includes one.
 The best offer has the highest playoff-odds gain weighted by acceptance; the fallbacks
 are the likeliest to be accepted and the one that costs you least on paper.
 """
@@ -43,8 +45,15 @@ class TargetError(ValueError):
 
 
 class TargetAnalyzer(Analyzer):
-    def __init__(self, league: League, team_id: int, player_id: int, keep_player_ids: list[int] | None = None):
-        super().__init__(league, team_id, keep_player_ids)
+    def __init__(
+        self,
+        league: League,
+        team_id: int,
+        player_id: int,
+        keep_player_ids: list[int] | None = None,
+        not_for_sale_player_ids: list[int] | None = None,
+    ):
+        super().__init__(league, team_id, keep_player_ids, not_for_sale_player_ids)
         owner = next((i for i, t in enumerate(self.teams) if any(p.id == player_id for p in t.roster)), None)
         if owner is None:
             raise TargetError("player_not_rostered", "That player isn't on a team in this league.")
@@ -53,7 +62,7 @@ class TargetAnalyzer(Analyzer):
         self.owner_idx = owner
         self.owner = self.teams[owner]
         self.target = next(p for p in self.owner.roster if p.id == player_id)
-        self.finder = TradeFinder(league, self.model, self.idx, self.keep)
+        self.finder = TradeFinder(league, self.model, self.idx, self.keep, premium=self.premium)
         self.base_cats = self.avg_cat_win(self.idx, self.dists)
         self.before = self.playoff_pct(self.dists)
 
@@ -102,15 +111,13 @@ class TargetAnalyzer(Analyzer):
             needs=[self.cat_names[c] for c in needs[:3]],
             playoff_pct=round(float(season_odds[j]), 3),
             outside_playoffs=j in self.finder.struggling,
-            target_is_star=self.target.id in self.finder._stars(self.owner),
+            target_is_star=any(b.kind == "jewel" for b in self.premium.badges(self.target)),
             would_value=self._would_value(),
         )
 
     def _would_value(self) -> list[schemas.OwnerWant]:
         j, wants = self.owner_idx, []
-        for p in self.me.roster:
-            if p.id in self.keep:
-                continue
+        for p in self._mine():
             roster = self.owner.roster + [p]
             cut = self.finder._worst(roster, {p.id})
             dists = list(self.dists)
@@ -129,8 +136,9 @@ class TargetAnalyzer(Analyzer):
     # ---- offers ------------------------------------------------------------------------
 
     def packages(self) -> list[tuple[list[Player], list[Player]]]:
-        mine = [p for p in self.me.roster if p.id not in self.keep]
-        fillers = sorted((p for p in self.owner.roster if p is not self.target), key=self.model.value)[:FILLERS]
+        mine = self._mine()
+        others = [p for p in self.owner.roster if p is not self.target and not self.premium.not_for_sale(p)]
+        fillers = sorted(others, key=self.model.value)[:FILLERS]
         out: list[tuple[list[Player], list[Player]]] = []
         for n in (1, 2):
             out += [(list(give), [self.target]) for give in combinations(mine, n)]
@@ -139,11 +147,14 @@ class TargetAnalyzer(Analyzer):
                 out += [(list(give), [self.target, f]) for give in combinations(mine, n)]
         return out
 
+    def _mine(self) -> list[Player]:
+        """My players that can go in an offer."""
+        return [p for p in self.me.roster if p.id not in self.keep and not self.premium.not_for_sale(p)]
+
     def deals(self, min_their_gain: float) -> list[Deal]:
-        stars = self.finder._stars(self.owner)
         found = []
         for give, get in self.packages():
-            d = self.finder._evaluate(self.owner_idx, give, get, stars, MIN_MY_GAIN, min_their_gain)
+            d = self.finder._evaluate(self.owner_idx, give, get, MIN_MY_GAIN, min_their_gain)
             if d:
                 found.append(d)
         return found
@@ -195,8 +206,10 @@ class TargetAnalyzer(Analyzer):
         name = self.target.name
         if fit.label == "none":
             return f"{name} doesn't improve your categories, so no package makes you better."
-        mine = sorted((p for p in self.me.roster if p.id not in self.keep), key=self.perceived.value, reverse=True)
-        if self.perceived.package(mine[:3]) < MIN_VALUE_RATIO * self.perceived.value(self.target):
+        if self.premium.not_for_sale(self.target):
+            return f"{name} is marked not for sale, so there's no offer to send."
+        mine = sorted(self._mine(), key=self.perceived.value, reverse=True)
+        if self.perceived.package(mine[:3]) < MIN_VALUE_RATIO * self.premium.price(self.target):
             return f"Owners value {name} far above anything you can send without hurting your own team."
         tail = " Try freeing up players you've kept." if self.keep else ""
         return f"No package for {name} both helps you and looks fair to his owner.{tail}"
@@ -204,9 +217,10 @@ class TargetAnalyzer(Analyzer):
     def target_report(self) -> schemas.TargetReport:
         started = time.perf_counter()
         fit = self.fit()
-        offers = self.offers()
+        for_sale = not self.premium.not_for_sale(self.target)
+        offers = self.offers() if for_sale else []
         note = None
-        if not offers and fit.label != "none":
+        if not offers and for_sale and fit.label != "none":
             # Nothing keeps their build even: show the best long shots, judged on paper value alone.
             offers = self.offers(min_their_gain=-np.inf)
             if offers:
