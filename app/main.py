@@ -12,7 +12,7 @@ import os
 import secrets
 import time
 from collections import defaultdict, deque
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -36,11 +36,13 @@ from app.accounts import (
 )
 from app.analysis.daily import trade_of_the_day
 from app.analysis.report import Analyzer, league_summary
+from app.analysis.shop import ShopAnalyzer, ShopError
 from app.analysis.target import TargetAnalyzer, TargetError
 from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
 from app.espn.parse import League, parse_league
 from app.feed import PlayerName, Transaction, parse_players, parse_transactions
+from app.scores import build_day, needs_stats, parse_schedule, settled
 from app.social import (
     CHALLENGE_SECONDS,
     Challenge,
@@ -67,6 +69,8 @@ DAILY_WAIT = float(os.getenv("DAILY_TRADE_WAIT_SECONDS", "20"))
 # The feed pages through the season a week (seven scoring periods) at a time.
 FEED_PAGE_PERIODS = 7
 POSTS_PER_MINUTE = 10
+# While a game is on, one ESPN call a minute serves every visitor.
+LIVE_SCORES_TTL = 60.0
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
 NOT_LINKED = {"code": "not_linked", "message": "Verify your team in this league first."}
 NOT_YOUR_TEAM = {"code": "not_your_team", "message": "Only this team's verified manager can see its analysis."}
@@ -94,6 +98,10 @@ def today() -> str:
 def bearer(authorization: str | None) -> str | None:
     scheme, _, token = (authorization or "").partition(" ")
     return token.strip() if scheme.lower() == "bearer" and token.strip() else None
+
+
+def _iso_date(d: date | None) -> str | None:
+    return d.isoformat() if d else None
 
 
 def iso(dt: datetime) -> str:
@@ -125,6 +133,10 @@ def create_app(
     app.state.players = TTLCache(24 * 3600, max_items=20000)
     app.state.post_times = defaultdict(deque)
     app.state.schedules = TTLCache(SCHEDULE_TTL)
+    app.state.score_days = TTLCache(LIVE_SCORES_TTL)
+    app.state.settled_days = TTLCache(7 * 24 * 3600, max_items=512)
+    app.state.score_locks = defaultdict(asyncio.Lock)
+    app.state.now = lambda: datetime.now(UTC)
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
     app.add_middleware(
@@ -372,6 +384,64 @@ def create_app(
         report = await run_in_threadpool(
             lambda: Analyzer(lg, body.team_id, body.keep_player_ids, body.not_for_sale_player_ids).report()
         )
+        app.state.reports.set(key, report)
+        return report
+
+    @app.post(
+        "/api/shop",
+        response_model=schemas.ShopReport,
+        responses={
+            401: {"model": schemas.ErrorBody},
+            403: {"model": schemas.ErrorBody},
+            422: {"model": schemas.ErrorBody},
+        },
+    )
+    async def shop(
+        body: schemas.ShopRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.ShopReport:
+        """Best deals across the league for one or more of your players."""
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        seat = await linked(authorization, body.league_id, season, required=True)
+        if seat.team_id != body.team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        key = (
+            "shop",
+            body.league_id,
+            season,
+            body.team_id,
+            tuple(body.offer_player_ids),
+            tuple(sorted(body.keep_player_ids)),
+            tuple(sorted(body.not_for_sale_player_ids)),
+            body.faab_max,
+            credentials_key(creds),
+        )
+        cached = app.state.reports.get(key)
+        if cached is not None:
+            return cached
+        lg = await load_league(body.league_id, season, creds, with_fa=True)
+        if lg.team(body.team_id) is None:
+            raise HTTPException(
+                404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
+            )
+        summary = league_summary(lg)
+        if not summary.supported:
+            raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
+        try:
+            analyzer = ShopAnalyzer(
+                lg,
+                body.team_id,
+                body.offer_player_ids,
+                body.keep_player_ids,
+                body.faab_max,
+                body.not_for_sale_player_ids,
+            )
+        except ShopError as exc:
+            raise HTTPException(422, detail={"code": exc.code, "message": str(exc)}) from exc
+        report = await run_in_threadpool(analyzer.report)
         app.state.reports.set(key, report)
         return report
 
@@ -869,6 +939,80 @@ def create_app(
             return await run_in_threadpool(run)
         except TargetError as exc:
             raise HTTPException(400, detail={"code": exc.code, "message": str(exc)}) from exc
+
+    async def score_day(season: int, day: int, league_id: int, creds: EspnCredentials | None, sched) -> dict:
+        """One day's games. Finished days come from the store; a day in progress is cached for a minute."""
+        key = (season, day)
+        body = app.state.settled_days.get(key) or app.state.score_days.get(key)
+        if body is not None:
+            return body
+        async with app.state.score_locks[key]:
+            body = app.state.settled_days.get(key) or app.state.score_days.get(key)
+            if body is not None:
+                return body
+            body = await run_in_threadpool(app.state.store.get_day, season, day)
+            if body is not None:
+                app.state.settled_days.set(key, body)
+                return body
+            now = app.state.now()
+            players = (
+                await app.state.espn.day_stats(season, league_id, day, creds) if needs_stats(sched, day, now) else []
+            )
+            body = build_day(sched, day, players, now)
+            if settled(sched, day, now):
+                await run_in_threadpool(app.state.store.save_day, season, day, body)
+                app.state.settled_days.set(key, body)
+            else:
+                app.state.score_days.set(key, body)
+            return body
+
+    @app.post("/api/scores", response_model=schemas.ScoreDay, responses={401: {"model": schemas.ErrorBody}})
+    async def scores(
+        body: schemas.ScoresRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.ScoreDay:
+        """A day of NBA games with scores and box scores, each player tagged with his fantasy team here."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        lg = await load_league(body.league_id, season, creds, with_fa=False)
+        raw = await pro_schedule(season)
+        if raw is None:
+            raise HTTPException(
+                502, detail={"code": "espn_unavailable", "message": "ESPN's NBA schedule is unavailable."}
+            )
+        sched = parse_schedule(raw)
+        now = app.state.now()
+        day = body.day or sched.latest_started(now)
+        if day not in sched.games:
+            raise HTTPException(404, detail={"code": "no_games", "message": "No NBA games that day."})
+        data = await score_day(season, day, body.league_id, creds, sched)
+        owners = {p.id: t.id for t in lg.teams for p in t.roster}
+        games = [
+            schemas.Game(
+                **{
+                    **g,
+                    "lines": [schemas.GameLine(**ln, owner_team_id=owners.get(ln["player_id"])) for ln in g["lines"]],
+                }
+            )
+            for g in data["games"]
+        ]
+        days = [
+            schemas.ScoreDayRef(day=d, date=_iso_date(sched.date_of(d)), games=len(gs))
+            for d, gs in sorted(sched.games.items())
+        ]
+        return schemas.ScoreDay(
+            league_id=body.league_id,
+            season=season,
+            day=day,
+            date=data["date"],
+            games=games,
+            days=days,
+            live=any(g.status == "live" for g in games),
+            updated_at=iso(now),
+        )
 
     return app
 

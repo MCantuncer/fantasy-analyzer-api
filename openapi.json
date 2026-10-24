@@ -727,6 +727,115 @@
         }
       }
     },
+    "/api/shop": {
+      "post": {
+        "summary": "Shop",
+        "description": "Best deals across the league for one or more of your players.",
+        "operationId": "shop_api_shop_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShopRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShopReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        }
+      }
+    },
     "/api/trade-of-the-day": {
       "post": {
         "summary": "Trade Of Day",
@@ -1752,6 +1861,105 @@
           }
         }
       }
+    },
+    "/api/scores": {
+      "post": {
+        "summary": "Scores",
+        "description": "A day of NBA games with scores and box scores, each player tagged with his fantasy team here.",
+        "operationId": "scores_api_scores_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoresRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreDay"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2374,6 +2582,182 @@
           "abbrev"
         ],
         "title": "FeedTeam"
+      },
+      "Game": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "UTC start time, ISO 8601"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "live",
+              "final"
+            ],
+            "title": "Status"
+          },
+          "away": {
+            "$ref": "#/components/schemas/GameSide"
+          },
+          "home": {
+            "$ref": "#/components/schemas/GameSide"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/GameLine"
+            },
+            "type": "array",
+            "title": "Lines",
+            "description": "Everyone who played, most minutes first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "start",
+          "status",
+          "away",
+          "home",
+          "lines"
+        ],
+        "title": "Game"
+      },
+      "GameLine": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pro_team_id": {
+            "type": "integer",
+            "title": "Pro Team Id"
+          },
+          "owner_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team Id",
+            "description": "Fantasy team in this league; none = free agent"
+          },
+          "minutes": {
+            "type": "integer",
+            "title": "Minutes"
+          },
+          "pts": {
+            "type": "integer",
+            "title": "Pts"
+          },
+          "reb": {
+            "type": "integer",
+            "title": "Reb"
+          },
+          "ast": {
+            "type": "integer",
+            "title": "Ast"
+          },
+          "stl": {
+            "type": "integer",
+            "title": "Stl"
+          },
+          "blk": {
+            "type": "integer",
+            "title": "Blk"
+          },
+          "tpm": {
+            "type": "integer",
+            "title": "Tpm"
+          },
+          "to": {
+            "type": "integer",
+            "title": "To"
+          },
+          "fgm": {
+            "type": "integer",
+            "title": "Fgm"
+          },
+          "fga": {
+            "type": "integer",
+            "title": "Fga"
+          },
+          "ftm": {
+            "type": "integer",
+            "title": "Ftm"
+          },
+          "fta": {
+            "type": "integer",
+            "title": "Fta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pro_team_id",
+          "minutes",
+          "pts",
+          "reb",
+          "ast",
+          "stl",
+          "blk",
+          "tpm",
+          "to",
+          "fgm",
+          "fga",
+          "ftm",
+          "fta"
+        ],
+        "title": "GameLine"
+      },
+      "GameSide": {
+        "properties": {
+          "pro_team_id": {
+            "type": "integer",
+            "title": "Pro Team Id"
+          },
+          "abbrev": {
+            "type": "string",
+            "title": "Abbrev"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score",
+            "description": "None before tip-off"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pro_team_id",
+          "abbrev",
+          "name"
+        ],
+        "title": "GameSide"
       },
       "GoogleSignIn": {
         "properties": {
@@ -3332,6 +3716,138 @@
         ],
         "title": "RepliesRequest"
       },
+      "ScoreDay": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "title": "League Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date",
+            "description": "US date of the games"
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/Game"
+            },
+            "type": "array",
+            "title": "Games"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/ScoreDayRef"
+            },
+            "type": "array",
+            "title": "Days",
+            "description": "Every day of the season with games, for the date picker"
+          },
+          "live": {
+            "type": "boolean",
+            "title": "Live",
+            "description": "A game is on; ask again in about a minute"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "season",
+          "day",
+          "games",
+          "days",
+          "live",
+          "updated_at"
+        ],
+        "title": "ScoreDay"
+      },
+      "ScoreDayRef": {
+        "properties": {
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day",
+          "games"
+        ],
+        "title": "ScoreDayRef"
+      },
+      "ScoresRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 250.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day",
+            "description": "ESPN scoring period (a day). Default: the last day a game started"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id"
+        ],
+        "title": "ScoresRequest"
+      },
       "SeasonRow": {
         "properties": {
           "team_id": {
@@ -3384,6 +3900,413 @@
           "mean_rank"
         ],
         "title": "SeasonRow"
+      },
+      "ShopDeal": {
+        "properties": {
+          "partner_team_id": {
+            "type": "integer",
+            "title": "Partner Team Id"
+          },
+          "partner_team_name": {
+            "type": "string",
+            "title": "Partner Team Name"
+          },
+          "give": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Give"
+          },
+          "get": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Get"
+          },
+          "my_drop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who you cut to make room when you get more players"
+          },
+          "their_drop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who they would likely cut to make room"
+          },
+          "my_add": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Free agent you add to fill the spot a 2-for-1 opens on your roster"
+          },
+          "my_cats_gain": {
+            "type": "number",
+            "title": "My Cats Gain",
+            "description": "Change in my expected categories won per week"
+          },
+          "their_cats_gain": {
+            "type": "number",
+            "title": "Their Cats Gain",
+            "description": "Change in theirs, ignoring the categories they punt"
+          },
+          "edge": {
+            "type": "number",
+            "title": "Edge",
+            "description": "My gain minus theirs: how much more the deal does for me"
+          },
+          "value_they_get": {
+            "type": "number",
+            "title": "Value They Get",
+            "description": "Perceived value they receive, in auction dollars"
+          },
+          "value_they_give": {
+            "type": "number",
+            "title": "Value They Give",
+            "description": "Perceived value they send, in auction dollars, including their owner premium"
+          },
+          "owner_premium": {
+            "type": "number",
+            "title": "Owner Premium",
+            "description": "Part of value_they_give that is owner premium on their badged players",
+            "default": 0.0
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Jewels or keystones you give up: only suggested for a clearly better deal"
+          },
+          "acceptance": {
+            "type": "number",
+            "title": "Acceptance",
+            "description": "Rough chance the other owner accepts (heuristic)"
+          },
+          "acceptance_label": {
+            "type": "string",
+            "enum": [
+              "likely",
+              "possible",
+              "long_shot"
+            ],
+            "title": "Acceptance Label"
+          },
+          "pitch": {
+            "type": "string",
+            "title": "Pitch",
+            "description": "Why the deal helps them, to use when you propose it"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons",
+            "description": "Why it can work for both sides: sell high, buy low, their punts, timing"
+          },
+          "playoff_pct_before": {
+            "type": "number",
+            "title": "Playoff Pct Before"
+          },
+          "playoff_pct_after": {
+            "type": "number",
+            "title": "Playoff Pct After"
+          },
+          "category_changes": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Category Changes",
+            "description": "Change in my weekly win % per category"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "win_win",
+              "paper_win"
+            ],
+            "title": "Kind",
+            "description": "win_win: their build improves too. paper_win: they win on trade value, you win on the court"
+          },
+          "uses_all": {
+            "type": "boolean",
+            "title": "Uses All",
+            "description": "The deal sends every player you picked"
+          },
+          "faab": {
+            "type": "integer",
+            "title": "Faab",
+            "description": "FAAB dollars you send with the players (0 = none)",
+            "default": 0
+          },
+          "target_gain": {
+            "type": "number",
+            "title": "Target Gain",
+            "description": "Change in your weekly win chance summed over the target categories"
+          }
+        },
+        "type": "object",
+        "required": [
+          "partner_team_id",
+          "partner_team_name",
+          "give",
+          "get",
+          "my_cats_gain",
+          "their_cats_gain",
+          "edge",
+          "value_they_get",
+          "value_they_give",
+          "acceptance",
+          "acceptance_label",
+          "pitch",
+          "reasons",
+          "playoff_pct_before",
+          "playoff_pct_after",
+          "category_changes",
+          "kind",
+          "uses_all",
+          "target_gain"
+        ],
+        "title": "ShopDeal"
+      },
+      "ShopReport": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "offered": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Offered"
+          },
+          "playoff_pct_before": {
+            "type": "number",
+            "title": "Playoff Pct Before"
+          },
+          "faab_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Faab Remaining",
+            "description": "Your FAAB left, or null if the league has no FAAB budget"
+          },
+          "faab_cap": {
+            "type": "integer",
+            "title": "Faab Cap",
+            "description": "Most FAAB the search added to one deal"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/ShopTarget"
+            },
+            "type": "array",
+            "title": "Targets",
+            "description": "Categories the search aims at, picked from your team and players"
+          },
+          "deals": {
+            "items": {
+              "$ref": "#/components/schemas/ShopDeal"
+            },
+            "type": "array",
+            "title": "Deals",
+            "description": "Best deals across the league, best first"
+          },
+          "teams": {
+            "items": {
+              "$ref": "#/components/schemas/ShopTeam"
+            },
+            "type": "array",
+            "title": "Teams",
+            "description": "Every other team, best market first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "offered",
+          "playoff_pct_before",
+          "faab_remaining",
+          "faab_cap",
+          "targets",
+          "deals",
+          "teams"
+        ],
+        "title": "ShopReport"
+      },
+      "ShopRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          },
+          "keep_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Keep Player Ids",
+            "description": "Players never offered in trades or suggested as drops"
+          },
+          "not_for_sale_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Not For Sale Player Ids",
+            "description": "Other teams' players their owners won't move: never targeted in trades"
+          },
+          "offer_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Offer Player Ids",
+            "description": "Your players to shop. Each deal sends one or more of them."
+          },
+          "faab_max": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Faab Max",
+            "description": "Most FAAB dollars to add to one deal. Default: 15% of what you have left. 0 turns it off."
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id",
+          "offer_player_ids"
+        ],
+        "title": "ShopRequest"
+      },
+      "ShopTarget": {
+        "properties": {
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "win_pct": {
+            "type": "number",
+            "title": "Win Pct",
+            "description": "Your weekly win chance in it today"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "swing",
+              "carried"
+            ],
+            "title": "Reason",
+            "description": "swing: close to a coin flip each week. carried: the players you're shopping supply a lot of it"
+          }
+        },
+        "type": "object",
+        "required": [
+          "category",
+          "win_pct",
+          "reason"
+        ],
+        "title": "ShopTarget"
+      },
+      "ShopTeam": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "record": {
+            "type": "string",
+            "title": "Record"
+          },
+          "deals_found": {
+            "type": "integer",
+            "title": "Deals Found",
+            "description": "Packages with this team that pass the checks, before the season sim"
+          },
+          "best": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShopDeal"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The best deal with this team, if one holds up"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "record",
+          "deals_found"
+        ],
+        "title": "ShopTeam"
       },
       "SignUpRequest": {
         "properties": {

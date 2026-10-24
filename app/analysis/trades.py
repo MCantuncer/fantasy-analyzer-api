@@ -84,6 +84,7 @@ class Deal:
     rival: bool = False
     rosters: dict[int, list[Player]] = field(default_factory=dict)  # team index -> roster after the deal
     my_add: Player | None = None  # free agent I pick up for the spot a 2-for-1 opens
+    faab: int = 0  # FAAB dollars I send with the players
     premium: float = 0.0  # owner premium included in get_value, in dollars
     warnings: list[str] = field(default_factory=list)  # what I give up that's hard to replace
 
@@ -201,8 +202,13 @@ class TradeFinder:
         give: list[Player],
         get: list[Player],
         min_my_gain: float = MIN_MY_GAIN,
-        min_their_gain: float = MIN_THEIR_GAIN,
+        min_their_gain: float | None = None,
+        *,
+        min_ratio: float | None = None,
+        min_margin: float | None = None,
+        extra_give_value: float = 0.0,
     ) -> Deal | None:
+        """Score one package. The threshold arguments override the mode's defaults."""
         pv = self.perceived
         me, partner = self.teams[self.me_idx], self.teams[j]
         give_ids, get_ids = {p.id for p in give}, {p.id for p in get}
@@ -212,7 +218,7 @@ class TradeFinder:
             their_drop = self._worst(their_roster, give_ids)
             their_roster = [p for p in their_roster if p is not their_drop]
 
-        give_v = pv.package(give)
+        give_v = pv.package(give) + extra_give_value  # e.g. FAAB dollars sent with the players
         get_v = pv.package(get, self.premium.price)
         premium = get_v - pv.package(get)
         if their_drop is not None:
@@ -220,7 +226,8 @@ class TradeFinder:
         if get_v <= 0:
             return None
         ratio = give_v / get_v
-        min_ratio = EDGE_MIN_RATIO if self.mode == "edge" else MIN_VALUE_RATIO
+        if min_ratio is None:
+            min_ratio = EDGE_MIN_RATIO if self.mode == "edge" else MIN_VALUE_RATIO
         if ratio < min_ratio or ratio > MAX_VALUE_RATIO:
             return None
 
@@ -246,10 +253,12 @@ class TradeFinder:
         if my_gain < min_my_gain:
             return None
         their_gain = self.fit_gain(j, dists)
-        if self.mode == "edge":
-            if their_gain < EDGE_MIN_THEIR_GAIN or my_gain - their_gain < EDGE_MIN_MARGIN:
-                return None
-        elif their_gain < min_their_gain:
+        edge = self.mode == "edge"
+        if min_their_gain is None:
+            min_their_gain = EDGE_MIN_THEIR_GAIN if edge else MIN_THEIR_GAIN
+        if min_margin is None:
+            min_margin = EDGE_MIN_MARGIN if edge else float("-inf")
+        if their_gain < min_their_gain or my_gain - their_gain < min_margin:
             return None
         struggling = j in self.struggling
         reasons = self._reasons(j, give, get, dists, struggling)

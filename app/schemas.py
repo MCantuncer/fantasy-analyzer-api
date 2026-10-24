@@ -438,6 +438,54 @@ class LeagueOverview(BaseModel):
     my_team_id: int | None = None
 
 
+class ShopRequest(AnalyzeRequest):
+    offer_player_ids: list[int] = Field(
+        min_length=1, max_length=4, description="Your players to shop. Each deal sends one or more of them."
+    )
+    faab_max: int | None = Field(
+        default=None,
+        ge=0,
+        description="Most FAAB dollars to add to one deal. Default: 15% of what you have left. 0 turns it off.",
+    )
+
+
+class ShopDeal(TradeIdea):
+    kind: Literal["win_win", "paper_win"] = Field(
+        description="win_win: their build improves too. paper_win: they win on trade value, you win on the court"
+    )
+    uses_all: bool = Field(description="The deal sends every player you picked")
+    faab: int = Field(default=0, description="FAAB dollars you send with the players (0 = none)")
+    target_gain: float = Field(description="Change in your weekly win chance summed over the target categories")
+
+
+class ShopTarget(BaseModel):
+    category: str
+    win_pct: float = Field(description="Your weekly win chance in it today")
+    reason: Literal["swing", "carried"] = Field(
+        description="swing: close to a coin flip each week. carried: the players you're shopping supply a lot of it"
+    )
+
+
+class ShopTeam(BaseModel):
+    team_id: int
+    team_name: str
+    record: str
+    deals_found: int = Field(description="Packages with this team that pass the checks, before the season sim")
+    best: ShopDeal | None = Field(default=None, description="The best deal with this team, if one holds up")
+
+
+class ShopReport(BaseModel):
+    team_id: int
+    team_name: str
+    offered: list[PlayerRef]
+    playoff_pct_before: float
+    faab_remaining: int | None = Field(description="Your FAAB left, or null if the league has no FAAB budget")
+    faab_cap: int = Field(description="Most FAAB the search added to one deal")
+    targets: list[ShopTarget] = Field(description="Categories the search aims at, picked from your team and players")
+    deals: list[ShopDeal] = Field(description="Best deals across the league, best first")
+    teams: list[ShopTeam] = Field(description="Every other team, best market first")
+
+
 class TargetRequest(AnalyzeRequest):
     player_id: int = Field(gt=0, description="The rostered player you want to trade for")
 
@@ -487,3 +535,61 @@ class TargetReport(BaseModel):
     note: str | None = Field(default=None, description="Why there are no offers, when there are none")
     generated_at: str
     elapsed_ms: int
+
+
+class ScoresRequest(LeagueRequest):
+    day: int | None = Field(
+        default=None, ge=1, le=250, description="ESPN scoring period (a day). Default: the last day a game started"
+    )
+
+
+class GameLine(BaseModel):
+    player_id: int
+    name: str
+    pro_team_id: int
+    owner_team_id: int | None = Field(default=None, description="Fantasy team in this league; none = free agent")
+    minutes: int
+    pts: int
+    reb: int
+    ast: int
+    stl: int
+    blk: int
+    tpm: int
+    to: int
+    fgm: int
+    fga: int
+    ftm: int
+    fta: int
+
+
+class GameSide(BaseModel):
+    pro_team_id: int
+    abbrev: str
+    name: str
+    score: int | None = Field(default=None, description="None before tip-off")
+
+
+class Game(BaseModel):
+    id: int
+    start: str = Field(description="UTC start time, ISO 8601")
+    status: Literal["scheduled", "live", "final"]
+    away: GameSide
+    home: GameSide
+    lines: list[GameLine] = Field(description="Everyone who played, most minutes first")
+
+
+class ScoreDayRef(BaseModel):
+    day: int
+    date: str | None = None
+    games: int
+
+
+class ScoreDay(BaseModel):
+    league_id: int
+    season: int
+    day: int
+    date: str | None = Field(default=None, description="US date of the games")
+    games: list[Game]
+    days: list[ScoreDayRef] = Field(description="Every day of the season with games, for the date picker")
+    live: bool = Field(description="A game is on; ask again in about a minute")
+    updated_at: str
