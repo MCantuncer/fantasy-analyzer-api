@@ -38,6 +38,8 @@ create table if not exists trade_votes (
     voted_at timestamptz not null default now(),
     primary key (league_id, season, cred_key, day, team_id, voter)
 );
+-- The pick can change during the day; a vote counts only for the deal it was cast on.
+alter table trade_votes add column if not exists pick_id text not null default '';
 create table if not exists nba_days (
     season int not null,
     day int not null,
@@ -51,8 +53,8 @@ create table if not exists nba_days (
 class Store(Protocol):
     def get_trade(self, key: TradeKey) -> dict | None: ...
     def save_trade(self, key: TradeKey, body: dict) -> None: ...
-    def vote(self, key: TradeKey, team_id: int, voter: str, take: bool) -> None: ...
-    def tally(self, key: TradeKey) -> dict[int, tuple[int, int]]: ...
+    def vote(self, key: TradeKey, pick_id: str, team_id: int, voter: str, take: bool) -> None: ...
+    def tally(self, key: TradeKey, pick_id: str) -> dict[int, tuple[int, int]]: ...
     def get_day(self, season: int, day: int) -> dict | None: ...
     def save_day(self, season: int, day: int, body: dict) -> None: ...
 
@@ -60,21 +62,23 @@ class Store(Protocol):
 class MemoryStore:
     def __init__(self) -> None:
         self.trades: dict[TradeKey, dict] = {}
-        self.votes: dict[TradeKey, dict[tuple[int, str], bool]] = {}
+        self.votes: dict[TradeKey, dict[tuple[int, str], tuple[str, bool]]] = {}
         self.days: dict[tuple[int, int], dict] = {}
 
     def get_trade(self, key: TradeKey) -> dict | None:
         return self.trades.get(key)
 
     def save_trade(self, key: TradeKey, body: dict) -> None:
-        self.trades.setdefault(key, body)
+        self.trades[key] = body
 
-    def vote(self, key: TradeKey, team_id: int, voter: str, take: bool) -> None:
-        self.votes.setdefault(key, {})[(team_id, voter)] = take
+    def vote(self, key: TradeKey, pick_id: str, team_id: int, voter: str, take: bool) -> None:
+        self.votes.setdefault(key, {})[(team_id, voter)] = (pick_id, take)
 
-    def tally(self, key: TradeKey) -> dict[int, tuple[int, int]]:
+    def tally(self, key: TradeKey, pick_id: str) -> dict[int, tuple[int, int]]:
         out: dict[int, tuple[int, int]] = {}
-        for (team_id, _), take in self.votes.get(key, {}).items():
+        for (team_id, _), (voted_on, take) in self.votes.get(key, {}).items():
+            if voted_on != pick_id:
+                continue
             yes, no = out.get(team_id, (0, 0))
             out[team_id] = (yes + take, no + (not take))
         return out
@@ -102,30 +106,30 @@ class PostgresStore:
         return row[0] if row else None
 
     def save_trade(self, key: TradeKey, body: dict) -> None:
-        # The first pick of the day stands, so every visitor sees the same trade.
+        # The day's pick is re-checked and can be replaced, so the latest save wins.
         with self._connect() as conn:
             conn.execute(
                 "insert into daily_trades (league_id, season, cred_key, day, body) values (%s, %s, %s, %s, %s) "
-                "on conflict do nothing",
+                "on conflict (league_id, season, cred_key, day) do update set body = excluded.body",
                 (*key, json.dumps(body)),
             )
 
-    def vote(self, key: TradeKey, team_id: int, voter: str, take: bool) -> None:
+    def vote(self, key: TradeKey, pick_id: str, team_id: int, voter: str, take: bool) -> None:
         with self._connect() as conn:
             conn.execute(
-                "insert into trade_votes (league_id, season, cred_key, day, team_id, voter, take) "
-                "values (%s, %s, %s, %s, %s, %s, %s) "
+                "insert into trade_votes (league_id, season, cred_key, day, team_id, voter, take, pick_id) "
+                "values (%s, %s, %s, %s, %s, %s, %s, %s) "
                 "on conflict (league_id, season, cred_key, day, team_id, voter) "
-                "do update set take = excluded.take, voted_at = now()",
-                (*key, team_id, voter, take),
+                "do update set take = excluded.take, pick_id = excluded.pick_id, voted_at = now()",
+                (*key, team_id, voter, take, pick_id),
             )
 
-    def tally(self, key: TradeKey) -> dict[int, tuple[int, int]]:
+    def tally(self, key: TradeKey, pick_id: str) -> dict[int, tuple[int, int]]:
         with self._connect() as conn:
             rows = conn.execute(
                 "select team_id, count(*) filter (where take), count(*) filter (where not take) from trade_votes "
-                "where league_id=%s and season=%s and cred_key=%s and day=%s group by team_id",
-                key,
+                "where league_id=%s and season=%s and cred_key=%s and day=%s and pick_id=%s group by team_id",
+                (*key, pick_id),
             ).fetchall()
         return {team_id: (yes, no) for team_id, yes, no in rows}
 

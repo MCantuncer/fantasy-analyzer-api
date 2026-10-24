@@ -224,13 +224,17 @@ class TradeOfTheDay(BaseModel):
     team_pairs: int = 0
     win_win_deals: int = Field(default=0, description="Deals found that work for both sides")
     votes: dict[int, PollTally] = Field(default_factory=dict, description="'Would you take it?' votes, by team id")
-    generated_at: str | None = None
+    pick_id: str | None = Field(default=None, description="Identifies the deal; changes when the pick is replaced")
+    score: float = Field(default=0.0, description="Ranking score: the smaller side's gain times the odds both agree")
+    generated_at: str | None = Field(default=None, description="When this deal became the pick")
+    checked_at: str | None = Field(default=None, description="When the pick was last checked against the league")
 
 
 class VoteRequest(LeagueRequest):
     date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     team_id: int = Field(gt=0, description="The side being voted on")
     take: bool = Field(description="True: that team should take the deal")
+    pick_id: str | None = Field(default=None, description="The deal being voted on; refused if the pick has changed")
     voter: str = Field(
         min_length=8, max_length=64, pattern=r"^[A-Za-z0-9-]+$", description="Random id kept by the browser"
     )
