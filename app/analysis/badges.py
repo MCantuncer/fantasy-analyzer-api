@@ -180,7 +180,7 @@ class OwnerPremium:
             out.append(
                 Badge(
                     "keystone",
-                    f"Carries {team.abbrev}'s {cat}: they win it {with_him:.0%} of weeks, {without:.0%} without him.",
+                    f"Carries {team.abbrev}'s {cat}. They win it {with_him:.0%} of weeks, {without:.0%} without him.",
                     category=cat,
                 )
             )
