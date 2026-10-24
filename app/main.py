@@ -196,6 +196,7 @@ def create_app(
             body.team_id,
             tuple(body.offer_player_ids),
             tuple(sorted(body.keep_player_ids)),
+            body.faab_max,
             credentials_key(creds),
         )
         cached = app.state.reports.get(key)
@@ -210,7 +211,7 @@ def create_app(
         if not summary.supported:
             raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
         try:
-            analyzer = ShopAnalyzer(lg, body.team_id, body.offer_player_ids, body.keep_player_ids)
+            analyzer = ShopAnalyzer(lg, body.team_id, body.offer_player_ids, body.keep_player_ids, body.faab_max)
         except ShopError as exc:
             raise HTTPException(422, detail={"code": exc.code, "message": str(exc)}) from exc
         report = await run_in_threadpool(analyzer.report)

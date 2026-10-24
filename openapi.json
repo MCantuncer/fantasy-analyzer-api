@@ -2388,6 +2388,17 @@
             "type": "boolean",
             "title": "Uses All",
             "description": "The deal sends every player you picked"
+          },
+          "faab": {
+            "type": "integer",
+            "title": "Faab",
+            "description": "FAAB dollars you send with the players (0 = none)",
+            "default": 0
+          },
+          "target_gain": {
+            "type": "number",
+            "title": "Target Gain",
+            "description": "Change in your weekly win chance summed over the target categories"
           }
         },
         "type": "object",
@@ -2409,7 +2420,8 @@
           "playoff_pct_after",
           "category_changes",
           "kind",
-          "uses_all"
+          "uses_all",
+          "target_gain"
         ],
         "title": "ShopDeal"
       },
@@ -2433,6 +2445,31 @@
           "playoff_pct_before": {
             "type": "number",
             "title": "Playoff Pct Before"
+          },
+          "faab_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Faab Remaining",
+            "description": "Your FAAB left, or null if the league has no FAAB budget"
+          },
+          "faab_cap": {
+            "type": "integer",
+            "title": "Faab Cap",
+            "description": "Most FAAB the search added to one deal"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/ShopTarget"
+            },
+            "type": "array",
+            "title": "Targets",
+            "description": "Categories the search aims at, picked from your team and players"
           },
           "deals": {
             "items": {
@@ -2465,6 +2502,9 @@
           "team_name",
           "offered",
           "playoff_pct_before",
+          "faab_remaining",
+          "faab_cap",
+          "targets",
           "deals",
           "teams",
           "generated_at",
@@ -2513,6 +2553,19 @@
             "minItems": 1,
             "title": "Offer Player Ids",
             "description": "Your players to shop. Each deal sends one or more of them."
+          },
+          "faab_max": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Faab Max",
+            "description": "Most FAAB dollars to add to one deal. Default: 15% of what you have left. 0 turns it off."
           }
         },
         "type": "object",
@@ -2522,6 +2575,35 @@
           "offer_player_ids"
         ],
         "title": "ShopRequest"
+      },
+      "ShopTarget": {
+        "properties": {
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "win_pct": {
+            "type": "number",
+            "title": "Win Pct",
+            "description": "Your weekly win chance in it today"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "swing",
+              "carried"
+            ],
+            "title": "Reason",
+            "description": "swing: close to a coin flip each week. carried: the players you're shopping supply a lot of it"
+          }
+        },
+        "type": "object",
+        "required": [
+          "category",
+          "win_pct",
+          "reason"
+        ],
+        "title": "ShopTarget"
       },
       "ShopTeam": {
         "properties": {

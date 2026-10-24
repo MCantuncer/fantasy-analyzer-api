@@ -319,6 +319,11 @@ class ShopRequest(AnalyzeRequest):
     offer_player_ids: list[int] = Field(
         min_length=1, max_length=4, description="Your players to shop. Each deal sends one or more of them."
     )
+    faab_max: int | None = Field(
+        default=None,
+        ge=0,
+        description="Most FAAB dollars to add to one deal. Default: 15% of what you have left. 0 turns it off.",
+    )
 
 
 class ShopDeal(TradeIdea):
@@ -326,6 +331,16 @@ class ShopDeal(TradeIdea):
         description="win_win: their build improves too. paper_win: they win on trade value, you win on the court"
     )
     uses_all: bool = Field(description="The deal sends every player you picked")
+    faab: int = Field(default=0, description="FAAB dollars you send with the players (0 = none)")
+    target_gain: float = Field(description="Change in your weekly win chance summed over the target categories")
+
+
+class ShopTarget(BaseModel):
+    category: str
+    win_pct: float = Field(description="Your weekly win chance in it today")
+    reason: Literal["swing", "carried"] = Field(
+        description="swing: close to a coin flip each week. carried: the players you're shopping supply a lot of it"
+    )
 
 
 class ShopTeam(BaseModel):
@@ -341,6 +356,9 @@ class ShopReport(BaseModel):
     team_name: str
     offered: list[PlayerRef]
     playoff_pct_before: float
+    faab_remaining: int | None = Field(description="Your FAAB left, or null if the league has no FAAB budget")
+    faab_cap: int = Field(description="Most FAAB the search added to one deal")
+    targets: list[ShopTarget] = Field(description="Categories the search aims at, picked from your team and players")
     deals: list[ShopDeal] = Field(description="Best deals across the league, best first")
     teams: list[ShopTeam] = Field(description="Every other team, best market first")
     generated_at: str

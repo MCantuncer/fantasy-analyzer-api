@@ -71,6 +71,7 @@ class Deal:
     rival: bool = False
     rosters: dict[int, list[Player]] = field(default_factory=dict)  # team index -> roster after the deal
     my_add: Player | None = None  # free agent I pick up for the spot a 2-for-1 opens
+    faab: int = 0  # FAAB dollars I send with the players
 
     @property
     def edge(self) -> float:
@@ -184,6 +185,7 @@ class TradeFinder:
         min_my_gain: float = MIN_MY_GAIN,
         min_their_gain: float | None = None,
         min_margin: float | None = None,
+        extra_give_value: float = 0.0,
     ) -> Deal | None:
         """Score one package. The keyword thresholds override the mode's defaults."""
         pv = self.perceived
@@ -195,7 +197,7 @@ class TradeFinder:
             their_drop = self._worst(their_roster, give_ids)
             their_roster = [p for p in their_roster if p is not their_drop]
 
-        give_v = pv.package(give)
+        give_v = pv.package(give) + extra_give_value  # e.g. FAAB dollars sent with the players
         get_v = pv.package(get)
         if their_drop is not None:
             get_v += max(pv.value(their_drop) - pv.replacement, 0.0)
