@@ -448,3 +448,61 @@ class TargetReport(BaseModel):
     note: str | None = Field(default=None, description="Why there are no offers, when there are none")
     generated_at: str
     elapsed_ms: int
+
+
+class ScoresRequest(LeagueRequest):
+    day: int | None = Field(
+        default=None, ge=1, le=250, description="ESPN scoring period (a day). Default: the last day a game started"
+    )
+
+
+class GameLine(BaseModel):
+    player_id: int
+    name: str
+    pro_team_id: int
+    owner_team_id: int | None = Field(default=None, description="Fantasy team in this league; none = free agent")
+    minutes: int
+    pts: int
+    reb: int
+    ast: int
+    stl: int
+    blk: int
+    tpm: int
+    to: int
+    fgm: int
+    fga: int
+    ftm: int
+    fta: int
+
+
+class GameSide(BaseModel):
+    pro_team_id: int
+    abbrev: str
+    name: str
+    score: int | None = Field(default=None, description="None before tip-off")
+
+
+class Game(BaseModel):
+    id: int
+    start: str = Field(description="UTC start time, ISO 8601")
+    status: Literal["scheduled", "live", "final"]
+    away: GameSide
+    home: GameSide
+    lines: list[GameLine] = Field(description="Everyone who played, most minutes first")
+
+
+class ScoreDayRef(BaseModel):
+    day: int
+    date: str | None = None
+    games: int
+
+
+class ScoreDay(BaseModel):
+    league_id: int
+    season: int
+    day: int
+    date: str | None = Field(default=None, description="US date of the games")
+    games: list[Game]
+    days: list[ScoreDayRef] = Field(description="Every day of the season with games, for the date picker")
+    live: bool = Field(description="A game is on; ask again in about a minute")
+    updated_at: str

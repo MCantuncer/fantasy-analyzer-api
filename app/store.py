@@ -1,4 +1,4 @@
-"""Small persistent store for the trade of the day and its "Would you take it?" poll.
+"""Small persistent store for the trade of the day, its "Would you take it?" poll, and finished NBA days.
 
 With ``DATABASE_URL`` set (any Postgres, e.g. a free Neon database) the day's pick
 and the votes survive restarts, which matters on a free server that sleeps when
@@ -38,6 +38,13 @@ create table if not exists trade_votes (
     voted_at timestamptz not null default now(),
     primary key (league_id, season, cred_key, day, team_id, voter)
 );
+create table if not exists nba_days (
+    season int not null,
+    day int not null,
+    body jsonb not null,
+    saved_at timestamptz not null default now(),
+    primary key (season, day)
+);
 """
 
 
@@ -46,12 +53,15 @@ class Store(Protocol):
     def save_trade(self, key: TradeKey, body: dict) -> None: ...
     def vote(self, key: TradeKey, team_id: int, voter: str, take: bool) -> None: ...
     def tally(self, key: TradeKey) -> dict[int, tuple[int, int]]: ...
+    def get_day(self, season: int, day: int) -> dict | None: ...
+    def save_day(self, season: int, day: int, body: dict) -> None: ...
 
 
 class MemoryStore:
     def __init__(self) -> None:
         self.trades: dict[TradeKey, dict] = {}
         self.votes: dict[TradeKey, dict[tuple[int, str], bool]] = {}
+        self.days: dict[tuple[int, int], dict] = {}
 
     def get_trade(self, key: TradeKey) -> dict | None:
         return self.trades.get(key)
@@ -68,6 +78,12 @@ class MemoryStore:
             yes, no = out.get(team_id, (0, 0))
             out[team_id] = (yes + take, no + (not take))
         return out
+
+    def get_day(self, season: int, day: int) -> dict | None:
+        return self.days.get((season, day))
+
+    def save_day(self, season: int, day: int, body: dict) -> None:
+        self.days[(season, day)] = body
 
 
 class PostgresStore:
@@ -112,6 +128,20 @@ class PostgresStore:
                 key,
             ).fetchall()
         return {team_id: (yes, no) for team_id, yes, no in rows}
+
+    def get_day(self, season: int, day: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("select body from nba_days where season=%s and day=%s", (season, day)).fetchone()
+        return row[0] if row else None
+
+    def save_day(self, season: int, day: int, body: dict) -> None:
+        # A finished day is final; a later save (a stat fix) replaces it.
+        with self._connect() as conn:
+            conn.execute(
+                "insert into nba_days (season, day, body) values (%s, %s, %s) "
+                "on conflict (season, day) do update set body = excluded.body, saved_at = now()",
+                (season, day, json.dumps(body)),
+            )
 
 
 def create_store() -> Store:
