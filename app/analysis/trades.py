@@ -201,14 +201,14 @@ class TradeFinder:
         j: int,
         give: list[Player],
         get: list[Player],
-        *,
-        min_ratio: float | None = None,
         min_my_gain: float = MIN_MY_GAIN,
         min_their_gain: float | None = None,
+        *,
+        min_ratio: float | None = None,
         min_margin: float | None = None,
         extra_give_value: float = 0.0,
     ) -> Deal | None:
-        """Score one package. The keyword thresholds override the mode's defaults."""
+        """Score one package. The threshold arguments override the mode's defaults."""
         pv = self.perceived
         me, partner = self.teams[self.me_idx], self.teams[j]
         give_ids, get_ids = {p.id for p in give}, {p.id for p in get}

@@ -1172,6 +1172,88 @@
           }
         }
       }
+    },
+    "/api/target": {
+      "post": {
+        "summary": "Target",
+        "operationId": "target_api_target_post",
+        "parameters": [
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1240,6 +1322,14 @@
             "type": "array",
             "title": "Season"
           },
+          "league_rosters": {
+            "items": {
+              "$ref": "#/components/schemas/TeamRoster"
+            },
+            "type": "array",
+            "title": "League Rosters",
+            "description": "Every other team's players, for picking a trade target"
+          },
           "faab_remaining": {
             "anyOf": [
               {
@@ -1275,6 +1365,7 @@
           "edge_trades",
           "pickups",
           "season",
+          "league_rosters",
           "faab_remaining",
           "assumptions",
           "generated_at",
@@ -1898,6 +1989,102 @@
           "team_name"
         ],
         "title": "LinkedTeam"
+      },
+      "OwnerRead": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "record": {
+            "type": "string",
+            "title": "Record"
+          },
+          "build": {
+            "$ref": "#/components/schemas/TeamBuild"
+          },
+          "punts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Punts",
+            "description": "Categories they win less than 30% of the time"
+          },
+          "needs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Needs",
+            "description": "Close categories they compete in, where a gain flips weeks"
+          },
+          "playoff_pct": {
+            "type": "number",
+            "title": "Playoff Pct"
+          },
+          "outside_playoffs": {
+            "type": "boolean",
+            "title": "Outside Playoffs"
+          },
+          "target_is_star": {
+            "type": "boolean",
+            "title": "Target Is Star",
+            "description": "The target is one of the league's jewels: his owner wants a premium"
+          },
+          "would_value": {
+            "items": {
+              "$ref": "#/components/schemas/OwnerWant"
+            },
+            "type": "array",
+            "title": "Would Value",
+            "description": "Your players that help their build most"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "record",
+          "build",
+          "punts",
+          "needs",
+          "playoff_pct",
+          "outside_playoffs",
+          "target_is_star",
+          "would_value"
+        ],
+        "title": "OwnerRead"
+      },
+      "OwnerWant": {
+        "properties": {
+          "player": {
+            "$ref": "#/components/schemas/PlayerRef"
+          },
+          "their_cats_gain": {
+            "type": "number",
+            "title": "Their Cats Gain",
+            "description": "Change in their expected categories won, ignoring their punts"
+          },
+          "helps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Helps"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player",
+          "their_cats_gain",
+          "helps"
+        ],
+        "title": "OwnerWant"
       },
       "PickupIdea": {
         "properties": {
@@ -2560,14 +2747,6 @@
             "type": "array",
             "title": "Teams",
             "description": "Every other team, best market first"
-          },
-          "generated_at": {
-            "type": "string",
-            "title": "Generated At"
-          },
-          "elapsed_ms": {
-            "type": "integer",
-            "title": "Elapsed Ms"
           }
         },
         "type": "object",
@@ -2580,9 +2759,7 @@
           "faab_cap",
           "targets",
           "deals",
-          "teams",
-          "generated_at",
-          "elapsed_ms"
+          "teams"
         ],
         "title": "ShopReport"
       },
@@ -2727,6 +2904,374 @@
         ],
         "title": "ShopTeam"
       },
+      "TargetFit": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "enum": [
+              "great",
+              "good",
+              "small",
+              "none"
+            ],
+            "title": "Label"
+          },
+          "my_cats_gain": {
+            "type": "number",
+            "title": "My Cats Gain",
+            "description": "Change in my expected categories won per week if I add him"
+          },
+          "my_drop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who you'd cut to fit him if you gave nothing up"
+          },
+          "helps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Helps",
+            "description": "Categories he improves most for you, best first"
+          },
+          "hurts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hurts",
+            "description": "Categories he makes worse for you"
+          },
+          "playoff_pct_before": {
+            "type": "number",
+            "title": "Playoff Pct Before"
+          },
+          "playoff_pct_after": {
+            "type": "number",
+            "title": "Playoff Pct After",
+            "description": "Playoff odds if you added him for free, as a ceiling"
+          },
+          "category_changes": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Category Changes",
+            "description": "Change in my weekly win % per category"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "my_cats_gain",
+          "my_drop",
+          "helps",
+          "hurts",
+          "playoff_pct_before",
+          "playoff_pct_after",
+          "category_changes"
+        ],
+        "title": "TargetFit"
+      },
+      "TargetOffer": {
+        "properties": {
+          "partner_team_id": {
+            "type": "integer",
+            "title": "Partner Team Id"
+          },
+          "partner_team_name": {
+            "type": "string",
+            "title": "Partner Team Name"
+          },
+          "give": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Give"
+          },
+          "get": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Get"
+          },
+          "my_drop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who you cut to make room when you get more players"
+          },
+          "their_drop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who they would likely cut to make room"
+          },
+          "my_add": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Free agent you add to fill the spot a 2-for-1 opens on your roster"
+          },
+          "my_cats_gain": {
+            "type": "number",
+            "title": "My Cats Gain",
+            "description": "Change in my expected categories won per week"
+          },
+          "their_cats_gain": {
+            "type": "number",
+            "title": "Their Cats Gain",
+            "description": "Change in theirs, ignoring the categories they punt"
+          },
+          "edge": {
+            "type": "number",
+            "title": "Edge",
+            "description": "My gain minus theirs: how much more the deal does for me"
+          },
+          "value_they_get": {
+            "type": "number",
+            "title": "Value They Get",
+            "description": "Perceived value they receive, in auction dollars"
+          },
+          "value_they_give": {
+            "type": "number",
+            "title": "Value They Give",
+            "description": "Perceived value they send, in auction dollars, including their owner premium"
+          },
+          "owner_premium": {
+            "type": "number",
+            "title": "Owner Premium",
+            "description": "Part of value_they_give that is owner premium on their badged players",
+            "default": 0.0
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Jewels or keystones you give up: only suggested for a clearly better deal"
+          },
+          "acceptance": {
+            "type": "number",
+            "title": "Acceptance",
+            "description": "Rough chance the other owner accepts (heuristic)"
+          },
+          "acceptance_label": {
+            "type": "string",
+            "enum": [
+              "likely",
+              "possible",
+              "long_shot"
+            ],
+            "title": "Acceptance Label"
+          },
+          "pitch": {
+            "type": "string",
+            "title": "Pitch",
+            "description": "Why the deal helps them, to use when you propose it"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons",
+            "description": "Why it can work for both sides: sell high, buy low, their punts, timing"
+          },
+          "playoff_pct_before": {
+            "type": "number",
+            "title": "Playoff Pct Before"
+          },
+          "playoff_pct_after": {
+            "type": "number",
+            "title": "Playoff Pct After"
+          },
+          "category_changes": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Category Changes",
+            "description": "Change in my weekly win % per category"
+          },
+          "angle": {
+            "type": "string",
+            "enum": [
+              "best",
+              "safer",
+              "cheaper",
+              "alternative"
+            ],
+            "title": "Angle"
+          },
+          "angle_note": {
+            "type": "string",
+            "title": "Angle Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "partner_team_id",
+          "partner_team_name",
+          "give",
+          "get",
+          "my_cats_gain",
+          "their_cats_gain",
+          "edge",
+          "value_they_get",
+          "value_they_give",
+          "acceptance",
+          "acceptance_label",
+          "pitch",
+          "reasons",
+          "playoff_pct_before",
+          "playoff_pct_after",
+          "category_changes",
+          "angle",
+          "angle_note"
+        ],
+        "title": "TargetOffer"
+      },
+      "TargetReport": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "target": {
+            "$ref": "#/components/schemas/PlayerRef"
+          },
+          "fit": {
+            "$ref": "#/components/schemas/TargetFit"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/OwnerRead"
+          },
+          "offers": {
+            "items": {
+              "$ref": "#/components/schemas/TargetOffer"
+            },
+            "type": "array",
+            "title": "Offers",
+            "description": "Best offer first, then up to two fallbacks"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "Why there are no offers, when there are none"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          },
+          "elapsed_ms": {
+            "type": "integer",
+            "title": "Elapsed Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "target",
+          "fit",
+          "owner",
+          "offers",
+          "generated_at",
+          "elapsed_ms"
+        ],
+        "title": "TargetReport"
+      },
+      "TargetRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          },
+          "keep_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Keep Player Ids",
+            "description": "Players never offered in trades or suggested as drops"
+          },
+          "not_for_sale_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Not For Sale Player Ids",
+            "description": "Other teams' players their owners won't move: never targeted in trades"
+          },
+          "player_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Player Id",
+            "description": "The rostered player you want to trade for"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id",
+          "player_id"
+        ],
+        "title": "TargetRequest"
+      },
       "TeamBuild": {
         "properties": {
           "team_id": {
@@ -2861,6 +3406,32 @@
           "challenge"
         ],
         "title": "TeamLinkVerify"
+      },
+      "TeamRoster": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/TradeTarget"
+            },
+            "type": "array",
+            "title": "Players"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "players"
+        ],
+        "title": "TeamRoster"
       },
       "TeamSummary": {
         "properties": {
@@ -3250,6 +3821,24 @@
           "playoff_pct_after"
         ],
         "title": "TradeSide"
+      },
+      "TradeTarget": {
+        "properties": {
+          "player": {
+            "$ref": "#/components/schemas/PlayerRef"
+          },
+          "my_cats_gain": {
+            "type": "number",
+            "title": "My Cats Gain",
+            "description": "Change in my expected categories won if I added him"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player",
+          "my_cats_gain"
+        ],
+        "title": "TradeTarget"
       },
       "ValidationError": {
         "properties": {

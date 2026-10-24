@@ -23,6 +23,7 @@ from app import schemas
 from app.analysis.daily import trade_of_the_day
 from app.analysis.report import Analyzer, league_summary
 from app.analysis.shop import ShopAnalyzer, ShopError
+from app.analysis.target import TargetAnalyzer, TargetError
 from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
 from app.espn.parse import League, parse_league
@@ -605,6 +606,33 @@ def create_app(
         rc = marks.get(body.target)
         out = schemas.Reactions(counts=rc.counts, mine=sorted(rc.mine)) if rc else schemas.Reactions()
         return schemas.ReactionsOut(target=body.target, reactions=out)
+
+    @app.post("/api/target", response_model=schemas.TargetReport, responses={401: {"model": schemas.ErrorBody}})
+    async def target(
+        body: schemas.TargetRequest,
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.TargetReport:
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        lg = await load_league(body.league_id, season, creds, with_fa=True)
+        if lg.team(body.team_id) is None:
+            raise HTTPException(
+                404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
+            )
+        summary = league_summary(lg)
+        if not summary.supported:
+            raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
+
+        def run() -> schemas.TargetReport:
+            return TargetAnalyzer(
+                lg, body.team_id, body.player_id, body.keep_player_ids, body.not_for_sale_player_ids
+            ).target_report()
+
+        try:
+            return await run_in_threadpool(run)
+        except TargetError as exc:
+            raise HTTPException(400, detail={"code": exc.code, "message": str(exc)}) from exc
 
     return app
 

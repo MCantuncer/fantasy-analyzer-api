@@ -12,7 +12,7 @@ from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import EACH_CATEGORY, simulate_season
-from app.analysis.tiers import has_market, tier
+from app.analysis.tiers import droppable, has_market, tier
 from app.analysis.trades import Deal, Mode, TradeFinder, acceptance_label
 from app.espn.parse import League, Player, Team
 
@@ -105,6 +105,34 @@ class Analyzer:
         )
         return float(res.playoff_pct[self.idx])
 
+    def trade_idea(
+        self, finder: TradeFinder, d: Deal, before: float, after: float, base_cats: np.ndarray
+    ) -> schemas.TradeIdea:
+        cats = self.avg_cat_win(self.idx, d.dists) - base_cats
+        return schemas.TradeIdea(
+            partner_team_id=self.teams[d.partner_idx].id,
+            partner_team_name=self.teams[d.partner_idx].name,
+            give=[self.ref(p) for p in d.give],
+            get=[self.ref(p) for p in d.get],
+            my_drop=self.ref(d.my_drop) if d.my_drop else None,
+            their_drop=self.ref(d.their_drop) if d.their_drop else None,
+            my_add=self.ref(d.my_add) if d.my_add else None,
+            my_cats_gain=round(d.my_gain, 3),
+            their_cats_gain=round(d.their_gain, 3),
+            edge=round(d.edge, 3),
+            value_they_get=round(d.give_value, 1),
+            value_they_give=round(d.get_value, 1),
+            owner_premium=round(d.premium, 1),
+            warnings=d.warnings,
+            acceptance=round(d.acceptance, 2),
+            acceptance_label=acceptance_label(d.acceptance),
+            pitch=finder.pitch(d),
+            reasons=d.reasons,
+            playoff_pct_before=round(before, 3),
+            playoff_pct_after=round(after, 3),
+            category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
+        )
+
     # ---- sections ----------------------------------------------------------------------
 
     def categories(self) -> list[schemas.CategoryOutlook]:
@@ -144,34 +172,6 @@ class Analyzer:
                 )
             )
         return out
-
-    def trade_idea(
-        self, finder: TradeFinder, d: Deal, before: float, after: float, base_cats: np.ndarray
-    ) -> schemas.TradeIdea:
-        cats = self.avg_cat_win(self.idx, d.dists) - base_cats
-        return schemas.TradeIdea(
-            partner_team_id=self.teams[d.partner_idx].id,
-            partner_team_name=self.teams[d.partner_idx].name,
-            give=[self.ref(p) for p in d.give],
-            get=[self.ref(p) for p in d.get],
-            my_drop=self.ref(d.my_drop) if d.my_drop else None,
-            their_drop=self.ref(d.their_drop) if d.their_drop else None,
-            my_add=self.ref(d.my_add) if d.my_add else None,
-            my_cats_gain=round(d.my_gain, 3),
-            their_cats_gain=round(d.their_gain, 3),
-            edge=round(d.edge, 3),
-            value_they_get=round(d.give_value, 1),
-            value_they_give=round(d.get_value, 1),
-            owner_premium=round(d.premium, 1),
-            warnings=d.warnings,
-            acceptance=round(d.acceptance, 2),
-            acceptance_label=acceptance_label(d.acceptance),
-            pitch=finder.pitch(d),
-            reasons=d.reasons,
-            playoff_pct_before=round(before, 3),
-            playoff_pct_after=round(after, 3),
-            category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
-        )
 
     def trades(self, mode: Mode = "fair") -> list[schemas.TradeIdea]:
         finder = TradeFinder(self.league, self.model, self.idx, self.keep, mode, premium=self.premium)
@@ -258,6 +258,26 @@ class Analyzer:
         ]
         return sorted(rows, key=lambda r: r.mean_rank)
 
+    def league_rosters(self) -> list[schemas.TeamRoster]:
+        """Other teams' players with how much each would help you, for the trade-for picker."""
+        cuts = droppable(self.me.roster, self.keep)
+        cut = min(cuts, key=self.model.value) if cuts else None
+        mine = [p for p in self.me.roster if p is not cut]
+        base = self.model.strength(self.idx, self.dists)
+        out = []
+        for i, t in enumerate(self.teams):
+            if i == self.idx:
+                continue
+            players = []
+            for p in t.roster:
+                dists = list(self.dists)
+                dists[self.idx] = self.model.dist(mine + [p])
+                gain = self.model.strength(self.idx, dists) - base
+                players.append(schemas.TradeTarget(player=self.ref(p), my_cats_gain=round(gain, 3)))
+            players.sort(key=lambda x: x.player.perceived_value, reverse=True)
+            out.append(schemas.TeamRoster(team_id=t.id, team_name=t.name, players=players))
+        return out
+
     def report(self) -> schemas.AnalysisReport:
         started = time.perf_counter()
         each_cat = self.league.scoring_type == EACH_CATEGORY
@@ -273,6 +293,7 @@ class Analyzer:
             edge_trades=self.trades("edge"),
             pickups=self.pickups(),
             season=self.season(),
+            league_rosters=self.league_rosters(),
             faab_remaining=self.me.faab_remaining,
             assumptions=schemas.Assumptions(
                 games_per_week=GAMES_PER_WEEK,
