@@ -153,6 +153,17 @@ class Assumptions(BaseModel):
     notes: list[str]
 
 
+class TradeTarget(BaseModel):
+    player: PlayerRef
+    my_cats_gain: float = Field(description="Change in my expected categories won if I added him")
+
+
+class TeamRoster(BaseModel):
+    team_id: int
+    team_name: str
+    players: list[TradeTarget]
+
+
 class AnalysisReport(BaseModel):
     league: LeagueSummary
     team_id: int
@@ -166,6 +177,7 @@ class AnalysisReport(BaseModel):
     )
     pickups: list[PickupIdea]
     season: list[SeasonRow]
+    league_rosters: list[TeamRoster] = Field(description="Every other team's players, for picking a trade target")
     faab_remaining: int | None
     assumptions: Assumptions
     generated_at: str
@@ -337,3 +349,54 @@ class ReactRequest(LeagueRequest):
 class ReactionsOut(BaseModel):
     target: str
     reactions: Reactions
+
+
+class TargetRequest(AnalyzeRequest):
+    player_id: int = Field(gt=0, description="The rostered player you want to trade for")
+
+
+class TargetFit(BaseModel):
+    label: Literal["great", "good", "small", "none"]
+    my_cats_gain: float = Field(description="Change in my expected categories won per week if I add him")
+    my_drop: PlayerRef | None = Field(description="Who you'd cut to fit him if you gave nothing up")
+    helps: list[str] = Field(description="Categories he improves most for you, best first")
+    hurts: list[str] = Field(description="Categories he makes worse for you")
+    playoff_pct_before: float
+    playoff_pct_after: float = Field(description="Playoff odds if you added him for free, as a ceiling")
+    category_changes: dict[str, float] = Field(description="Change in my weekly win % per category")
+
+
+class OwnerWant(BaseModel):
+    player: PlayerRef
+    their_cats_gain: float = Field(description="Change in their expected categories won, ignoring their punts")
+    helps: list[str]
+
+
+class OwnerRead(BaseModel):
+    team_id: int
+    team_name: str
+    record: str
+    build: TeamBuild
+    punts: list[str] = Field(description="Categories they win less than 30% of the time")
+    needs: list[str] = Field(description="Close categories they compete in, where a gain flips weeks")
+    playoff_pct: float
+    outside_playoffs: bool
+    target_is_star: bool = Field(description="The target is one of the league's jewels: his owner wants a premium")
+    would_value: list[OwnerWant] = Field(description="Your players that help their build most")
+
+
+class TargetOffer(TradeIdea):
+    angle: Literal["best", "safer", "cheaper", "alternative"]
+    angle_note: str
+
+
+class TargetReport(BaseModel):
+    team_id: int
+    team_name: str
+    target: PlayerRef
+    fit: TargetFit
+    owner: OwnerRead
+    offers: list[TargetOffer] = Field(description="Best offer first, then up to two fallbacks")
+    note: str | None = Field(default=None, description="Why there are no offers, when there are none")
+    generated_at: str
+    elapsed_ms: int
