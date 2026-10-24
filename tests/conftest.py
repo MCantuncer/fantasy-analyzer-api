@@ -1,14 +1,18 @@
 import gzip
+import itertools
 import json
+import secrets
 from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.accounts import MemoryAccountStore
 from app.espn.client import EspnClient
 from app.espn.parse import parse_league
 from app.main import create_app
+from app.social import hash_token
 from app.store import MemoryStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "chill_primera_2027.json.gz"
@@ -70,7 +74,23 @@ def fake_espn(recorded, pro_schedule):
     return FakeEspn(recorded, schedule=pro_schedule)
 
 
+_emails = itertools.count(1)
+
+
+def signed_in(app, team_id: int | None = MY_TEAM, season: int = 2027) -> TestClient:
+    """A client for a fresh account, verified as ``team_id``'s manager unless that is None."""
+    accounts = app.state.accounts
+    user = accounts.create_user(f"user{next(_emails)}@example.com", None)
+    token = secrets.token_urlsafe(16)
+    accounts.save_session(hash_token(token), user.id)
+    if team_id is not None:
+        accounts.set_manager(LEAGUE_ID, season, team_id, user.id)
+    return TestClient(app, headers={"Authorization": f"Bearer {token}"})
+
+
 @pytest.fixture
 def client(fake_espn):
-    app = create_app(EspnClient(transport=httpx.MockTransport(fake_espn.handler)), store=MemoryStore())
-    return TestClient(app)
+    app = create_app(
+        EspnClient(transport=httpx.MockTransport(fake_espn.handler)), store=MemoryStore(), accounts=MemoryAccountStore()
+    )
+    return signed_in(app)

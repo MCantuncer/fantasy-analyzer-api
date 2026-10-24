@@ -5,13 +5,12 @@ from pathlib import Path
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 from app.espn.client import EspnClient
 from app.main import create_app
 from app.scores import build_day, game_status, parse_lines, parse_schedule, settled, week_fixtures
 from app.store import MemoryStore
-from tests.conftest import LEAGUE_ID, MY_TEAM, FakeEspn
+from tests.conftest import LEAGUE_ID, MY_TEAM, FakeEspn, signed_in
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # Day 4 is Thu 23 Oct 2026 (12 games, all final); day 5 is Fri 24 Oct (8 games).
@@ -96,7 +95,7 @@ def scores_client(recorded, schedule_raw, players, now: datetime):
     store = MemoryStore()
     app = create_app(EspnClient(transport=httpx.MockTransport(fake.handler)), store=store)
     app.state.now = lambda: now
-    return TestClient(app), fake, store
+    return signed_in(app), fake, store
 
 
 def test_scores_endpoint_tags_owners_and_saves_finished_days(recorded, schedule_raw, day4_players):

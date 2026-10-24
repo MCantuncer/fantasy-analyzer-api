@@ -16,6 +16,9 @@ services:
       # Postgres for the trade of the day and its poll, e.g. a free Neon database. Optional.
       - key: DATABASE_URL
         sync: false
-      # Signs the league chat's team-link codes. Render generates a random value.
+      # Signs the team verification codes. Render generates a random value.
       - key: SECRET_KEY
         generateValue: true
+      # Google OAuth web client ID. Google sign-in stays off until it is set.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
