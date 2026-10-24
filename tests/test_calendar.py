@@ -12,8 +12,17 @@ def test_calendar_periods_cover_the_season(league):
     assert periods[0] == 1
     days = [d for p in periods for d in cal.period_days[p]]
     assert days == sorted(days) and len(days) == len(set(days))
-    # The All-Star break is folded into the week before it: one two-week period.
+    # The All-Star break week is folded together with the week after it: one two-week period.
     assert max(len(cal.period_days[p]) for p in periods) == 14
+
+
+def test_all_star_break_week_joins_the_week_after_it(league):
+    # In 2027 the break runs Fri Feb 19 (day 123) to Wed Feb 24 (day 128). ESPN starts the
+    # two-week period on the Monday of the week the break begins in, as in 2025 and 2026.
+    cal = league.calendar
+    long = next(p for p, days in cal.period_days.items() if len(days) == 14)
+    assert cal.period_days[long][0] == 119 and cal.period_days[long][-1] == 132
+    assert cal.date_of(119).weekday() == 0
 
 
 def test_starts_respect_games_and_slots(league):
