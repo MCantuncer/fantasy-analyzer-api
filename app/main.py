@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from app import schemas
 from app.analysis.daily import trade_of_the_day
 from app.analysis.report import Analyzer, league_summary
+from app.analysis.shop import ShopAnalyzer, ShopError
 from app.analysis.target import TargetAnalyzer, TargetError
 from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
@@ -182,6 +183,56 @@ def create_app(
         report = await run_in_threadpool(
             lambda: Analyzer(lg, body.team_id, body.keep_player_ids, body.not_for_sale_player_ids).report()
         )
+        app.state.reports.set(key, report)
+        return report
+
+    @app.post(
+        "/api/shop",
+        response_model=schemas.ShopReport,
+        responses={401: {"model": schemas.ErrorBody}, 422: {"model": schemas.ErrorBody}},
+    )
+    async def shop(
+        body: schemas.ShopRequest,
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.ShopReport:
+        """Best deals across the league for one or more of your players."""
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        key = (
+            "shop",
+            body.league_id,
+            season,
+            body.team_id,
+            tuple(body.offer_player_ids),
+            tuple(sorted(body.keep_player_ids)),
+            tuple(sorted(body.not_for_sale_player_ids)),
+            body.faab_max,
+            credentials_key(creds),
+        )
+        cached = app.state.reports.get(key)
+        if cached is not None:
+            return cached
+        lg = await load_league(body.league_id, season, creds, with_fa=True)
+        if lg.team(body.team_id) is None:
+            raise HTTPException(
+                404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
+            )
+        summary = league_summary(lg)
+        if not summary.supported:
+            raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
+        try:
+            analyzer = ShopAnalyzer(
+                lg,
+                body.team_id,
+                body.offer_player_ids,
+                body.keep_player_ids,
+                body.faab_max,
+                body.not_for_sale_player_ids,
+            )
+        except ShopError as exc:
+            raise HTTPException(422, detail={"code": exc.code, "message": str(exc)}) from exc
+        report = await run_in_threadpool(analyzer.report)
         app.state.reports.set(key, report)
         return report
 
