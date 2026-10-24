@@ -156,6 +156,24 @@ class EspnClient:
         )
         return data.get("players", [])
 
+    async def rosters_on_day(self, season: int, league_id: int, day: int, creds: EspnCredentials | None) -> dict:
+        """Every team's roster and lineup slots as they stood on one scoring period, past seasons included."""
+        params = [("view", "mRoster"), ("scoringPeriodId", str(day))]
+        return await self._get(self._league_url(season, league_id), params, creds)
+
+    async def player_pool(
+        self, season: int, league_id: int, creds: EspnCredentials | None, limit: int = 1500
+    ) -> list[dict]:
+        """The most-owned players with their season stats, rostered or not."""
+        flt = {"players": {"limit": limit, "sortPercOwned": {"sortPriority": 1, "sortAsc": False}}}
+        data = await self._get(
+            self._league_url(season, league_id),
+            [("view", "kona_player_info")],
+            creds,
+            headers={"X-Fantasy-Filter": json.dumps(flt)},
+        )
+        return data.get("players", [])
+
     async def pro_schedule(self, season: int) -> dict:
         """Every NBA team's games by scoring period. The same for every league, no cookies."""
         return await self._get(f"{BASE_URL}/seasons/{season}", [("view", "proTeamSchedules_wl")], None)

@@ -90,6 +90,16 @@ ESPN answers `401` for a private league without cookies, and the API passes that
 
 Only ESPN head-to-head category leagues are supported for now.
 
+## Backtest
+
+Replays finished seasons of a public league week by week through the live model, using only what was known on each week's first day (rosters, lineups and box scores before that day), and scores the weekly category odds and the playoff odds against what happened (`app/backtest/`):
+
+```sh
+uv run python -m scripts.backtest 744636428 2025 2026
+```
+
+The first run of a season downloads it from ESPN into `.cache/backtest/` (a couple of minutes); later runs read the cache. Lower Brier and log loss are better; a spread of 1.0 means the model is exactly as unsure as it should be, above 1 it is overconfident. Keep a model change only if it helps every season.
+
 ## Test fixture
 
 `tests/fixtures/chill_primera_2027.json.gz` is a trimmed copy of a public league. Re-record it with:
