@@ -87,3 +87,29 @@ def test_report_sections(league):
         assert t.pitch
     assert all(p.drop.id not in keep for p in report.pickups)
     assert all(not p.add.injury_status == "OUT" for p in report.pickups)
+
+
+def test_banked_stats_count_in_the_week_being_played(league):
+    from dataclasses import replace
+
+    a = Analyzer(league, 3)
+    pdists = a.period_dists()
+    now = league.current_period
+    game = next(m for m in league.schedule if m.period == now and m.winner == "UNDECIDED")
+    i = next(k for k, t in enumerate(league.teams) if t.id == game.home)
+    # The home team has banked a crushing lead in every counting stat and shot 60% / 90%.
+    lead = {c.stat_id: 500.0 for c in league.categories if c.ratio is None and not c.reverse}
+    lead.update({c.stat_id: 0.0 for c in league.categories if c.reverse})
+    lead.update({13: 300.0, 14: 500.0, 15: 180.0, 16: 200.0})
+    banked = replace(league, schedule=[replace(m, home_totals=lead) if m is game else m for m in league.schedule])
+    before = simulate_season(league, a.dists, a.model.reverse, n_sims=1000, period_dists=pdists)
+    after = simulate_season(banked, a.dists, a.model.reverse, n_sims=1000, period_dists=pdists)
+    j = next(k for k, t in enumerate(league.teams) if t.id == game.away)
+    # It was winning about 6 of 9 this week; with the lead it sweeps.
+    assert after.wins[i] - before.wins[i] > 1.5
+    assert before.wins[j] - after.wins[j] > 1.5
+    assert after.playoff_pct[i] > before.playoff_pct[i]
+    # Without a per-period projection the week is a full average week, so banked stats are not added.
+    flat = simulate_season(banked, a.dists, a.model.reverse, n_sims=1000)
+    plain = simulate_season(league, a.dists, a.model.reverse, n_sims=1000)
+    assert np.allclose(flat.wins, plain.wins)

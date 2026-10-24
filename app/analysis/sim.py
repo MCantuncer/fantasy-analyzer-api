@@ -63,6 +63,19 @@ def category_links(names: list[str]) -> np.ndarray:
     return m / d[:, None] / d[None, :]
 
 
+def _add_banked(draws: np.ndarray, i: int, banked: dict[int, float], league: League, rest: Dist) -> None:
+    """Turn team i's draws for the days left into full-week totals."""
+    for k, c in enumerate(league.categories):
+        if c.ratio is None:
+            draws[:, i, k] += banked.get(c.stat_id, 0.0)
+            continue
+        makes, attempts = c.ratio
+        made, tried = banked.get(makes, 0.0), banked.get(attempts, 0.0)
+        left = float(rest.att[k]) if rest.att is not None else 0.0
+        if tried + left > 0:
+            draws[:, i, k] = (made + draws[:, i, k] * left) / (tried + left)
+
+
 @dataclass
 class SeasonResult:
     team_ids: list[int]
@@ -88,6 +101,8 @@ def simulate_season(
 
     `dists` is each team's average week; `period_dists`, when given, has each team's
     projection for a specific matchup period (its real games and who is injured then).
+    For the matchup period being played, `period_dists` covers only the days left, so the
+    stats each team has already banked are added on top.
 
     Categories are drawn together (CATEGORY_LINKS), and each team carries a lasting
     shock per category for the whole simulated season (TEAM_DRIFT): without them the
@@ -118,7 +133,13 @@ def simulate_season(
         mu = np.array([d.mu for d in week])
         sd = np.array([d.sd for d in week])
         z = rng.standard_normal(size=(n_sims, n_teams, mu.shape[1])) @ chol.T
-        draws = (mu + sd * (z + drift)) * sign
+        draws = mu + sd * (z + drift)
+        if period == league.current_period and period in (period_dists or {}):
+            for m in games:
+                for tid, banked in ((m.home, m.home_totals), (m.away, m.away_totals)):
+                    if banked and tid in index:
+                        _add_banked(draws, index[tid], banked, league, week[index[tid]])
+        draws = draws * sign
         for m in games:
             h, a = index.get(m.home), index.get(m.away)
             if h is None or a is None:
