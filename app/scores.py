@@ -179,3 +179,20 @@ def settled(schedule: Schedule, day: int, now: datetime) -> bool:
 
 def needs_stats(schedule: Schedule, day: int, now: datetime) -> bool:
     return any(g.start <= now for g in schedule.games.get(day, []))
+
+
+def week_fixtures(schedule: Schedule, now: datetime) -> list[tuple[int, list[ScheduledGame]]]:
+    """Games still to tip off this week (Monday to Sunday, US dates), the way fantasy matchup weeks run."""
+    if schedule.opening is None:
+        return []
+    today = (now - timedelta(hours=8)).date()  # the US date, as for opening night
+    sunday = today + timedelta(days=6 - today.weekday())
+    out = []
+    for day in sorted(schedule.games):
+        d = schedule.date_of(day)
+        if d is None or not today <= d <= sunday:
+            continue
+        upcoming = [g for g in schedule.games[day] if g.start > now]
+        if upcoming:
+            out.append((day, upcoming))
+    return out

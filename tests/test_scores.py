@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.espn.client import EspnClient
 from app.main import create_app
-from app.scores import build_day, game_status, parse_lines, parse_schedule, settled
+from app.scores import build_day, game_status, parse_lines, parse_schedule, settled, week_fixtures
 from app.store import MemoryStore
 from tests.conftest import LEAGUE_ID, MY_TEAM, FakeEspn
 
@@ -140,3 +140,23 @@ def test_day_without_games(recorded, schedule_raw, day4_players):
     client, _, _ = scores_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
     r = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027, "day": 2})
     assert r.status_code == 404 and r.json()["detail"]["code"] == "no_games"
+
+
+def test_week_fixtures_stop_at_sunday(schedule):
+    days = {d: len(gs) for d, gs in week_fixtures(schedule, MORNING_AFTER)}
+    assert days == {5: 8, 6: 7}  # Sat 24 and Sun 25; Monday 26 starts the next week
+    tonight = dict(week_fixtures(schedule, FRIDAY_NIGHT))
+    assert len(tonight[5]) == 7  # MIA @ CHA has tipped off
+
+
+def test_scores_list_this_weeks_fixtures_with_my_players(recorded, schedule_raw, day4_players, league):
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
+    body = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027, "team_id": MY_TEAM}).json()
+    assert [d["day"] for d in body["week"]] == [5, 6]
+    assert body["week"][0]["date"] == "2026-10-24"
+    mine = {p["name"] for d in body["week"] for g in d["games"] for p in g["my_players"]}
+    roster = {p.name for p in league.team(MY_TEAM).roster}
+    assert mine and mine <= roster
+    # Without a team, fixtures still come back, just without names.
+    body = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()
+    assert all(not g["my_players"] for d in body["week"] for g in d["games"])
