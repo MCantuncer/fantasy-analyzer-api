@@ -189,6 +189,89 @@
         }
       }
     },
+    "/api/shop": {
+      "post": {
+        "summary": "Shop",
+        "description": "Best deals across the league for one or more of your players.",
+        "operationId": "shop_api_shop_post",
+        "parameters": [
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShopRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShopReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        }
+      }
+    },
     "/api/trade-of-the-day": {
       "post": {
         "summary": "Trade Of Day",
@@ -2166,6 +2249,319 @@
           "mean_rank"
         ],
         "title": "SeasonRow"
+      },
+      "ShopDeal": {
+        "properties": {
+          "partner_team_id": {
+            "type": "integer",
+            "title": "Partner Team Id"
+          },
+          "partner_team_name": {
+            "type": "string",
+            "title": "Partner Team Name"
+          },
+          "give": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Give"
+          },
+          "get": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Get"
+          },
+          "my_drop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who you cut to make room when you get more players"
+          },
+          "their_drop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who they would likely cut to make room"
+          },
+          "my_add": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Free agent you add to fill the spot a 2-for-1 opens on your roster"
+          },
+          "my_cats_gain": {
+            "type": "number",
+            "title": "My Cats Gain",
+            "description": "Change in my expected categories won per week"
+          },
+          "their_cats_gain": {
+            "type": "number",
+            "title": "Their Cats Gain",
+            "description": "Change in theirs, ignoring the categories they punt"
+          },
+          "edge": {
+            "type": "number",
+            "title": "Edge",
+            "description": "My gain minus theirs: how much more the deal does for me"
+          },
+          "value_they_get": {
+            "type": "number",
+            "title": "Value They Get",
+            "description": "Perceived value they receive, in auction dollars"
+          },
+          "value_they_give": {
+            "type": "number",
+            "title": "Value They Give",
+            "description": "Perceived value they send, in auction dollars"
+          },
+          "acceptance": {
+            "type": "number",
+            "title": "Acceptance",
+            "description": "Rough chance the other owner accepts (heuristic)"
+          },
+          "acceptance_label": {
+            "type": "string",
+            "enum": [
+              "likely",
+              "possible",
+              "long_shot"
+            ],
+            "title": "Acceptance Label"
+          },
+          "pitch": {
+            "type": "string",
+            "title": "Pitch",
+            "description": "Why the deal helps them, to use when you propose it"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons",
+            "description": "Why it can work for both sides: sell high, buy low, their punts, timing"
+          },
+          "playoff_pct_before": {
+            "type": "number",
+            "title": "Playoff Pct Before"
+          },
+          "playoff_pct_after": {
+            "type": "number",
+            "title": "Playoff Pct After"
+          },
+          "category_changes": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Category Changes",
+            "description": "Change in my weekly win % per category"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "win_win",
+              "paper_win"
+            ],
+            "title": "Kind",
+            "description": "win_win: their build improves too. paper_win: they win on trade value, you win on the court"
+          },
+          "uses_all": {
+            "type": "boolean",
+            "title": "Uses All",
+            "description": "The deal sends every player you picked"
+          }
+        },
+        "type": "object",
+        "required": [
+          "partner_team_id",
+          "partner_team_name",
+          "give",
+          "get",
+          "my_cats_gain",
+          "their_cats_gain",
+          "edge",
+          "value_they_get",
+          "value_they_give",
+          "acceptance",
+          "acceptance_label",
+          "pitch",
+          "reasons",
+          "playoff_pct_before",
+          "playoff_pct_after",
+          "category_changes",
+          "kind",
+          "uses_all"
+        ],
+        "title": "ShopDeal"
+      },
+      "ShopReport": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "offered": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Offered"
+          },
+          "playoff_pct_before": {
+            "type": "number",
+            "title": "Playoff Pct Before"
+          },
+          "deals": {
+            "items": {
+              "$ref": "#/components/schemas/ShopDeal"
+            },
+            "type": "array",
+            "title": "Deals",
+            "description": "Best deals across the league, best first"
+          },
+          "teams": {
+            "items": {
+              "$ref": "#/components/schemas/ShopTeam"
+            },
+            "type": "array",
+            "title": "Teams",
+            "description": "Every other team, best market first"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          },
+          "elapsed_ms": {
+            "type": "integer",
+            "title": "Elapsed Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "offered",
+          "playoff_pct_before",
+          "deals",
+          "teams",
+          "generated_at",
+          "elapsed_ms"
+        ],
+        "title": "ShopReport"
+      },
+      "ShopRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          },
+          "keep_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Keep Player Ids",
+            "description": "Players never offered in trades or suggested as drops"
+          },
+          "offer_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Offer Player Ids",
+            "description": "Your players to shop. Each deal sends one or more of them."
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id",
+          "offer_player_ids"
+        ],
+        "title": "ShopRequest"
+      },
+      "ShopTeam": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "record": {
+            "type": "string",
+            "title": "Record"
+          },
+          "deals_found": {
+            "type": "integer",
+            "title": "Deals Found",
+            "description": "Packages with this team that pass the checks, before the season sim"
+          },
+          "best": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShopDeal"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The best deal with this team, if one holds up"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "team_name",
+          "record",
+          "deals_found"
+        ],
+        "title": "ShopTeam"
       },
       "TeamBuild": {
         "properties": {

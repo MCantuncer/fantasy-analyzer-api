@@ -313,3 +313,35 @@ class ReactRequest(LeagueRequest):
 class ReactionsOut(BaseModel):
     target: str
     reactions: Reactions
+
+
+class ShopRequest(AnalyzeRequest):
+    offer_player_ids: list[int] = Field(
+        min_length=1, max_length=4, description="Your players to shop. Each deal sends one or more of them."
+    )
+
+
+class ShopDeal(TradeIdea):
+    kind: Literal["win_win", "paper_win"] = Field(
+        description="win_win: their build improves too. paper_win: they win on trade value, you win on the court"
+    )
+    uses_all: bool = Field(description="The deal sends every player you picked")
+
+
+class ShopTeam(BaseModel):
+    team_id: int
+    team_name: str
+    record: str
+    deals_found: int = Field(description="Packages with this team that pass the checks, before the season sim")
+    best: ShopDeal | None = Field(default=None, description="The best deal with this team, if one holds up")
+
+
+class ShopReport(BaseModel):
+    team_id: int
+    team_name: str
+    offered: list[PlayerRef]
+    playoff_pct_before: float
+    deals: list[ShopDeal] = Field(description="Best deals across the league, best first")
+    teams: list[ShopTeam] = Field(description="Every other team, best market first")
+    generated_at: str
+    elapsed_ms: int
