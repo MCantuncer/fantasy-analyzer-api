@@ -34,7 +34,7 @@ from app.espn.parse import League, Player
 
 SIM_TOP = 8  # candidates checked in the season simulation
 SIM_SPOTLIGHT = 3  # extra spotlight-team candidates checked
-SIMS = 2000
+SIMS = 4000
 SPOTLIGHT_SHARE = 0.6  # the spotlight deal wins if it scores at least this share of the best
 
 CATEGORY_WORDS = {

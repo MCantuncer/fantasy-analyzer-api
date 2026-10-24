@@ -38,7 +38,7 @@ SIM_TOP = 12
 MAX_PER_PARTNER = 3
 MAX_PER_GET = 2
 RESULTS = 10
-MIN_ODDS_GAIN = 0.005  # a deal must move your playoff odds by at least half a point in the season sim
+MIN_ODDS_GAIN = 0.01  # a deal must move your playoff odds by at least a point, about twice the sim noise
 
 FAAB_CAP_SHARE = 0.10  # default most FAAB to add to one deal, as a share of what you have left
 # FAAB buys waiver-level players, so a FAAB dollar is worth far less than a draft dollar in a trade.
