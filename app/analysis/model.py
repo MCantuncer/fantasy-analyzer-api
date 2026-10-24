@@ -44,6 +44,7 @@ def norm_cdf(x: np.ndarray) -> np.ndarray:
 class Dist:
     mu: np.ndarray  # (C,) weekly mean per category (percentages as fractions)
     sd: np.ndarray  # (C,)
+    att: np.ndarray | None = None  # (C,) expected attempts behind each percentage, 0 elsewhere
 
 
 class CategoryModel:
@@ -150,7 +151,7 @@ class CategoryModel:
         return self._dist(total, att, var, KNOWN_SCHEDULE_CV)
 
     def _empty(self) -> Dist:
-        return Dist(np.zeros(len(self.cats)), np.ones(len(self.cats)))
+        return Dist(np.zeros(len(self.cats)), np.ones(len(self.cats)), np.zeros(len(self.cats)))
 
     def _dist(self, total: np.ndarray, att: np.ndarray, var: np.ndarray, cv: float) -> Dist:
         with np.errstate(invalid="ignore", divide="ignore"):
@@ -159,7 +160,7 @@ class CategoryModel:
         count_sd = np.sqrt(var + (cv * total) ** 2) + 1e-6
         mu = np.where(self.is_ratio, pct, total)
         sd = np.where(self.is_ratio, ratio_sd, count_sd)
-        return Dist(mu, sd)
+        return Dist(mu, sd, np.where(self.is_ratio, att, 0.0))
 
     # ---- the calendar: who plays which day, and who starts ------------------------------
 

@@ -101,6 +101,9 @@ class Matchup:
     home: int
     away: int
     winner: str  # HOME / AWAY / TIE / UNDECIDED
+    # Stats banked so far in a matchup still being played: stat id -> total (makes and attempts too).
+    home_totals: dict[int, float] = field(default_factory=dict)
+    away_totals: dict[int, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -285,6 +288,11 @@ def parse_calendar(pro_schedule: dict, raw: dict) -> Calendar | None:
     )
 
 
+def _banked(side: dict) -> dict[int, float]:
+    by_stat = (side.get("cumulativeScore") or {}).get("scoreByStat") or {}
+    return {int(k): float(v.get("score") or 0.0) for k, v in by_stat.items() if str(k).isdigit()}
+
+
 def parse_league(raw: dict, free_agents: list[dict] | None = None, pro_schedule: dict | None = None) -> League:
     settings = raw["settings"]
     season = int(raw["seasonId"])
@@ -333,6 +341,8 @@ def parse_league(raw: dict, free_agents: list[dict] | None = None, pro_schedule:
             home=int(m["home"]["teamId"]),
             away=int(m["away"]["teamId"]),
             winner=m.get("winner", "UNDECIDED"),
+            home_totals=_banked(m["home"]) if m.get("winner", "UNDECIDED") == "UNDECIDED" else {},
+            away_totals=_banked(m["away"]) if m.get("winner", "UNDECIDED") == "UNDECIDED" else {},
         )
         for m in raw.get("schedule", [])
         if "home" in m and "away" in m and m.get("playoffTierType", "NONE") == "NONE"
