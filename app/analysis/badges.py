@@ -68,6 +68,12 @@ UNTOUCHABLE = "UNTOUCHABLE"
 BLOCK = "ON_THE_BLOCK"
 
 
+def best_pickup(league: League, model: CategoryModel) -> Player | None:
+    """The best free agent an owner could add today: no injury tag at all, with enough games to trust."""
+    pool = [p for p in league.free_agents if p.fully_healthy and p.pro_team_id and (p.has_prior or p.games_played >= 5)]
+    return max(pool, key=model.value, default=None)
+
+
 @dataclass(frozen=True)
 class Badge:
     kind: BadgeKind
@@ -119,10 +125,7 @@ class OwnerPremium:
     def _find_keystones(self) -> dict[int, tuple[str, float, float]]:
         """Player id -> (category, team's weekly win rate with him, without him)."""
         m = self.model
-        healthy = [
-            p for p in self.league.free_agents if p.available and p.pro_team_id and (p.has_prior or p.games_played >= 5)
-        ]
-        filler = max(healthy, key=m.value, default=None)
+        filler = best_pickup(self.league, m)
         if filler is None:
             return {}
         z_fill = m.z_scores(filler)
