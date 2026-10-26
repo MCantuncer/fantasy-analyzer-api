@@ -1,0 +1,17 @@
+name: News refresh
+
+# The free Render server sleeps when idle. Asking for news every 30 minutes wakes it,
+# and the API then checks every news source if its last check is over 15 minutes old.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    if: ${{ vars.API_URL != '' }}
+    steps:
+      - run: curl -fsS --max-time 90 -o /dev/null "${{ vars.API_URL }}/api/news/refresh" || true

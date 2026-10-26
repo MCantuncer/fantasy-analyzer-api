@@ -1960,6 +1960,126 @@
           }
         }
       }
+    },
+    "/api/news/refresh": {
+      "get": {
+        "summary": "News Refresh",
+        "description": "Wakes the server and starts a check of every news source if one is due. Returns nothing about news.",
+        "operationId": "news_refresh_api_news_refresh_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response News Refresh Api News Refresh Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/news": {
+      "post": {
+        "summary": "News",
+        "description": "NBA news from many sources, checked against ESPN's player data and each other before it shows.",
+        "operationId": "news_api_news_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewsPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3274,6 +3394,370 @@
           "name"
         ],
         "title": "MyLeague"
+      },
+      "NewsPage": {
+        "properties": {
+          "league_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "League Id"
+          },
+          "stories": {
+            "items": {
+              "$ref": "#/components/schemas/NewsStory"
+            },
+            "type": "array",
+            "title": "Stories"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/NewsSourceHealth"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "trending": {
+            "items": {
+              "$ref": "#/components/schemas/TrendingPlayer"
+            },
+            "type": "array",
+            "title": "Trending"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At",
+            "description": "Last time every source was checked, UTC"
+          },
+          "refreshing": {
+            "type": "boolean",
+            "title": "Refreshing",
+            "description": "A check of every source is running; ask again in a minute"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stories",
+          "sources",
+          "trending",
+          "refreshing"
+        ],
+        "title": "NewsPage"
+      },
+      "NewsPlayer": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pro_team": {
+            "type": "string",
+            "title": "Pro Team",
+            "description": "NBA team abbreviation; empty for a free agent"
+          },
+          "injury_status": {
+            "type": "string",
+            "title": "Injury Status",
+            "description": "ESPN's current status, e.g. ACTIVE, DAY_TO_DAY, OUT"
+          },
+          "owner_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team Id",
+            "description": "Fantasy team in the asked league; none = free agent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pro_team",
+          "injury_status"
+        ],
+        "title": "NewsPlayer"
+      },
+      "NewsRequest": {
+        "properties": {
+          "league_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "League Id",
+            "description": "Tag each player with his fantasy team here"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "include_held": {
+            "type": "boolean",
+            "title": "Include Held",
+            "description": "Also return stories only seen on social sites",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "NewsRequest"
+      },
+      "NewsSourceHealth": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "outlet",
+              "tip"
+            ],
+            "title": "Kind"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ok",
+            "description": "None until the source has been tried"
+          },
+          "last_success": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success"
+          },
+          "last_attempt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Attempt"
+          },
+          "items": {
+            "type": "integer",
+            "title": "Items",
+            "default": 0
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_id",
+          "name",
+          "kind"
+        ],
+        "title": "NewsSourceHealth"
+      },
+      "NewsSourceLink": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "outlet",
+              "tip"
+            ],
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "published_at": {
+            "type": "string",
+            "title": "Published At"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_id",
+          "name",
+          "kind",
+          "title",
+          "url",
+          "published_at"
+        ],
+        "title": "NewsSourceLink"
+      },
+      "NewsStory": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "injury",
+              "return",
+              "trade",
+              "rumor",
+              "signing",
+              "waive",
+              "role",
+              "other"
+            ],
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "reported",
+              "held",
+              "didnt_happen"
+            ],
+            "title": "Status",
+            "description": "confirmed: ESPN data or two independent outlets agree. reported: one outlet. held: social sites only. didnt_happen: a reported trade with no team change after 3 days"
+          },
+          "headline": {
+            "type": "string",
+            "title": "Headline",
+            "description": "The lead source's own headline; never written by us"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "published_at": {
+            "type": "string",
+            "title": "Published At",
+            "description": "First seen, UTC"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At",
+            "description": "Latest source, UTC"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/NewsPlayer"
+            },
+            "type": "array",
+            "title": "Players"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/NewsSourceLink"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "Every source for this story, oldest first"
+          },
+          "severity": {
+            "type": "integer",
+            "title": "Severity",
+            "description": "Injuries: 1 day-to-day, 2 out short term, 3 weeks or more",
+            "default": 0
+          },
+          "conflict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conflict",
+            "description": "Set when sources disagree on how bad an injury is"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "headline",
+          "summary",
+          "published_at",
+          "updated_at",
+          "players",
+          "sources"
+        ],
+        "title": "NewsStory"
       },
       "Notice": {
         "properties": {
@@ -5410,6 +5894,56 @@
           "my_cats_gain"
         ],
         "title": "TradeTarget"
+      },
+      "TrendingPlayer": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pro_team": {
+            "type": "string",
+            "title": "Pro Team"
+          },
+          "injury_status": {
+            "type": "string",
+            "title": "Injury Status"
+          },
+          "percent_owned": {
+            "type": "number",
+            "title": "Percent Owned"
+          },
+          "percent_change": {
+            "type": "number",
+            "title": "Percent Change",
+            "description": "Change in % of ESPN leagues rostering him, today"
+          },
+          "owner_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pro_team",
+          "injury_status",
+          "percent_owned",
+          "percent_change"
+        ],
+        "title": "TrendingPlayer"
       },
       "ValidationError": {
         "properties": {
