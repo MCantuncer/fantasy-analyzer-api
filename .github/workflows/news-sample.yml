@@ -1,6 +1,6 @@
 name: News feed sample
 
-# One-off: prints every item the news sources return, to label a sample for the news filter.
+# One-off (run 2): prints every item the news sources return, to label a sample for the news filter.
 on:
   push:
     branches: [feature/news-feed-sample]
