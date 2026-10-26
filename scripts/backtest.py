@@ -1,6 +1,7 @@
 """Score the model on finished seasons of a public league, replayed week by week.
 
 Usage: uv run python -m scripts.backtest LEAGUE_ID SEASON [SEASON ...] [--json OUT.json] [--flat-durability]
+       [--flat-absence]
 The first run of a season downloads it from ESPN (a few hundred requests, a few minutes)
 into .cache/backtest/; later runs read the cache. Only public leagues: no cookies.
 
@@ -30,13 +31,16 @@ def main() -> None:
     ap.add_argument(
         "--flat-durability", action="store_true", help="ignore games-played history (every player equally durable)"
     )
+    ap.add_argument(
+        "--flat-absence", action="store_true", help="players out are back after a flat number of days, as before"
+    )
     args = ap.parse_args()
 
     out = {}
     for season in args.seasons:
         h = asyncio.run(load_history(args.league_id, season, CACHE))
         past = None if args.flat_durability else asyncio.run(load_past_games(season, CACHE))
-        replay = Replay(h, past)
+        replay = Replay(h, past, absences=not args.flat_absence)
         weekly, season_score = replay.weekly().summary(), replay.season(n_sims=args.sims).summary()
         out[season] = {"weekly": weekly, "season": season_score}
         print(f"\n{season}: weekly categories n={weekly['n']}")

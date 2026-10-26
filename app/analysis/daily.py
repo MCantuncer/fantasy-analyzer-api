@@ -170,6 +170,8 @@ class DailyTrade:
             owner_premium=round(self.premium.dollars(p), 1),
             games_share=round(p.durability, 3) if p.durability is not None else None,
             injury_prone=injury_prone(p),
+            games_out=round(p.games_out, 1) if p.games_out is not None else None,
+            expected_back=self.model.back_date(p),
         )
 
     def side(
