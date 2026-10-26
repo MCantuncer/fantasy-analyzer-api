@@ -63,6 +63,7 @@ class EspnClient:
         params: list[tuple[str, str]],
         creds: EspnCredentials | None,
         headers: dict[str, str] | None = None,
+        unwrap: bool = True,
     ) -> dict:
         # A fresh client per call keeps cookies from leaking between users.
         async with httpx.AsyncClient(
@@ -83,7 +84,7 @@ class EspnClient:
             raise EspnUnavailable(f"ESPN returned HTTP {resp.status_code}.")
         data = resp.json()
         # Older seasons come back wrapped in a list.
-        if isinstance(data, list):
+        if unwrap and isinstance(data, list):
             if not data:
                 raise LeagueNotFound("League not found for this season.")
             data = data[0]
@@ -183,3 +184,27 @@ class EspnClient:
     async def pro_schedule(self, season: int) -> dict:
         """Every NBA team's games by scoring period. The same for every league, no cookies."""
         return await self._get(f"{BASE_URL}/seasons/{season}", [("view", "proTeamSchedules_wl")], None)
+
+    async def _season_players(self, season: int, view: str, flt: dict) -> list[dict]:
+        data = await self._get(
+            f"{BASE_URL}/seasons/{season}/players",
+            [("view", view)],
+            None,
+            headers={"X-Fantasy-Filter": json.dumps(flt)},
+            unwrap=False,
+        )
+        return data if isinstance(data, list) else []
+
+    async def player_states(self, season: int, limit: int = 700) -> list[dict]:
+        """Injury status and NBA team of the most-owned players across ESPN. Light: no stats."""
+        flt = {"limit": limit, "sortPercOwned": {"sortPriority": 1, "sortAsc": False}}
+        return await self._season_players(season, "kona_player_news", flt)
+
+    async def trending(self, season: int, limit: int = 15) -> list[dict]:
+        """The players added in the most ESPN leagues today, with their ownership change."""
+        flt = {
+            "filterActive": {"value": True},
+            "limit": limit,
+            "sortPercChanged": {"sortPriority": 1, "sortAsc": False},
+        }
+        return await self._season_players(season, "kona_player_info", flt)
