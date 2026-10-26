@@ -669,3 +669,77 @@ class ScoreDay(BaseModel):
         description="Games still to tip off this week (Monday to Sunday), whatever day is shown"
     )
     updated_at: str
+
+
+class NewsRequest(BaseModel):
+    league_id: int | None = Field(default=None, gt=0, description="Tag each player with his fantasy team here")
+    season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")
+    include_held: bool = Field(default=False, description="Also return stories only seen on social sites")
+
+
+NewsKind = Literal["injury", "return", "trade", "rumor", "signing", "waive", "role", "other"]
+
+
+class NewsPlayer(BaseModel):
+    player_id: int
+    name: str
+    pro_team: str = Field(description="NBA team abbreviation; empty for a free agent")
+    injury_status: str = Field(description="ESPN's current status, e.g. ACTIVE, DAY_TO_DAY, OUT")
+    owner_team_id: int | None = Field(default=None, description="Fantasy team in the asked league; none = free agent")
+
+
+class NewsSourceLink(BaseModel):
+    source_id: str
+    name: str
+    kind: Literal["fact", "outlet", "tip"]
+    title: str
+    url: str
+    published_at: str
+    summary: str = ""
+
+
+class NewsStory(BaseModel):
+    id: str
+    kind: NewsKind
+    status: Literal["confirmed", "reported", "held", "didnt_happen"] = Field(
+        description="confirmed: ESPN data or two independent outlets agree. reported: one outlet. "
+        "held: social sites only. didnt_happen: a reported trade with no team change after 3 days"
+    )
+    headline: str = Field(description="The lead source's own headline; never written by us")
+    summary: str
+    published_at: str = Field(description="First seen, UTC")
+    updated_at: str = Field(description="Latest source, UTC")
+    players: list[NewsPlayer]
+    sources: list[NewsSourceLink] = Field(description="Every source for this story, oldest first")
+    severity: int = Field(default=0, description="Injuries: 1 day-to-day, 2 out short term, 3 weeks or more")
+    conflict: str | None = Field(default=None, description="Set when sources disagree on how bad an injury is")
+
+
+class NewsSourceHealth(BaseModel):
+    source_id: str
+    name: str
+    kind: Literal["fact", "outlet", "tip"]
+    ok: bool | None = Field(default=None, description="None until the source has been tried")
+    last_success: str | None = None
+    last_attempt: str | None = None
+    items: int = 0
+    error: str | None = None
+
+
+class TrendingPlayer(BaseModel):
+    player_id: int
+    name: str
+    pro_team: str
+    injury_status: str
+    percent_owned: float
+    percent_change: float = Field(description="Change in % of ESPN leagues rostering him, today")
+    owner_team_id: int | None = None
+
+
+class NewsPage(BaseModel):
+    league_id: int | None = None
+    stories: list[NewsStory]
+    sources: list[NewsSourceHealth]
+    trending: list[TrendingPlayer]
+    updated_at: str | None = Field(default=None, description="Last time every source was checked, UTC")
+    refreshing: bool = Field(description="A check of every source is running; ask again in a minute")

@@ -48,9 +48,11 @@ uv run ruff check .
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
 | POST | `/api/scores` | `{league_id, season?, day?, team_id?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
 | POST | `/api/injury-impact` | `{player_id, league_id?, season?}` | Teammates who gain while a player is out, from games his team played without him, each tagged with his fantasy team in `league_id` |
+| POST | `/api/news` | `{league_id?, season?, include_held?}` | Checked NBA news from every source, each player tagged with his fantasy team in `league_id`; source health; today's most-added players |
+| GET | `/api/news/refresh` | | Starts a check of every news source if the last is over 15 minutes old. For the scheduled ping |
 | GET | `/api/health` | | `{ok: true}` |
 
-Every endpoint except `/api/health` and `/api/auth/*` needs `Authorization: Bearer <token>` from sign-up or sign-in. `season` defaults to the current ESPN season (2026-27 is `2027`). `keep_player_ids` are never offered in trades or suggested as drops.
+Every endpoint except `/api/health`, `/api/news/refresh` and `/api/auth/*` needs `Authorization: Bearer <token>` from sign-up or sign-in. `season` defaults to the current ESPN season (2026-27 is `2027`). `keep_player_ids` are never offered in trades or suggested as drops.
 
 The schema is in `openapi.json`. Regenerate it after changing `app/schemas.py`:
 
@@ -99,6 +101,27 @@ The endpoint lists teammates whose 9-category value goes up and who would play 1
 | This model | 3.85 | 35% |
 
 Chance is about 20%. Even knowing the real minutes, the best value pick would be right about 41% of the time, because stats over a few games are noisy; the model's value pick was right 27% (backup rule 24%).
+
+## NBA news
+
+`/api/news` gathers NBA news from several sources (`app/news/sources.py`) and checks it before it shows:
+
+- **Facts:** ESPN's player data. Every check compares each player's injury status and NBA team with the last check; a change (a new injury, a return, a trade, a signing, a release) is a fact.
+- **Outlets:** ESPN, RotoWire, CBS Sports, Yahoo Sports, RealGM, HoopsHype and The Stein Line. Outlets owned by the same company count once.
+- **Tips:** Reddit r/nba. Never enough on its own.
+
+Each item is tagged with the players its headline names in full (ESPN's own athlete tags for ESPN articles), never from a last name alone. The kind (injury, return, trade, rumor, signing, release, role) and an injury's severity come from keyword rules. Items about the same player and kind of news within 48 hours become one story:
+
+| Status | When |
+| --- | --- |
+| `confirmed` | ESPN's data agrees (the injury status, a team change), or outlets from two groups report it |
+| `reported` | One outlet group |
+| `held` | Only tips; hidden unless `include_held` |
+| `didnt_happen` | Reported as a done trade, but the player's team has not changed after 72 hours |
+
+When sources disagree on how bad an injury is (for example ESPN lists day-to-day and an outlet reports a fracture), the story's `conflict` says so, naming each source, and `severity` is the worst one. Headlines and summaries are always the sources' own; a story with only ESPN data gets a plain line from that data ("ESPN lists X as out").
+
+A check runs at most every 15 minutes, started by any request when due. Items are stored in `news_items` (kept 14 days), and the last player snapshot, source health and trending players in `news_state`. On the free Render plan the server sleeps, so the `News refresh` GitHub workflow calls `/api/news/refresh` every 30 minutes; set the repository variable `API_URL` (e.g. `https://fantasy-analyzer-api.onrender.com`) to turn it on.
 
 ## Private leagues
 
