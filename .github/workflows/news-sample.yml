@@ -1,0 +1,37 @@
+name: News feed sample
+
+# One-off: prints every item the news sources return, to label a sample for the news filter.
+on:
+  push:
+    branches: [feature/news-feed-sample]
+
+permissions:
+  contents: read
+
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: |
+          uv run python - <<'PY'
+          import asyncio, json, httpx
+          from dataclasses import asdict
+          from app.news.sources import SOURCES, fetch
+          async def main():
+              for s in SOURCES:
+                  if s.id == "espn_players":
+                      continue
+                  try:
+                      items = await fetch(s)
+                  except Exception as e:
+                      print("SOURCEERR", s.id, repr(e)); continue
+                  print("SOURCE", s.id, len(items))
+                  for it in items:
+                      d = asdict(it); d["published"] = it.published.isoformat()
+                      print("ITEM", json.dumps(d))
+          asyncio.run(main())
+          PY
+      - run: curl -sS -A "Mozilla/5.0" https://basketball.realgm.com/rss/wiretap/0/0.xml | head -c 2500
