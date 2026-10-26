@@ -38,14 +38,13 @@ from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import simulate_season
 from app.analysis.tiers import tier
 from app.analysis.trades import Deal, TradeFinder, acceptance_label
-from app.espn.parse import IR_SLOT, League, Player
+from app.espn.parse import League, Player
 
 SIM_TOP = 8  # candidates checked in the season simulation
 SIM_SPOTLIGHT = 3  # extra spotlight-team candidates checked
 SIMS = 4000
 SPOTLIGHT_SHARE = 0.6  # the spotlight deal wins if it scores at least this share of the best
 KEEP_SHARE = 0.85  # on a re-check, the current pick stays if it scores at least this share of the best
-HEALTHY = {"ACTIVE", "NORMAL"}
 
 CATEGORY_WORDS = {
     "PTS": "points",
@@ -89,7 +88,7 @@ class Pair:
 
 
 def fully_healthy(p: Player) -> bool:
-    return p.injury_status in HEALTHY and p.lineup_slot != IR_SLOT
+    return p.fully_healthy
 
 
 def spotlight_index(league: League, day: date) -> int:

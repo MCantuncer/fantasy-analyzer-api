@@ -34,6 +34,7 @@ IR_SLOT = 13
 BENCH_SLOT = 12
 UTIL_SLOT = 11
 UNAVAILABLE = {"OUT", "INJURY_RESERVE", "SUSPENSION"}
+HEALTHY = {"ACTIVE", "NORMAL"}  # no injury tag at all, not even day-to-day
 
 # Weight on actual stats grows with games played; projections dominate early.
 ACTUAL_WEIGHT_GAMES = 20.0
@@ -80,6 +81,11 @@ class Player:
     @property
     def available(self) -> bool:
         return self.injury_status not in UNAVAILABLE and self.lineup_slot != IR_SLOT
+
+    @property
+    def fully_healthy(self) -> bool:
+        """No injury tag at all. ESPN's day-to-day can lag a long absence, so pickups need this."""
+        return self.injury_status in HEALTHY and self.lineup_slot != IR_SLOT
 
 
 @dataclass
