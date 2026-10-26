@@ -68,6 +68,27 @@ def test_round_values_only_in_snake_leagues(league, snake_league):
     assert values[0] > values[-1]
 
 
+def test_values_read_as_rounds_in_snake_leagues(league, snake_league):
+    assert PerceivedValue(league).describe(12.4) == "$12"
+    pv = PerceivedValue(snake_league)
+    top = pv.round_values()[0]
+    assert pv.describe(top + 5) == "a 1st-round pick"
+    assert pv.describe(pv.round_values()[2]) == "a 3rd-round pick"
+    lowest = min(v for v in pv.round_values() if v >= 0.5)
+    assert pv.describe(lowest) != "a late-round pick"
+    if lowest > 0.6:
+        assert pv.describe(0.55) == "a late-round pick"
+    assert pv.describe(0.1) == "waiver level"
+
+
+def test_snake_trade_reasons_never_quote_auction_dollars(snake_league):
+    model = CategoryModel(snake_league)
+    me = next(i for i, t in enumerate(snake_league.teams) if t.id == 3)
+    deals = TradeFinder(snake_league, model, me, keep=set()).candidates()
+    reasons = [r for d in deals for r in d.reasons]
+    assert reasons and not any("$" in r for r in reasons)
+
+
 def test_dollars_at_rank_is_non_increasing(league):
     pv = PerceivedValue(league)
     values = [pv.dollars_at_rank(r) for r in range(1, 200, 5)]

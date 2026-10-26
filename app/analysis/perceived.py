@@ -51,6 +51,8 @@ MIN_SAMPLE_GAMES = 5
 # Owners value one star over two decent players adding up to the same dollars.
 # A package is worth the K-norm of its parts, so two $20 players count as about $32.
 STUD_POWER = 1.5
+# Below this a player is waiver level in any league: no draft round is priced this low.
+WAIVER_LEVEL = 0.5
 
 
 class PerceivedValue:
@@ -89,6 +91,22 @@ class PerceivedValue:
         n = len(lg.teams)
         rounds = lg.draft_rounds or 13
         return [round(self.dollars_at_rank(n * r), 1) for r in range(1, rounds + 1)]
+
+    def draft_round(self, dollars: float) -> int | None:
+        """Snake leagues: the round a player of this value goes in. None past the priced rounds, or in auction."""
+        rounds = self.round_values()
+        if rounds is None:
+            return None
+        return next((k for k, v in enumerate(rounds, 1) if v >= WAIVER_LEVEL and dollars >= v), None)
+
+    def describe(self, dollars: float) -> str:
+        """A value as owners think of it: "$12" in auction leagues, "a 4th-round pick" in snake leagues."""
+        if self.league.is_auction:
+            return f"${dollars:.0f}"
+        r = self.draft_round(dollars)
+        if r is not None:
+            return f"a {_ordinal(r)}-round pick"
+        return "a late-round pick" if dollars >= WAIVER_LEVEL else "waiver level"
 
     def signals(self, p: Player) -> list[tuple[str, float, float]]:
         """(name, weight, dollars) for every signal this player has."""
@@ -144,3 +162,7 @@ class PerceivedValue:
         """Value of the best healthy free agent: what an owner gets back for a roster spot."""
         free = [self.value(p) for p in self.league.free_agents if p.available]
         return max(free, default=0.0)
+
+
+def _ordinal(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
