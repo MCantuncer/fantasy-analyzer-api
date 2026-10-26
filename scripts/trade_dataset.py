@@ -4,8 +4,9 @@
       probe random league ids, keep the public ones in .cache/tradedata/leagues.jsonl
   uv run python -m scripts.trade_dataset crawl [--league 744636428 --seasons 2021 2022 ...]
       download every found league-season that has trade activity (cached, resumable)
-  uv run python -m scripts.trade_dataset build --out data/
-      turn the cache into offers.jsonl (one offer per line, players with features) and offers.csv
+  uv run python -m scripts.trade_dataset build [--out DIR]
+      turn the cache into offers.jsonl (one offer per line, players with features), offer_sides.csv
+      (one line per offer and side) and seasons.json (counts and data quality per league-season)
 
 Read-only and throttled to a few requests a second; no cookies, so only public leagues.
 """
@@ -109,7 +110,7 @@ def main() -> None:
     c.add_argument("--rate", type=float, default=3.0)
     b = sub.add_parser("build")
     b.add_argument("--league", type=int, nargs="*")
-    b.add_argument("--out", type=Path, default=Path("data/tradedata"))
+    b.add_argument("--out", type=Path, default=CACHE / "out")
     args = ap.parse_args()
     {"discover": cmd_discover, "crawl": cmd_crawl, "build": cmd_build}[args.cmd](args)
 
