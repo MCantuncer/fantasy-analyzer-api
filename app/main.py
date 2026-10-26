@@ -35,6 +35,8 @@ from app.accounts import (
     verify_google,
 )
 from app.analysis.daily import trade_of_the_day
+from app.analysis.injury import LAST_SEASON_WEIGHT, Season, parse_gamelogs
+from app.analysis.injury import analyze as analyze_absence
 from app.analysis.report import Analyzer, league_summary
 from app.analysis.shop import ShopAnalyzer, ShopError
 from app.analysis.target import TargetAnalyzer, TargetError
@@ -42,6 +44,12 @@ from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
 from app.espn.parse import League, parse_league
 from app.feed import PlayerName, Transaction, parse_players, parse_transactions
+from app.news.facts import PlayerState
+from app.news.service import NewsService
+from app.news.service import iso as news_iso
+from app.news.sources import BY_ID as NEWS_SOURCES
+from app.news.sources import SOURCES as NEWS_SOURCE_LIST
+from app.news.verify import FACT_SOURCE, describe_fact
 from app.scores import build_day, needs_stats, parse_schedule, settled, week_fixtures
 from app.social import (
     CHALLENGE_SECONDS,
@@ -72,6 +80,21 @@ DAILY_RECHECK = float(os.getenv("DAILY_TRADE_RECHECK_SECONDS", str(3 * 3600)))
 # The feed pages through the season a week (seven scoring periods) at a time.
 FEED_PAGE_PERIODS = 7
 POSTS_PER_MINUTE = 10
+# A team's game logs: this season's change after every game night, last season's never.
+GAMELOG_TTL = 3 * 3600.0
+MIN_RELEVANT_MINUTES = 15.0
+PAST_GAMELOG_TTL = 7 * 24 * 3600.0
+IMPACT_METHOD = (
+    "Each teammate's minutes and per-minute stats in games his team played without him, against games he "
+    "played, this season and last (last season counts a quarter, recent games count more). With few such games "
+    "the result leans on a prior that shares his minutes by position and room to grow."
+)
+IMPACT_TRACK_RECORD = (
+    "Checked on 202 absences of regulars in 2025-26, tuned on 2024-25: minutes error 3.9 per game, against 4.2 "
+    "for 'no change' and 4.7 for 'his backup gets his minutes'. The top pick was one of the two biggest real "
+    "minutes gainers 35% of the time (backup rule 23%, chance about 20%). Stats over a few games are noisy, so "
+    "the fantasy value ranking is a guide, not a promise."
+)
 # While a game is on, one ESPN call a minute serves every visitor.
 LIVE_SCORES_TTL = 60.0
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
@@ -114,6 +137,7 @@ def iso(dt: datetime) -> str:
 def create_app(
     espn: EspnClient | None = None,
     store: Store | None = None,
+    news_transport=None,
     social: SocialStore | None = None,
     accounts: AccountStore | None = None,
     google_transport=None,
@@ -141,6 +165,9 @@ def create_app(
     app.state.settled_days = TTLCache(7 * 24 * 3600, max_items=512)
     app.state.score_locks = defaultdict(asyncio.Lock)
     app.state.now = lambda: datetime.now(UTC)
+    app.state.gamelogs = TTLCache(GAMELOG_TTL, max_items=64)
+    app.state.past_gamelogs = TTLCache(PAST_GAMELOG_TTL, max_items=64)
+    app.state.news = NewsService(app.state.espn, app.state.store, transport=news_transport)
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
     app.add_middleware(
@@ -193,6 +220,71 @@ def create_app(
     @app.get("/api/health")
     async def health() -> dict:
         return {"ok": True}
+
+    async def team_gamelogs(season: int, pro_team_id: int, past: bool) -> list[dict]:
+        cache = app.state.past_gamelogs if past else app.state.gamelogs
+        raw = cache.get((season, pro_team_id))
+        if raw is None:
+            raw = await app.state.espn.team_gamelogs(season, pro_team_id)
+            cache.set((season, pro_team_id), raw)
+        return raw
+
+    @app.post(
+        "/api/injury-impact",
+        response_model=schemas.InjuryImpact,
+        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+    )
+    async def injury_impact(
+        body: schemas.InjuryImpactRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.InjuryImpact:
+        """Which teammates gain while a player is out, measured from games his team played without him."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        found = await app.state.espn.players_by_id(season, [body.player_id])
+        if not found:
+            raise HTTPException(404, detail={"code": "no_player", "message": "No such NBA player."})
+        team = int(found[0].get("proTeamId") or 0)
+        if team == 0:
+            raise HTTPException(404, detail={"code": "no_team", "message": "He isn't on an NBA team."})
+        lines, info = parse_gamelogs(await team_gamelogs(season, team, past=False))
+        last_lines, _ = parse_gamelogs(await team_gamelogs(season - 1, team, past=True))
+        roster = [p for p in info.values() if p.team == team]
+        impact = await run_in_threadpool(
+            analyze_absence, [Season(lines), Season(last_lines, LAST_SEASON_WEIGHT)], team, body.player_id, roster
+        )
+        owners: dict[int, int] = {}
+        if body.league_id:
+            lg = await load_league(body.league_id, season, creds, with_fa=False)
+            owners = {p.id: t.id for t in lg.teams for p in t.roster}
+        raw = await pro_schedule(season)
+        abbrevs = {
+            int(t["id"]): str(t.get("abbrev", "")).upper()
+            for t in ((raw or {}).get("settings") or {}).get("proTeams", [])
+            if t.get("id")
+        }
+        # Fantasy-relevant gains only: a real share of minutes, and better per-game value.
+        gainers = [b for b in impact.beneficiaries if b.value > 0 and b.minutes_after >= MIN_RELEVANT_MINUTES][:6]
+        return schemas.InjuryImpact(
+            player_id=body.player_id,
+            name=str(found[0].get("fullName", "")),
+            pro_team=abbrevs.get(team, ""),
+            minutes=impact.minutes,
+            games_missed=impact.games_missed,
+            beneficiaries=[
+                schemas.Beneficiary(
+                    **{k: v for k, v in b.__dict__.items() if k != "gains"},
+                    gains=schemas.CategoryGains(**b.gains),
+                    owner_team_id=owners.get(b.player_id),
+                )
+                for b in gainers
+            ],
+            method=IMPACT_METHOD,
+            track_record=IMPACT_TRACK_RECORD,
+        )
 
     # Accounts ------------------------------------------------------------------
 
@@ -1081,6 +1173,111 @@ def create_app(
             live=any(g.status == "live" for g in games),
             week=week,
             updated_at=iso(now),
+        )
+
+    @app.get("/api/news/refresh")
+    async def news_refresh() -> dict:
+        """Wakes the server and starts a check of every news source if one is due. Returns nothing about news."""
+        refreshing = await app.state.news.ensure_fresh(current_season(), app.state.now())
+        return {"ok": True, "refreshing": refreshing}
+
+    @app.post("/api/news", response_model=schemas.NewsPage, responses={401: {"model": schemas.ErrorBody}})
+    async def news(
+        body: schemas.NewsRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.NewsPage:
+        """NBA news from many sources, checked against ESPN's player data and each other before it shows."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        now = app.state.now()
+        service: NewsService = app.state.news
+        refreshing = await service.ensure_fresh(season, now)
+        owners: dict[int, int] = {}
+        if body.league_id:
+            lg = await load_league(body.league_id, season, creds, with_fa=False)
+            owners = {p.id: t.id for t in lg.teams for p in t.roster}
+        raw = await pro_schedule(season)
+        teams = {
+            int(t["id"]): str(t.get("abbrev", "")).upper()
+            for t in ((raw or {}).get("settings") or {}).get("proTeams", [])
+            if t.get("id")
+        }
+        stories = await run_in_threadpool(service.stories, teams, now)
+        states: dict[int, PlayerState] = await run_in_threadpool(service.states)
+        names = {pid: st.name for pid, st in states.items()}
+
+        def player(pid: int) -> schemas.NewsPlayer:
+            st = states.get(pid)
+            return schemas.NewsPlayer(
+                player_id=pid,
+                name=st.name if st else "",
+                pro_team=teams.get(st.pro_team_id, "") if st else "",
+                injury_status=st.status if st else "",
+                owner_team_id=owners.get(pid),
+            )
+
+        def link(item) -> schemas.NewsSourceLink:
+            src = NEWS_SOURCES.get(item.source_id)
+            fact = item.source_id == FACT_SOURCE
+            page = f"https://www.espn.com/nba/player/_/id/{item.player_ids[0]}" if item.player_ids else ""
+            return schemas.NewsSourceLink(
+                source_id=item.source_id,
+                name=src.name if src else item.source_id,
+                kind=src.kind if src else "tip",
+                title=describe_fact(item, names, teams) if fact else item.title,
+                url=page if fact else item.url,
+                published_at=news_iso(item.published),
+                summary=item.summary,
+            )
+
+        out = [
+            schemas.NewsStory(
+                id=s.id,
+                kind=s.kind,
+                status=s.status,
+                headline=s.headline,
+                summary=s.summary,
+                published_at=news_iso(s.published),
+                updated_at=news_iso(s.updated),
+                players=[player(pid) for pid in s.player_ids if pid in states],
+                sources=[link(i) for i in s.items],
+                severity=s.severity,
+                conflict=s.conflict,
+            )
+            for s in stories
+            if body.include_held or s.status != "held"
+        ]
+        health = await run_in_threadpool(service.health)
+        sources = [
+            schemas.NewsSourceHealth(source_id=src.id, name=src.name, kind=src.kind, **health.get(src.id, {}))
+            for src in NEWS_SOURCE_LIST
+        ]
+        trending = []
+        for p in await run_in_threadpool(service.trending):
+            own = p.get("ownership") or {}
+            pid = int(p["id"])
+            trending.append(
+                schemas.TrendingPlayer(
+                    player_id=pid,
+                    name=p.get("fullName", ""),
+                    pro_team=teams.get(int(p.get("proTeamId") or 0), ""),
+                    injury_status=str(p.get("injuryStatus") or "ACTIVE"),
+                    percent_owned=round(float(own.get("percentOwned", 0)), 1),
+                    percent_change=round(float(own.get("percentChange", 0)), 1),
+                    owner_team_id=owners.get(pid),
+                )
+            )
+        last = await run_in_threadpool(service.last_refresh)
+        return schemas.NewsPage(
+            league_id=body.league_id,
+            stories=out,
+            sources=sources,
+            trending=trending,
+            updated_at=news_iso(last) if last else None,
+            refreshing=refreshing,
         )
 
     return app

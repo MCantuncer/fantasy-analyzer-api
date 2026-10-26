@@ -547,6 +547,56 @@ class TargetReport(BaseModel):
     elapsed_ms: int
 
 
+class InjuryImpactRequest(BaseModel):
+    player_id: int = Field(gt=0, description="The player who is out")
+    league_id: int | None = Field(default=None, gt=0, description="Tag each teammate with his fantasy team here")
+    season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")
+
+
+class CategoryGains(BaseModel):
+    pts: float
+    reb: float
+    ast: float
+    stl: float
+    blk: float
+    tpm: float
+    to: float
+    fg_impact: float = Field(description="FG makes above the league rate per game: positive helps FG%")
+    ft_impact: float = Field(description="FT makes above the league rate per game: positive helps FT%")
+
+
+class Beneficiary(BaseModel):
+    player_id: int
+    name: str
+    owner_team_id: int | None = Field(default=None, description="Fantasy team in the asked league; none = free agent")
+    minutes_before: float = Field(
+        description="Minutes per game with the injured player playing (recent games count more)"
+    )
+    minutes_after: float = Field(description="Expected minutes per game while he is out")
+    minutes_change: float
+    error: float = Field(description="80% band around the measured change; 0 when no games without him were seen")
+    games_without: float = Field(
+        description="Effective games of evidence without him: older games and last season count less"
+    )
+    gains: CategoryGains = Field(description="Expected change per game in each category")
+    value: float = Field(description="Change in 9-category z-score per game")
+    confidence: Literal["strong", "some", "estimate"] = Field(
+        description="strong: 8+ games without him and a clear change; some: 3+ games; estimate: mostly the prior"
+    )
+    note: str | None = None
+
+
+class InjuryImpact(BaseModel):
+    player_id: int
+    name: str
+    pro_team: str
+    minutes: float = Field(description="His recent minutes per game")
+    games_missed: float = Field(description="Games his team played without him, this season and last")
+    beneficiaries: list[Beneficiary] = Field(description="Teammates who gain, best first; at most 6")
+    method: str
+    track_record: str = Field(description="How the method did on past seasons' absences")
+
+
 class ScoresRequest(LeagueRequest):
     day: int | None = Field(
         default=None, ge=1, le=250, description="ESPN scoring period (a day). Default: the last day a game started"
@@ -627,3 +677,77 @@ class ScoreDay(BaseModel):
         description="Games still to tip off this week (Monday to Sunday), whatever day is shown"
     )
     updated_at: str
+
+
+class NewsRequest(BaseModel):
+    league_id: int | None = Field(default=None, gt=0, description="Tag each player with his fantasy team here")
+    season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")
+    include_held: bool = Field(default=False, description="Also return stories only seen on social sites")
+
+
+NewsKind = Literal["injury", "return", "trade", "rumor", "signing", "waive", "role", "other"]
+
+
+class NewsPlayer(BaseModel):
+    player_id: int
+    name: str
+    pro_team: str = Field(description="NBA team abbreviation; empty for a free agent")
+    injury_status: str = Field(description="ESPN's current status, e.g. ACTIVE, DAY_TO_DAY, OUT")
+    owner_team_id: int | None = Field(default=None, description="Fantasy team in the asked league; none = free agent")
+
+
+class NewsSourceLink(BaseModel):
+    source_id: str
+    name: str
+    kind: Literal["fact", "outlet", "tip"]
+    title: str
+    url: str
+    published_at: str
+    summary: str = ""
+
+
+class NewsStory(BaseModel):
+    id: str
+    kind: NewsKind
+    status: Literal["confirmed", "reported", "held", "didnt_happen"] = Field(
+        description="confirmed: ESPN data or two independent outlets agree. reported: one outlet. "
+        "held: social sites only. didnt_happen: a reported trade with no team change after 3 days"
+    )
+    headline: str = Field(description="The lead source's own headline; never written by us")
+    summary: str
+    published_at: str = Field(description="First seen, UTC")
+    updated_at: str = Field(description="Latest source, UTC")
+    players: list[NewsPlayer]
+    sources: list[NewsSourceLink] = Field(description="Every source for this story, oldest first")
+    severity: int = Field(default=0, description="Injuries: 1 day-to-day, 2 out short term, 3 weeks or more")
+    conflict: str | None = Field(default=None, description="Set when sources disagree on how bad an injury is")
+
+
+class NewsSourceHealth(BaseModel):
+    source_id: str
+    name: str
+    kind: Literal["fact", "outlet", "tip"]
+    ok: bool | None = Field(default=None, description="None until the source has been tried")
+    last_success: str | None = None
+    last_attempt: str | None = None
+    items: int = 0
+    error: str | None = None
+
+
+class TrendingPlayer(BaseModel):
+    player_id: int
+    name: str
+    pro_team: str
+    injury_status: str
+    percent_owned: float
+    percent_change: float = Field(description="Change in % of ESPN leagues rostering him, today")
+    owner_team_id: int | None = None
+
+
+class NewsPage(BaseModel):
+    league_id: int | None = None
+    stories: list[NewsStory]
+    sources: list[NewsSourceHealth]
+    trending: list[TrendingPlayer]
+    updated_at: str | None = Field(default=None, description="Last time every source was checked, UTC")
+    refreshing: bool = Field(description="A check of every source is running; ask again in a minute")

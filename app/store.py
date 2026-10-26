@@ -1,4 +1,4 @@
-"""Small persistent store for the trade of the day, its "Would you take it?" poll, and finished NBA days.
+"""Small persistent store for the trade of the day, its "Would you take it?" poll, finished NBA days and NBA news.
 
 With ``DATABASE_URL`` set (any Postgres, e.g. a free Neon database) the day's pick
 and the votes survive restarts, which matters on a free server that sleeps when
@@ -47,7 +47,21 @@ create table if not exists nba_days (
     saved_at timestamptz not null default now(),
     primary key (season, day)
 );
+create table if not exists news_items (
+    id text primary key,
+    published_at timestamptz not null,
+    body jsonb not null,
+    seen_at timestamptz not null default now()
+);
+create index if not exists news_items_published on news_items (published_at);
+create table if not exists news_state (
+    key text primary key,
+    body jsonb not null,
+    saved_at timestamptz not null default now()
+);
 """
+# News older than this is deleted when new items are saved.
+NEWS_KEEP_DAYS = 14
 
 
 class Store(Protocol):
@@ -57,6 +71,10 @@ class Store(Protocol):
     def tally(self, key: TradeKey, pick_id: str) -> dict[int, tuple[int, int]]: ...
     def get_day(self, season: int, day: int) -> dict | None: ...
     def save_day(self, season: int, day: int, body: dict) -> None: ...
+    def save_news_items(self, items: list[dict]) -> None: ...
+    def news_items(self, since: str) -> list[dict]: ...
+    def get_news_state(self, key: str) -> dict | None: ...
+    def save_news_state(self, key: str, body: dict) -> None: ...
 
 
 class MemoryStore:
@@ -64,6 +82,8 @@ class MemoryStore:
         self.trades: dict[TradeKey, dict] = {}
         self.votes: dict[TradeKey, dict[tuple[int, str], tuple[str, bool]]] = {}
         self.days: dict[tuple[int, int], dict] = {}
+        self.news: dict[str, dict] = {}
+        self.news_state: dict[str, dict] = {}
 
     def get_trade(self, key: TradeKey) -> dict | None:
         return self.trades.get(key)
@@ -88,6 +108,19 @@ class MemoryStore:
 
     def save_day(self, season: int, day: int, body: dict) -> None:
         self.days[(season, day)] = body
+
+    def save_news_items(self, items: list[dict]) -> None:
+        for item in items:
+            self.news.setdefault(item["id"], item)  # first seen wins: a feed re-listing an item changes nothing
+
+    def news_items(self, since: str) -> list[dict]:
+        return [i for i in self.news.values() if i["published"] >= since]
+
+    def get_news_state(self, key: str) -> dict | None:
+        return self.news_state.get(key)
+
+    def save_news_state(self, key: str, body: dict) -> None:
+        self.news_state[key] = body
 
 
 class PostgresStore:
@@ -145,6 +178,33 @@ class PostgresStore:
                 "insert into nba_days (season, day, body) values (%s, %s, %s) "
                 "on conflict (season, day) do update set body = excluded.body, saved_at = now()",
                 (season, day, json.dumps(body)),
+            )
+
+    def save_news_items(self, items: list[dict]) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "insert into news_items (id, published_at, body) values (%s, %s, %s) on conflict (id) do nothing",
+                    [(i["id"], i["published"], json.dumps(i)) for i in items],
+                )
+            conn.execute(f"delete from news_items where published_at < now() - interval '{NEWS_KEEP_DAYS} days'")
+
+    def news_items(self, since: str) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("select body from news_items where published_at >= %s", (since,)).fetchall()
+        return [r[0] for r in rows]
+
+    def get_news_state(self, key: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("select body from news_state where key=%s", (key,)).fetchone()
+        return row[0] if row else None
+
+    def save_news_state(self, key: str, body: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "insert into news_state (key, body) values (%s, %s) "
+                "on conflict (key) do update set body = excluded.body, saved_at = now()",
+                (key, json.dumps(body)),
             )
 
 
