@@ -1,3 +1,8 @@
+import copy
+
+from app.espn.parse import parse_league
+
+
 def test_league_settings(league):
     assert league.name == "Chill Primera Division"
     assert league.scoring_type == "H2H_CATEGORY"
@@ -34,3 +39,15 @@ def test_positions_follow_espn_slot_ids(league):
     roster = {p.name: p for p in league.team(3).roster}
     assert roster["Jarrett Allen"].positions == ["C"]
     assert "PG" in roster["Payton Pritchard"].positions and "C" not in roster["Payton Pritchard"].positions
+
+
+def test_waiver_priority_only_without_faab(recorded):
+    league = parse_league(recorded["league"], recorded["free_agents"])
+    assert all(t.waiver_priority is None for t in league.teams)  # FAAB league: bids decide claims
+
+    raw = copy.deepcopy(recorded["league"])
+    raw["settings"]["acquisitionSettings"]["isUsingAcquisitionBudget"] = False
+    rolling = parse_league(raw, recorded["free_agents"])
+    ranks = {t["id"]: t["waiverRank"] for t in raw["teams"]}
+    assert {t.id: t.waiver_priority for t in rolling.teams} == ranks
+    assert all(t.faab_remaining is None for t in rolling.teams)
