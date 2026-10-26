@@ -35,6 +35,8 @@ from app.accounts import (
     verify_google,
 )
 from app.analysis.daily import trade_of_the_day
+from app.analysis.durability import HISTORY_SEASONS, games_played
+from app.analysis.durability import attach as attach_durability
 from app.analysis.injury import LAST_SEASON_WEIGHT, Season, parse_gamelogs
 from app.analysis.injury import analyze as analyze_absence
 from app.analysis.report import Analyzer, league_summary
@@ -71,6 +73,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 LEAGUE_TTL = float(os.getenv("LEAGUE_CACHE_SECONDS", "600"))
 SCHEDULE_TTL = 6 * 3600.0  # the NBA calendar changes rarely (postponements, NBA Cup knockouts)
+PAST_GAMES_TTL = 7 * 24 * 3600.0  # finished seasons don't change
 ADP_TTL = 6 * 3600.0  # ESPN's ADP barely moves once the season's drafts are done
 STATUS_FOR_ERROR = {LeaguePrivate: 401, LeagueNotFound: 404}
 # How long a trade-of-the-day request waits for the scan before answering "pending".
@@ -161,6 +164,7 @@ def create_app(
     app.state.post_times = defaultdict(deque)
     app.state.schedules = TTLCache(SCHEDULE_TTL)
     app.state.market_adp = TTLCache(ADP_TTL)
+    app.state.past_games = TTLCache(PAST_GAMES_TTL)
     app.state.score_days = TTLCache(LIVE_SCORES_TTL)
     app.state.settled_days = TTLCache(7 * 24 * 3600, max_items=512)
     app.state.score_locks = defaultdict(asyncio.Lock)
@@ -204,6 +208,20 @@ def create_app(
             app.state.market_adp.set(season, cached)
         return cached
 
+    async def past_games(season: int) -> list[dict[int, int]]:
+        """Games played in the seasons before ``season``, most recent first. Empty when ESPN won't say."""
+        out = []
+        for past in range(season - 1, season - 1 - HISTORY_SEASONS, -1):
+            played = app.state.past_games.get(past)
+            if played is None:
+                try:
+                    played = games_played(await app.state.espn.season_totals(past), past)
+                except EspnError:
+                    return []
+                app.state.past_games.set(past, played)
+            out.append(played)
+        return out
+
     async def load_league(league_id: int, season: int, creds: EspnCredentials | None, with_fa: bool) -> League:
         key = (league_id, season, credentials_key(creds), with_fa)
         league = app.state.leagues.get(key)
@@ -214,6 +232,8 @@ def create_app(
             snake = ((raw.get("settings") or {}).get("draftSettings") or {}).get("type") != "AUCTION"
             adp = await market_adp(season) if with_fa and snake else None
             league = parse_league(raw, fas, schedule, adp)
+            if with_fa:
+                attach_durability(league, await past_games(season))
             app.state.leagues.set(key, league)
         return league
 

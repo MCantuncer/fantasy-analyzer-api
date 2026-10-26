@@ -32,6 +32,7 @@ import numpy as np
 
 from app import schemas
 from app.analysis.badges import OwnerPremium, badge_refs
+from app.analysis.durability import injury_prone
 from app.analysis.model import CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import simulate_season
@@ -168,6 +169,8 @@ class DailyTrade:
             tier=tier(p),
             badges=badge_refs(self.premium, p),
             owner_premium=round(self.premium.dollars(p), 1),
+            games_share=round(p.durability, 3) if p.durability is not None else None,
+            injury_prone=injury_prone(p),
         )
 
     def side(

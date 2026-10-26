@@ -76,6 +76,14 @@ class PlayerRef(BaseModel):
     owner_premium: float = Field(
         default=0.0, description="What his owner wants on top of trade value, in auction dollars"
     )
+    games_share: float | None = Field(
+        default=None,
+        description="Expected share of his team's remaining games he plays once back from any current injury, "
+        "from his games-played record. A typical regular plays about 0.73.",
+    )
+    injury_prone: bool = Field(
+        default=False, description="He has missed many games in recent seasons: valued for fewer games"
+    )
 
 
 class CategoryOutlook(BaseModel):

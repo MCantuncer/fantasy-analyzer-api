@@ -7,7 +7,8 @@ noise. Percentage stats are makes over attempts with binomial variance.
 With the NBA calendar, games are counted day by day: each day the best healthy
 players who have a game fill the league's lineup slots (PG, SG, SF, PF, C, G, F,
 UTIL), so a bench player counts on days a starter sits, a 4-game week counts
-more than a 2-game week, and an injured player counts again once he's back.
+more than a 2-game week, and an injured player counts again once he's back. Players
+who miss many games year after year sit out a share of the rest (durability.py).
 Without it, every starter plays GAMES_PER_WEEK games.
 """
 
@@ -17,6 +18,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from app.analysis.durability import keep_share, kept
 from app.espn.parse import IR_SLOT, UTIL_SLOT, Category, League, Player
 
 GAMES_PER_WEEK = 3.4
@@ -31,8 +33,11 @@ IR_DAYS_OUT = 28
 RATIO_OVERDISPERSION = 1.5
 # Share of scheduled starts that turn into games: rest, DNPs and late scratches, net of
 # the bench filling in. League A lineups got 0.95 (2025) and 0.92 (2026) of the starts the
-# calendar gave them.
-AVAILABILITY = 0.93
+# calendar gave them: 0.93. Injury-prone players now sit out games of their own
+# (durability.py), which took 2% off projected totals in the League A backtest, so the
+# flat share is raised to keep league-wide totals where they were.
+AVAILABILITY = 0.95
+PHASE_STEP = 0.618034  # spreads players' missed games apart (golden ratio steps)
 
 
 def norm_cdf(x: np.ndarray) -> np.ndarray:
@@ -66,6 +71,7 @@ class CategoryModel:
         self.cal = league.calendar
         self.slot_counts = league.lineup_slots or {}
         self._plays: dict[tuple[int, object], np.ndarray] = {}
+        self._game_index: dict[int, dict[int, int]] = {}
         self._fills: dict[tuple[int, ...], tuple[int, ...]] = {}
         self._dists: dict[tuple[tuple[int, ...], object], Dist] = {}
         self._masks: dict[int, int] = {}
@@ -184,8 +190,23 @@ class CategoryModel:
             days, _ = self.horizon[horizon]
             games = self.cal.team_days.get(p.pro_team_id, frozenset())
             back = self.return_day(p)
-            cached = self._plays[key] = np.array([d in games and d >= back for d in days], dtype=bool)
+            cached = np.array([d in games and d >= back for d in days], dtype=bool)
+            share = keep_share(p)
+            if share < 1.0:
+                # Injury-prone players miss more than the flat availability covers.
+                order = self.game_index(p.pro_team_id)
+                phase = (p.id * PHASE_STEP) % 1.0
+                cached &= np.array([d not in order or kept(order[d], share, phase) for d in days], dtype=bool)
+            self._plays[key] = cached
         return cached
+
+    def game_index(self, team: int) -> dict[int, int]:
+        """Day -> number of the team's game that day in its season (0 = first game)."""
+        index = self._game_index.get(team)
+        if index is None:
+            days = sorted(self.cal.team_days.get(team, ()))
+            index = self._game_index[team] = {d: i for i, d in enumerate(days)}
+        return index
 
     def starts(self, roster: list[Player], horizon: object = "season") -> np.ndarray:
         """(P,) games each player starts over the horizon, in roster order."""

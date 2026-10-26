@@ -75,6 +75,7 @@ class Player:
     slots: tuple[int, ...] = ()  # lineup slot ids he can fill (PG..C, G, F, UTIL, ...)
     acquisition_type: str = ""  # DRAFT / ADD / TRADE, for rostered players
     acquired_ms: int | None = None  # when his current team got him, epoch milliseconds
+    durability: float | None = None  # expected share of his team's remaining games (analysis/durability.py)
 
     @property
     def available(self) -> bool:
