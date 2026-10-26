@@ -40,6 +40,12 @@ class LeagueSummary(BaseModel):
     is_public: bool
     supported: bool
     unsupported_reason: str | None = None
+    draft_type: Literal["auction", "snake"] = "auction"
+    round_values: list[float] | None = Field(
+        default=None,
+        description="Snake leagues: trade value of the last pick in each draft round, round 1 first. "
+        "A trade value at or above entry k is worth a round k+1 pick. Null in auction leagues.",
+    )
 
 
 class PlayerBadge(BaseModel):

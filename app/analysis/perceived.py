@@ -1,11 +1,16 @@
 """Trade value: what a player is worth in a trade, in auction dollars ($200 budget scale).
 
+Snake leagues use the same scale: every snake signal is a draft position, priced on the
+rank curve below, and ``round_values`` turns dollars back into draft rounds for display.
+
 Early in the season owners go by names: ESPN's rankings and what was paid in the
 draft. As games pile up, what a player is actually doing takes over. The value
 blends both, and the draft-day signals fade as the season produces real numbers:
 
   * ESPN's preseason rank and auction value (fades to a small weight)
-  * average ESPN auction price and this league's draft price (fade out)
+  * the market's draft price and this league's (fade out): in auction leagues ESPN's
+    average auction price and what was paid here, in snake leagues ESPN's average draft
+    position and the pick used here
   * % owned across ESPN leagues: the market's current verdict
   * rest-of-season value in this league's categories (projection blended with actuals)
   * this season's ESPN rank and the last 15 days, once there are enough games
@@ -29,7 +34,7 @@ if TYPE_CHECKING:
 # Draft-day signals, at full weight before any games. They fade as games are played.
 W_ESPN = 0.25
 W_ESPN_FLOOR = 0.10  # ESPN's rank never fades entirely: owners keep looking at it
-W_AVG_AUCTION = 0.10
+W_AVG_AUCTION = 0.10  # ESPN's average auction price, or average draft position in snake leagues
 W_PAID = 0.10
 DRAFT_FADE_GAMES = 25
 # Signals that hold all season.
@@ -73,6 +78,18 @@ class PerceivedValue:
             return 0.0
         return float(np.interp(rank, self._ranks, self._dollars))
 
+    def round_values(self) -> list[float] | None:
+        """Snake leagues: the trade value of the last pick in each draft round, round 1 first.
+
+        A value at or above entry k is worth a round k+1 pick. None in auction leagues.
+        """
+        lg = self.league
+        if lg.is_auction:
+            return None
+        n = len(lg.teams)
+        rounds = lg.draft_rounds or 13
+        return [round(self.dollars_at_rank(n * r), 1) for r in range(1, rounds + 1)]
+
     def signals(self, p: Player) -> list[tuple[str, float, float]]:
         """(name, weight, dollars) for every signal this player has."""
         gp = p.games_played
@@ -81,8 +98,11 @@ class PerceivedValue:
         if p.espn_rank:
             w = W_ESPN_FLOOR + (W_ESPN - W_ESPN_FLOOR) * fade
             out.append(("espn", w, p.espn_auction_value))
-        if p.avg_auction_value > 0 and fade > 0:
-            out.append(("avg_auction", W_AVG_AUCTION * fade, p.avg_auction_value))
+        if fade > 0:
+            if not self.league.is_auction and p.avg_draft_position > 0:
+                out.append(("adp", W_AVG_AUCTION * fade, self.dollars_at_rank(p.avg_draft_position)))
+            elif self.league.is_auction and p.avg_auction_value > 0:
+                out.append(("avg_auction", W_AVG_AUCTION * fade, p.avg_auction_value))
         if fade > 0:
             if p.id in self.league.draft_prices:
                 out.append(("paid", W_PAID * fade, self.league.draft_prices[p.id]))

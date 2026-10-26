@@ -1,7 +1,10 @@
+import copy
+
 import pytest
 
 from app.analysis.model import CategoryModel
 from app.analysis.perceived import PerceivedValue
+from app.analysis.report import league_summary
 from app.analysis.trades import (
     MAX_VALUE_RATIO,
     MIN_THEIR_GAIN,
@@ -10,6 +13,7 @@ from app.analysis.trades import (
     acceptance_label,
     acceptance_odds,
 )
+from app.espn.parse import parse_league
 
 
 def test_draft_prices_parsed(league):
@@ -23,6 +27,45 @@ def test_perceived_value_orders_stars_above_role_players(league):
     roster = {p.name: p for p in league.team(3).roster}
     assert pv.value(roster["Jayson Tatum"]) > pv.value(roster["Jarrett Allen"]) > pv.value(roster["Davion Mitchell"])
     assert all(pv.value(p) >= 0 for p in roster.values())
+
+
+@pytest.fixture(scope="module")
+def snake_league(recorded):
+    """The recorded league, drafted snake style, with ESPN's ADP for a few players."""
+    raw = copy.deepcopy(recorded["league"])
+    raw["settings"]["draftSettings"]["type"] = "SNAKE"
+    for pk in raw["draftDetail"]["picks"]:
+        pk.pop("bidAmount", None)
+    adp = {p["id"]: 1.5 if p["fullName"] == "Davion Mitchell" else 150.0 for p in _rostered(raw)}
+    return parse_league(raw, recorded["free_agents"], market_adp=adp)
+
+
+def _rostered(raw):
+    return [e["playerPoolEntry"]["player"] for t in raw["teams"] for e in t["roster"]["entries"]]
+
+
+def test_snake_league_prices_picks_and_adp_not_auction_dollars(league, snake_league):
+    assert not snake_league.is_auction and not snake_league.draft_prices
+    assert snake_league.draft_rounds == 13
+    pv = PerceivedValue(snake_league)
+    mitchell = next(p for p in snake_league.team(3).roster if p.name == "Davion Mitchell")
+    signals = {name: dollars for name, _, dollars in pv.signals(mitchell)}
+    assert "avg_auction" not in signals
+    assert signals["adp"] == pytest.approx(pv.dollars_at_rank(1.5))
+    # An auction league ignores ADP, even when ESPN sends it.
+    auction_mitchell = next(p for p in league.team(3).roster if p.name == "Davion Mitchell")
+    assert "adp" not in {name for name, _, _ in PerceivedValue(league).signals(auction_mitchell)}
+
+
+def test_round_values_only_in_snake_leagues(league, snake_league):
+    assert league_summary(league).draft_type == "auction"
+    assert league_summary(league).round_values is None
+    summary = league_summary(snake_league)
+    assert summary.draft_type == "snake"
+    values = summary.round_values
+    assert values is not None and len(values) == 13
+    assert all(a >= b for a, b in zip(values, values[1:], strict=False))
+    assert values[0] > values[-1]
 
 
 def test_dollars_at_rank_is_non_increasing(league):
