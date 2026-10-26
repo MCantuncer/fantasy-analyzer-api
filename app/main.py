@@ -1243,7 +1243,8 @@ def create_app(
                 published_at=news_iso(s.published),
                 updated_at=news_iso(s.updated),
                 players=[player(pid) for pid in s.player_ids if pid in states],
-                sources=[link(i) for i in s.items],
+                # One link per source: its latest item on the story.
+                sources=[link(i) for i in {i.source_id: i for i in s.items}.values()],
                 severity=s.severity,
                 conflict=s.conflict,
             )

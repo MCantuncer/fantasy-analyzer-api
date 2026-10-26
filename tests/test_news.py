@@ -1,4 +1,6 @@
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 from fastapi.testclient import TestClient
@@ -7,7 +9,7 @@ from app.accounts import MemoryAccountStore
 from app.espn.client import EspnClient
 from app.main import create_app
 from app.news import facts
-from app.news.extract import NameIndex, body_part, kind_of, severity, tag
+from app.news.extract import NameIndex, body_part, kind_of, newsworthy, severity, tag
 from app.news.sources import parse_espn, parse_rss
 from app.news.verify import Item, build_stories
 from app.store import MemoryStore
@@ -93,19 +95,39 @@ def test_a_feed_repeating_its_own_title_or_home_page_as_an_item_is_skipped():
     assert parse_rss("reddit", atom) == []
 
 
-def test_stories_that_name_no_player_are_not_published():
+def test_only_nba_news_becomes_a_story():
     stories = build_stories(
         [
             item("realgm", "Get Your Latest NBA News From RealGM's Basketball Wiretap", 1),
-            item("cbs", "Subscribe to our NBA newsletter", 2),
+            item("realgm", "How To Watch And Live Stream Nuggets vs Warriors NBA Game Tonight: TV Channels", 1),
+            item("realgm", "Location, Date For Game 6 Of WNBA Finals Remains Uncertain", 1),
+            item("yahoo", "Kentucky Wildcats News: Otega Oweh waived and UK vs. UCF Basketball Week", 2),
+            item("yahoo", "Timberwolves 117, Raptors 94: The Sky is the Limit", 2),
+            item("cbs", "Knicks vs. Celtics prediction, odds, betting preview, start time", 3),
             item("yahoo", "NBA power rankings: Week 1", 3),
             item("cbs", "Kris Dunn moves into the starting lineup", 4),
+            item("cbs", "Clippers owner suspended for the season", 5),
         ],
         states(),
         TEAMS,
         NOW,
     )
-    assert [s.headline for s in stories] == ["Kris Dunn moves into the starting lineup"]
+    assert [s.headline for s in stories] == [
+        "Kris Dunn moves into the starting lineup",
+        "Clippers owner suspended for the season",
+    ]
+
+
+def test_news_filter_precision_on_real_feed_items():
+    # 121 headlines from RotoWire, CBS, Yahoo and RealGM on 2026-10-26, each labelled by hand:
+    # is it NBA news a manager would want (a move, injury, return, role change, league business)?
+    sample = json.loads((Path(__file__).parent / "data" / "news_sample.json").read_text())
+    shown = [s for s in sample if newsworthy(s["title"])]
+    news = [s for s in sample if s["news"]]
+    precision = sum(s["news"] for s in shown) / len(shown)
+    recall = sum(newsworthy(s["title"]) for s in news) / len(news)
+    assert precision >= 0.85, precision
+    assert recall >= 0.95, recall
 
 
 def test_espn_articles_keep_athlete_ids():
@@ -269,7 +291,11 @@ def news_client(recorded, fake_espn, feeds: dict[str, httpx.Response]):
 
 
 def test_news_endpoint_checks_sources_and_hides_held_stories(recorded, fake_espn):
-    rss = RSS.replace(b"Sun, 26 Oct 2026 08:00:00 GMT", b"Sun, 26 Oct 2026 10:00:00 GMT")
+    rss = RSS.replace(b"Sun, 26 Oct 2026 08:00:00 GMT", b"Sun, 26 Oct 2026 10:00:00 GMT").replace(
+        b"<item><title>No date",
+        b"<item><title>Kris Dunn stays in Clippers' starting lineup</title><link>https://cbs.example/dunn2</link>"
+        b"<pubDate>Sun, 26 Oct 2026 10:30:00 GMT</pubDate></item><item><title>No date",
+    )
     cbs = b"""<rss><channel><item><title>Jalen Williams fractures ankle, out indefinitely</title>
     <link>https://cbs.example/jw</link><pubDate>Sun, 26 Oct 2026 09:00:00 GMT</pubDate></item></channel></rss>"""
     feeds = {
@@ -285,7 +311,9 @@ def test_news_endpoint_checks_sources_and_hides_held_stories(recorded, fake_espn
     jw = stories["Jalen Williams fractures ankle, out indefinitely"]
     assert jw["status"] == "confirmed" and jw["severity"] == 3 and jw["conflict"]
     assert jw["players"][0]["pro_team"] == "OKC" and jw["players"][0]["injury_status"] == "DAY_TO_DAY"
-    assert stories["Kris Dunn moves into Clippers' starting lineup"]["status"] == "reported"
+    dunn = next(s for h, s in stories.items() if "Kris Dunn" in h)
+    assert dunn["status"] == "reported"
+    assert [s["source_id"] for s in dunn["sources"]] == ["rotowire"], "one chip per source"
     assert not any("LaVine" in h for h in stories), "a Reddit-only trade stays hidden"
 
     health = {s["source_id"]: s for s in body["sources"]}
