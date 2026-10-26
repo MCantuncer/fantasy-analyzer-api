@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from app.analysis.durability import HISTORY_SEASONS, games_played
-from app.espn.client import EspnClient, EspnCredentials, LeagueNotFound
+from app.espn.client import EspnClient, EspnCredentials, LeagueNotFound, LeaguePrivate
 
 # Box score stats the model reads: the scoring stats, makes/attempts, minutes, games played.
 BOX_STATS = {"0", "1", "2", "3", "6", "11", "13", "14", "15", "16", "17", "40", "42"}
@@ -105,7 +105,7 @@ async def fetch_history(
     pool = await client.player_pool(season, league_id, creds)
     try:
         prior_pool = await client.player_pool(season - 1, league_id, creds)
-    except LeagueNotFound:  # a league's first season: no prior from the same league
+    except (LeagueNotFound, LeaguePrivate):  # first season, or a past season ESPN serves only with cookies
         prior_pool = []
     last = int((league.get("status") or {}).get("finalScoringPeriod") or 0)
     days = range(1, last + 1)
