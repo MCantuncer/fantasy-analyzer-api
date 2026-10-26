@@ -232,7 +232,6 @@ class EspnClient:
         flt = {
             "filterIds": {"value": player_ids},
             "filterStatsForSplitTypeIds": {"value": [5]},
-            "limit": len(player_ids),
         }
         data = await self._get(
             f"{BASE_URL}/seasons/{season}/players",
