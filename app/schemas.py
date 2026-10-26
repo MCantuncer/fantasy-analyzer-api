@@ -185,6 +185,11 @@ class AnalysisReport(BaseModel):
     season: list[SeasonRow]
     league_rosters: list[TeamRoster] = Field(description="Every other team's players, for picking a trade target")
     faab_remaining: int | None
+    waiver_priority: int | None = Field(
+        default=None,
+        description="Your place in the rolling waiver order (1 = first claim), in leagues without FAAB. "
+        "A successful claim usually moves you to the back.",
+    )
     assumptions: Assumptions
     generated_at: str
     elapsed_ms: int

@@ -297,6 +297,7 @@ class Analyzer:
             season=self.season(),
             league_rosters=self.league_rosters(),
             faab_remaining=self.me.faab_remaining,
+            waiver_priority=self.me.waiver_priority,
             assumptions=schemas.Assumptions(
                 games_per_week=GAMES_PER_WEEK,
                 simulations=SEASON_SIMS,

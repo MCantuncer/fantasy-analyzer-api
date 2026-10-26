@@ -91,6 +91,9 @@ class Team:
     losses: int
     ties: int
     faab_remaining: int | None
+    # Place in the rolling waiver order (1 = first claim), in leagues without FAAB. None with FAAB,
+    # where bids decide claims and the order only breaks ties.
+    waiver_priority: int | None = None
     trades: int = 0  # trades made this season
     acquisitions: int = 0  # free-agent and waiver pickups this season
     trade_block: dict[int, str] = field(default_factory=dict)  # player id -> ON_THE_BLOCK / UNTOUCHABLE
@@ -355,6 +358,7 @@ def parse_league(
                 losses=int(rec.get("losses", 0)),
                 ties=int(rec.get("ties", 0)),
                 faab_remaining=(budget - spent) if budget is not None and spent is not None else None,
+                waiver_priority=int(t["waiverRank"]) if budget is None and t.get("waiverRank") else None,
                 trades=int(counter.get("trades") or 0),
                 acquisitions=int(counter.get("acquisitions") or 0),
                 trade_block=_trade_block(t.get("tradeBlock")),
