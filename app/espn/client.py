@@ -181,6 +181,35 @@ class EspnClient:
         )
         return data.get("players", [])
 
+    async def players_by_id(self, season: int, player_ids: list[int]) -> list[dict]:
+        """Name, NBA team and injury status of players across ESPN, by id. No league needed."""
+        flt = {"filterIds": {"value": player_ids}}
+        data = await self._get(
+            f"{BASE_URL}/seasons/{season}/players",
+            [("view", "kona_player_news")],
+            None,
+            headers={"X-Fantasy-Filter": json.dumps(flt)},
+            unwrap=False,
+        )
+        return data if isinstance(data, list) else []
+
+    async def team_gamelogs(self, season: int, pro_team_id: int) -> list[dict]:
+        """Every game line this season of the players now on one NBA team (games for other teams included)."""
+        flt = {
+            "filterProTeamIds": {"value": [pro_team_id]},
+            "filterStatsForSplitTypeIds": {"value": [5]},
+            "limit": 60,
+            "sortPercOwned": {"sortPriority": 1, "sortAsc": False},
+        }
+        data = await self._get(
+            f"{BASE_URL}/seasons/{season}/players",
+            [("view", "kona_player_info"), ("scoringPeriodId", "0")],
+            None,
+            headers={"X-Fantasy-Filter": json.dumps(flt)},
+            unwrap=False,
+        )
+        return data if isinstance(data, list) else []
+
     async def pro_schedule(self, season: int) -> dict:
         """Every NBA team's games by scoring period. The same for every league, no cookies."""
         return await self._get(f"{BASE_URL}/seasons/{season}", [("view", "proTeamSchedules_wl")], None)

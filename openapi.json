@@ -25,6 +25,115 @@
         }
       }
     },
+    "/api/injury-impact": {
+      "post": {
+        "summary": "Injury Impact",
+        "description": "Which teammates gain while a player is out, measured from games his team played without him.",
+        "operationId": "injury_impact_api_injury_impact_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InjuryImpactRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InjuryImpact"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/config": {
       "get": {
         "summary": "Auth Config",
@@ -2314,6 +2423,153 @@
         ],
         "title": "AuthResult"
       },
+      "Beneficiary": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "owner_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team Id",
+            "description": "Fantasy team in the asked league; none = free agent"
+          },
+          "minutes_before": {
+            "type": "number",
+            "title": "Minutes Before",
+            "description": "Minutes per game with the injured player playing (recent games count more)"
+          },
+          "minutes_after": {
+            "type": "number",
+            "title": "Minutes After",
+            "description": "Expected minutes per game while he is out"
+          },
+          "minutes_change": {
+            "type": "number",
+            "title": "Minutes Change"
+          },
+          "error": {
+            "type": "number",
+            "title": "Error",
+            "description": "80% band around the measured change; 0 when no games without him were seen"
+          },
+          "games_without": {
+            "type": "number",
+            "title": "Games Without",
+            "description": "Effective games of evidence without him: older games and last season count less"
+          },
+          "gains": {
+            "$ref": "#/components/schemas/CategoryGains",
+            "description": "Expected change per game in each category"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "Change in 9-category z-score per game"
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "strong",
+              "some",
+              "estimate"
+            ],
+            "title": "Confidence",
+            "description": "strong: 8+ games without him and a clear change; some: 3+ games; estimate: mostly the prior"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "minutes_before",
+          "minutes_after",
+          "minutes_change",
+          "error",
+          "games_without",
+          "gains",
+          "value",
+          "confidence"
+        ],
+        "title": "Beneficiary"
+      },
+      "CategoryGains": {
+        "properties": {
+          "pts": {
+            "type": "number",
+            "title": "Pts"
+          },
+          "reb": {
+            "type": "number",
+            "title": "Reb"
+          },
+          "ast": {
+            "type": "number",
+            "title": "Ast"
+          },
+          "stl": {
+            "type": "number",
+            "title": "Stl"
+          },
+          "blk": {
+            "type": "number",
+            "title": "Blk"
+          },
+          "tpm": {
+            "type": "number",
+            "title": "Tpm"
+          },
+          "to": {
+            "type": "number",
+            "title": "To"
+          },
+          "fg_impact": {
+            "type": "number",
+            "title": "Fg Impact",
+            "description": "FG makes above the league rate per game: positive helps FG%"
+          },
+          "ft_impact": {
+            "type": "number",
+            "title": "Ft Impact",
+            "description": "FT makes above the league rate per game: positive helps FT%"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pts",
+          "reb",
+          "ast",
+          "stl",
+          "blk",
+          "tpm",
+          "to",
+          "fg_impact",
+          "ft_impact"
+        ],
+        "title": "CategoryGains"
+      },
       "CategoryOutlook": {
         "properties": {
           "category": {
@@ -2998,6 +3254,101 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "InjuryImpact": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pro_team": {
+            "type": "string",
+            "title": "Pro Team"
+          },
+          "minutes": {
+            "type": "number",
+            "title": "Minutes",
+            "description": "His recent minutes per game"
+          },
+          "games_missed": {
+            "type": "number",
+            "title": "Games Missed",
+            "description": "Games his team played without him, this season and last"
+          },
+          "beneficiaries": {
+            "items": {
+              "$ref": "#/components/schemas/Beneficiary"
+            },
+            "type": "array",
+            "title": "Beneficiaries",
+            "description": "Teammates who gain, best first; at most 6"
+          },
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "track_record": {
+            "type": "string",
+            "title": "Track Record",
+            "description": "How the method did on past seasons' absences"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pro_team",
+          "minutes",
+          "games_missed",
+          "beneficiaries",
+          "method",
+          "track_record"
+        ],
+        "title": "InjuryImpact"
+      },
+      "InjuryImpactRequest": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Player Id",
+            "description": "The player who is out"
+          },
+          "league_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "League Id",
+            "description": "Tag each teammate with his fantasy team here"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id"
+        ],
+        "title": "InjuryImpactRequest"
       },
       "LeagueOverview": {
         "properties": {
