@@ -107,12 +107,27 @@ def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+def _feed_info(root: ET.Element) -> tuple[set[str], set[str]]:
+    """The feed's own title, description and home links, which some feeds repeat as an item."""
+    channel = next((n for n in root.iter() if _local(n.tag) == "channel"), root)
+    texts, links = set(), set()
+    for child in channel:
+        name = _local(child.tag)
+        if name in ("title", "description", "subtitle") and child.text:
+            texts.add(clean(child.text).casefold())
+        elif name == "link":
+            links.add((child.get("href") or child.text or "").strip().rstrip("/"))
+    return texts - {""}, links - {""}
+
+
 def parse_rss(source_id: str, body: bytes) -> list[RawItem]:
-    """RSS 2.0 and Atom. Items without a title or date are skipped."""
+    """RSS 2.0 and Atom. Items without a title or date are skipped, and so are items that
+    only repeat the feed's own title, description or home page."""
     try:
         root = ET.fromstring(body)  # expat does not fetch external entities
     except ET.ParseError as exc:
         raise FeedError(f"not a feed: {exc}") from None
+    feed_texts, feed_links = _feed_info(root)
     out = []
     for node in root.iter():
         if _local(node.tag) not in ("item", "entry"):
@@ -128,12 +143,15 @@ def parse_rss(source_id: str, body: bytes) -> list[RawItem]:
         published = _when(fields.get("pubDate") or fields.get("published") or fields.get("updated"))
         if not title or published is None:
             continue
+        url = (fields.get("link") or "").strip()
+        if title.casefold() in feed_texts or (url and url.rstrip("/") in feed_links):
+            continue
         summary = fields.get("description") or fields.get("summary") or fields.get("content") or ""
         out.append(
             RawItem(
                 source_id=source_id,
                 title=title,
-                url=(fields.get("link") or "").strip(),
+                url=url,
                 published=published,
                 summary=clean(summary, SUMMARY_CHARS),
             )

@@ -79,8 +79,8 @@ ROLE = _any(
     r"to the bench|benched|rotation|minutes restriction|minutes limit|bigger role|larger role|promoted)\b"
 )
 INJURY = _any(
-    r"\b(injur(y|ies|ed)|ruled out|out (for|indefinitely|tonight|again)|will miss|miss(es|ed)?|sidelined|"
-    r"sprain(ed)?|strain(ed)?|fracture[sd]?|broken|torn|tear|ruptured?|surgery|soreness|sore|tightness|"
+    r"\b(injur(y|ies|ed)|hurt|ruled out|out (for|indefinitely|tonight|again)|will miss|miss(es|ed)?|sidelined|"
+    r"sprains?|sprained|strains?|strained|fracture[sd]?|broken|torn|tear|ruptured?|surgery|soreness|sore|tightness|"
     r"contusion|bruise[sd]?|concussion|mri|x rays?|questionable|doubtful|probable|day to day|"
     r"week to week|game time decision|illness|dislocat\w+|separated|hyperextend\w*)\b"
 )
@@ -99,6 +99,34 @@ BODY_PARTS = (
     "shoulder elbow neck rib ribs abdominal oblique adductor hamstring shin eye nose face illness concussion"
 ).split()
 _BODY = re.compile(r"\b(" + "|".join(BODY_PARTS) + r")\b")
+
+# Is an item news at all? A headline must report something that happened in the NBA: a move, an
+# injury or return, a role change, or league business like a suspension. Game guides, betting,
+# recaps, rankings, opinion and other leagues are not. Tuned on a labelled sample of real feed
+# items (tests/data/news_sample.json, see test_news_filter_precision).
+OTHER_LEAGUE = _any(r"\b(wnba|ncaa|ncaab|college|wildcats|nfl|mlb|nhl|world series|euroleague)\b")
+NOT_NEWS = _any(
+    r"\b(how to watch|where to watch|to watch|live stream|tv channels?|start time|odds|picks|props|best bets|"
+    r"bets|predictions?|promos?|sportsbooks?|parlays?|preview|discussion|game thread|"
+    r"post game thread|highlights?|player grades|grades|grading|observations|bell ringer|scenes from|"
+    r"power rankings|rankings|winners and losers|overreactions|destinations|things|takeaways|mailbag|"
+    r"podcast|newsletter|final score)\b"
+)
+SCORELINE = _any(r"\b\d{2,3} \d{2,3}\b|\b\d{2,3} [a-z]+( [a-z]+)? \d{2,3}\b")
+LEAGUE_NEWS = _any(
+    r"\b(fire[sd]?|hire[sd]?|names? (\w+ )?(head )?coach|suspen(d|ds|ded|sion)|fined|arrest(ed)?|charged|"
+    r"plea|indict(ed|ment)?|lawsuit|investigation|banned|retire[sd]?|retirement|rest(s|ed|ing)?|absence|"
+    r"scratched|sit out|to sit|listed out|g league)\b"
+)
+
+
+def newsworthy(title: str) -> bool:
+    """True when the headline reports NBA news (see the patterns above)."""
+    t = normalize(title)
+    if OTHER_LEAGUE.search(t) or NOT_NEWS.search(t) or SCORELINE.search(t):
+        return False
+    return kind_of(title) != "other" or bool(LEAGUE_NEWS.search(t))
+
 
 SEVERITY_LABEL = {0: "no injury", 1: "minor, day-to-day", 2: "out, short term", 3: "serious, weeks or more"}
 

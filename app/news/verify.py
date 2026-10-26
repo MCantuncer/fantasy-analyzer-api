@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal
 
-from app.news.extract import SEVERITY_LABEL, normalize
+from app.news.extract import SEVERITY_LABEL, newsworthy, normalize
 from app.news.facts import STATUS_LABEL, STATUS_SEVERITY, PlayerState
 from app.news.sources import BY_ID
 
@@ -195,6 +195,8 @@ def build_stories(
 ) -> list[Story]:
     names = {pid: st.name for pid, st in states.items()}
     stories = []
+    # Only NBA news makes a story: no game guides, betting, recaps, rankings or other leagues.
+    items = [i for i in items if i.source_id == FACT_SOURCE or newsworthy(i.title)]
     for c in cluster(items):
         trusted = [i for i in c.items if i.source_kind != "tip"]
         outlets = [i for i in trusted if i.source_kind == "outlet"]
