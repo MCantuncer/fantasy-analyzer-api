@@ -58,19 +58,49 @@ def _trade_events(transactions: dict[int, list[dict]]) -> list[dict]:
     return out
 
 
-def roster_moves(rosters: dict[int, dict[int, list[list[int]]]]) -> dict[int, list[tuple[int, int, int]]]:
-    """Players who changed fantasy teams overnight, by the first day they show on the new team."""
+def roster_moves(
+    rosters: dict[int, dict[int, list[list[int]]]], adds: set[tuple[int, int, int]] = frozenset()
+) -> dict[int, list[tuple[int, int, int]]]:
+    """Players who changed fantasy teams overnight, by the first day they show on the new team.
+
+    `adds` holds (player, team, day) of free-agent and waiver pickups: a player dropped and picked
+    up by another team between two roster days also looks like a direct move, and is no trade.
+    """
     days = sorted(rosters)
     out: dict[int, list[tuple[int, int, int]]] = {}
     prev: dict[int, int] | None = None
+    prev_day = 0
     for d in days:
         cur = {pid: tid for tid, entries in rosters[d].items() for pid, _slot in entries}
         if prev is not None:
-            moved = [(pid, prev[pid], tid) for pid, tid in cur.items() if pid in prev and prev[pid] != tid]
+            moved = [
+                (pid, prev[pid], tid)
+                for pid, tid in cur.items()
+                if pid in prev and prev[pid] != tid and not any((pid, tid, x) in adds for x in range(prev_day, d + 1))
+            ]
             if moved:
                 out[d] = sorted(moved)
-        prev = cur
+        prev, prev_day = cur, d
     return out
+
+
+def draft_rosters(league: dict) -> dict[int, list[list[int]]]:
+    """Each team's players as the draft left them: the day-0 roster, for trades made before opening night."""
+    out: dict[int, list[list[int]]] = defaultdict(list)
+    for p in (league.get("draftDetail") or {}).get("picks", []):
+        if p.get("playerId", -1) > 0 and p.get("teamId"):
+            out[int(p["teamId"])].append([int(p["playerId"]), -1])
+    return dict(out)
+
+
+def _adds(events: list[dict]) -> set[tuple[int, int, int]]:
+    return {
+        (int(i["playerId"]), int(i["toTeamId"]), int(t["scoringPeriodId"]))
+        for t in events
+        if t.get("type") in ("FREEAGENT", "WAIVER") and t.get("status") == "EXECUTED"
+        for i in t.get("items") or []
+        if i.get("type") == "ADD"
+    }
 
 
 def _components(moves: list[tuple[int, int, int]]) -> list[list[tuple[int, int, int]]]:
@@ -97,15 +127,25 @@ def build_offers(
     season: int,
     transactions: dict[int, list[dict]],
     rosters: dict[int, dict[int, list[list[int]]]],
+    day0: dict[int, list[list[int]]] | None = None,
+    draft_ms: int = 0,
 ) -> tuple[list[Offer], dict]:
-    """Offers with contents, plus counts of what could not be used (declines and unmatched events)."""
+    """Offers with contents, plus counts of what could not be used (declines and unmatched events).
+
+    `day0` is the roster before the first scoring day (the draft), so preseason trades show as moves.
+    """
     events = _trade_events(transactions)
+    if day0 and 0 not in rosters:
+        rosters = {0: day0, **rosters}
+    ambiguous: set[str] = set()
+    adds = _adds([t for day in transactions.values() for t in day])
     offers: list[Offer] = []
     stats = {
         "declines": 0,
         "declines_by_team": defaultdict(int),
         "unmatched_accepts": 0,
         "duplicate_accepts": 0,
+        "pre_draft_accepts": 0,
         "trades_without_accept": 0,
     }
 
@@ -135,37 +175,44 @@ def build_offers(
             stats["declines"] += 1
             stats["declines_by_team"][int(t["teamId"])] += 1
 
-    # Accepted trades: pair each accept with the roster move it caused.
-    trades = [(d, comp) for d, moves in sorted(roster_moves(rosters).items()) for comp in _components(moves)]
-    used: set[int] = set()
+    # Accepted trades: pair each roster move with the latest accept before it by one of its teams
+    # (the latest, because an accept that was vetoed can sit just before the one that went through).
+    trades = [(d, comp) for d, moves in sorted(roster_moves(rosters, adds).items()) for comp in _components(moves)]
     vetoes: dict[str, int] = defaultdict(int)
     for t in events:
         if t["type"] == "TRADE_VETO":
             vetoes[t.get("relatedTransactionId", "")] += 1
-    for t in (e for e in events if e["type"] == "TRADE_ACCEPT"):
+    accepts = []
+    for t in events:
+        if t["type"] != "TRADE_ACCEPT":
+            continue
+        if draft_ms and int(t.get("proposedDate") or 0) < draft_ms:
+            stats["pre_draft_accepts"] += 1  # off-season keeper or pick deals: the rosters can't show them
+            continue
+        accepts.append(t)
+    used: dict[str, tuple[int, list[tuple[int, int, int]]]] = {}
+    matched = 0
+    for d, comp in trades:
+        teams = {a for _, a, _ in comp} | {b for _, _, b in comp}
+        cands = [
+            t
+            for t in accepts
+            if t["id"] not in used
+            and int(t["teamId"]) in teams
+            and d - EXECUTION_WINDOW <= int(t["scoringPeriodId"]) <= d
+        ]
+        if cands:
+            best = max(cands, key=lambda t: (int(t["scoringPeriodId"]), int(t.get("proposedDate") or 0)))
+            used[best["id"]] = (d, comp)
+            matched += 1
+    for t in accepts:
         day, acceptor = int(t["scoringPeriodId"]), int(t["teamId"])
-        match = next(
-            (
-                k
-                for k, (d, comp) in enumerate(trades)
-                if k not in used
-                and day <= d <= day + EXECUTION_WINDOW
-                and acceptor in {a for _, a, _ in comp} | {b for _, _, b in comp}
-            ),
-            None,
-        )
         drops = [(int(i["playerId"]), int(i["fromTeamId"])) for i in t.get("items") or [] if i.get("type") == "DROP"]
         n_veto = vetoes.get(t.get("relatedTransactionId", ""), 0)
-        if match is None:
-            twin = next(
-                (o for o in offers if o.outcome == ACCEPTED and acceptor in o.teams and abs(day - o.day) <= 1),
-                None,
-            )
-            if twin is not None:  # both sides show an accept for one trade (a countered offer): proposer unknown
-                stats["duplicate_accepts"] += 1
-                twin.notes.append("proposer ambiguous: both sides accepted")
-                continue
-            stats["unmatched_accepts"] += 1
+        if t["id"] in used:
+            d, comp = used[t["id"]]
+            teams = sorted({a for _, a, _ in comp} | {b for _, _, b in comp})
+            proposer = next((x for x in teams if x != acceptor), -1)
             offers.append(
                 Offer(
                     league_id,
@@ -173,21 +220,33 @@ def build_offers(
                     t["id"],
                     day,
                     int(t.get("proposedDate") or 0),
-                    -1,
-                    [acceptor],
-                    ACCEPTED_NOT_PROCESSED,
+                    proposer,
+                    [x for x in teams if x != proposer],
+                    ACCEPTED,
+                    moves=comp,
                     drops=drops,
-                    source="accept",
+                    source="rosters",
                     vetoes=n_veto,
-                    notes=["players never moved: vetoed, voided, or after the last roster day"],
+                    notes=[f"executed day {d}"] + (["multi-team"] if len(teams) > 2 else []),
                 )
             )
             continue
-        used.add(match)
-        d, comp = trades[match]
-        teams = sorted({a for _, a, _ in comp} | {b for _, _, b in comp})
-        proposer = next((x for x in teams if x != acceptor), -1)
-        notes = [f"executed day {d}"] + (["multi-team"] if len(teams) > 2 else [])
+        twin = next(
+            (
+                t2
+                for t2 in accepts
+                if t2["id"] in used
+                and acceptor in {a for _, a, _ in used[t2["id"]][1]} | {b for _, _, b in used[t2["id"]][1]}
+                and abs(day - int(t2["scoringPeriodId"])) <= 1
+                and n_veto == 0
+            ),
+            None,
+        )
+        if twin is not None:  # both sides show an accept for one trade (a countered offer)
+            stats["duplicate_accepts"] += 1
+            ambiguous.add(twin["id"])
+            continue
+        stats["unmatched_accepts"] += 1
         offers.append(
             Offer(
                 league_id,
@@ -195,17 +254,19 @@ def build_offers(
                 t["id"],
                 day,
                 int(t.get("proposedDate") or 0),
-                proposer,
-                [x for x in teams if x != proposer],
-                ACCEPTED,
-                moves=comp,
+                -1,
+                [acceptor],
+                ACCEPTED_NOT_PROCESSED,
                 drops=drops,
-                source="rosters",
+                source="accept",
                 vetoes=n_veto,
-                notes=notes,
+                notes=["players never moved: vetoed, voided, or after the last roster day"],
             )
         )
-    stats["trades_without_accept"] = len(trades) - len(used)
+    for o in offers:
+        if o.offer_id in ambiguous:
+            o.notes.append("proposer ambiguous: both sides accepted")
+    stats["trades_without_accept"] = len(trades) - matched
     stats["declines_by_team"] = dict(stats["declines_by_team"])
     _mark_repeats(offers)
     return offers, stats

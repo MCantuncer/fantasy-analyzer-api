@@ -10,7 +10,7 @@ from pathlib import Path
 from app.backtest.history import History
 from app.tradedata.features import CATS, Snapshot, offer_row
 from app.tradedata.fetch import load_json
-from app.tradedata.offers import build_offers
+from app.tradedata.offers import build_offers, draft_rosters
 
 
 def build_league_season(league_id: int, season: int, cache: Path) -> tuple[list[dict], dict]:
@@ -18,7 +18,11 @@ def build_league_season(league_id: int, season: int, cache: Path) -> tuple[list[
     h = History.load(cache / "history" / f"{league_id}-{season}.json.gz")
     meta_path = cache / "meta" / f"{league_id}-{season}.json.gz"
     meta = {int(k): v for k, v in load_json(meta_path).items()} if meta_path.exists() else {}
-    offers, stats = build_offers(league_id, season, tx, h.rosters)
+    day0 = draft_rosters(h.league)
+    if day0 and 0 not in h.rosters:
+        h.rosters = {0: day0, **h.rosters}  # features of preseason offers see the drafted rosters
+    draft_ms = int((h.league.get("draftDetail") or {}).get("completeDate") or 0)
+    offers, stats = build_offers(league_id, season, tx, h.rosters, draft_ms=draft_ms)
     snap = Snapshot(h, meta)
     events = sorted((t for day in tx.values() for t in day), key=lambda t: t.get("proposedDate") or 0)
     rows = []

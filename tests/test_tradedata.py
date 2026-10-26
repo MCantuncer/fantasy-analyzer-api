@@ -179,3 +179,32 @@ def test_throttle_spaces_requests():
         return time.monotonic() - t0
 
     assert asyncio.run(burst()) >= 5 / 50 * 0.9
+
+
+def test_preseason_trade_and_pickups():
+    draft = {1: [[103, -1], [104, -1]], 2: [[203, -1]]}
+    day1 = {1: [[203, 0], [104, 0]], 2: [[103, 0]]}  # 103 for 203 before opening night
+    day2 = {1: [[203, 0]], 2: [[103, 0], [104, 0]]}  # 104 dropped by 1, picked up by 2: no trade
+    tx = {
+        0: [_tx("TRADE_ACCEPT", 0, 2, related="p0")],
+        2: [_tx("FREEAGENT", 2, 2, [("ADD", 104, 0, 2)])],
+    }
+    offers, stats = build_offers(9, 2025, tx, {1: day1, 2: day2}, day0=draft)
+    assert [(o.outcome, sorted(o.moves)) for o in offers] == [(ACCEPTED, [(103, 1, 2), (203, 2, 1)])]
+    assert stats["trades_without_accept"] == 0
+
+
+def test_vetoed_accept_just_before_the_real_one(history):
+    tx = {
+        7: [_tx("TRADE_ACCEPT", 7, 2, related="vetoed", tid="a7"), _tx("TRADE_VETO", 7, 1, related="vetoed")],
+        8: [_tx("TRADE_ACCEPT", 8, 2, related="real", tid="a8")],
+    }
+    offers, _ = build_offers(9, 2025, tx, history.rosters)
+    got = {o.offer_id: (o.outcome, o.vetoes) for o in offers}
+    assert got == {"a7": (ACCEPTED_NOT_PROCESSED, 1), "a8": (ACCEPTED, 0)}
+
+
+def test_off_season_accepts_are_left_out(history):
+    tx = {0: [_tx("TRADE_ACCEPT", 0, 2)]}
+    offers, stats = build_offers(9, 2025, tx, history.rosters, draft_ms=10**12)
+    assert offers == [] and stats["pre_draft_accepts"] == 1
