@@ -181,6 +181,23 @@ class EspnClient:
         )
         return data.get("players", [])
 
+    async def market_adp(self, season: int, limit: int = 500) -> dict[int, float]:
+        """ESPN's average draft position in its snake drafts, by player id. The same for every league, no cookies."""
+        flt = {"players": {"limit": limit, "sortPercOwned": {"sortPriority": 1, "sortAsc": False}}}
+        data = await self._get(
+            f"{BASE_URL}/seasons/{season}/segments/0/leaguedefaults/3",
+            [("view", "kona_player_info")],
+            None,
+            headers={"X-Fantasy-Filter": json.dumps(flt)},
+        )
+        out: dict[int, float] = {}
+        for e in data.get("players", []):
+            p = e.get("player") or {}
+            adp = (p.get("ownership") or {}).get("averageDraftPosition")
+            if p.get("id") and adp:
+                out[int(p["id"])] = float(adp)
+        return out
+
     async def players_by_id(self, season: int, player_ids: list[int]) -> list[dict]:
         """Name, NBA team and injury status of players across ESPN, by id. No league needed."""
         flt = {"filterIds": {"value": player_ids}}

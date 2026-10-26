@@ -336,14 +336,15 @@ class TradeFinder:
     def _reasons(self, j: int, give: list[Player], get: list[Player], dists: list[Dist], struggling: bool) -> list[str]:
         """Talking points for the pitch, and why the deal can work for both sides."""
         pv, out = self.perceived, []
+        at = "at" if self.league.is_auction else "like"  # "at $12" / "like a 4th-round pick"
         for p in give:
             owners, ours = pv.value(p), self.model_dollars.get(p.id, 0.0)
-            if owners - ours >= MISPRICED:
-                out.append(f"Sell high: owners value {p.name} at ${owners:.0f}, {_ours(ours)}.")
+            if owners - ours >= MISPRICED and pv.describe(owners) != pv.describe(ours):
+                out.append(f"Sell high: owners value {p.name} {at} {pv.describe(owners)}, {_ours(pv, ours)}.")
         for p in get:
             owners, ours = pv.value(p), self.model_dollars.get(p.id, 0.0)
-            if ours - owners >= MISPRICED:
-                out.append(f"Buy low: owners value {p.name} at ${owners:.0f}, {_ours(ours)}.")
+            if ours - owners >= MISPRICED and pv.describe(owners) != pv.describe(ours):
+                out.append(f"Buy low: owners value {p.name} {at} {pv.describe(owners)}, {_ours(pv, ours)}.")
         change = self._avg_win(j, dists) - self.base_cats[j]
         lost = [self.model.cats[c].name for c in np.flatnonzero(self.punts[j] & (change < -0.02))]
         if lost:
@@ -446,10 +447,10 @@ class TradeFinder:
         return self.model.avg_cat_win(i, dists)
 
 
-def _ours(dollars: float) -> str:
+def _ours(pv: PerceivedValue, dollars: float) -> str:
     if dollars < 1:
         return "but he's near replacement level in this league's categories"
-    return f"but he's worth ${dollars:.0f} in this league's categories"
+    return f"but he's worth {pv.describe(dollars)} in this league's categories"
 
 
 def _ordinal(n: int) -> str:

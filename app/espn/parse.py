@@ -69,6 +69,7 @@ class Player:
     espn_rank: int | None = None  # ESPN's preseason rank for category leagues
     espn_auction_value: float = 0.0  # ESPN's suggested auction price ($200 budget)
     avg_auction_value: float = 0.0  # average price paid in ESPN auction drafts
+    avg_draft_position: float = 0.0  # average pick in ESPN snake drafts (0 = not drafted)
     season_rank: int | None = None  # ESPN's rank on this season's stats, once games are played
     recent_rank: int | None = None  # ESPN's rank over the last 15 days
     slots: tuple[int, ...] = ()  # lineup slot ids he can fill (PG..C, G, F, UTIL, ...)
@@ -140,6 +141,7 @@ class League:
     is_auction: bool = False
     draft_prices: dict[int, float] = field(default_factory=dict)  # player id -> price paid in this league
     draft_picks: dict[int, int] = field(default_factory=dict)  # player id -> overall pick number
+    draft_rounds: int = 0  # rounds in this league's draft
     lineup_slots: dict[int, int] = field(default_factory=dict)  # starting slot id -> count
     calendar: Calendar | None = None  # None: no NBA schedule, assume an even number of games a week
 
@@ -210,6 +212,7 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None, roste
         espn_rank=espn_rank,
         espn_auction_value=espn_av,
         avg_auction_value=float((p.get("ownership") or {}).get("auctionValueAverage") or 0.0),
+        avg_draft_position=float((p.get("ownership") or {}).get("averageDraftPosition") or 0.0),
         season_rank=int(season_rank) if season_rank else None,
         recent_rank=int(recent_rank) if recent_rank else None,
         slots=tuple(int(s) for s in p.get("eligibleSlots", [])),
@@ -311,7 +314,13 @@ def _banked(side: dict) -> dict[int, float]:
     return {int(k): float(v.get("score") or 0.0) for k, v in by_stat.items() if str(k).isdigit()}
 
 
-def parse_league(raw: dict, free_agents: list[dict] | None = None, pro_schedule: dict | None = None) -> League:
+def parse_league(
+    raw: dict,
+    free_agents: list[dict] | None = None,
+    pro_schedule: dict | None = None,
+    market_adp: dict[int, float] | None = None,
+) -> League:
+    """``market_adp`` fills in ESPN's average draft position where the league's own views leave it out."""
     settings = raw["settings"]
     season = int(raw["seasonId"])
     scoring = settings["scoringSettings"]
@@ -371,6 +380,10 @@ def parse_league(raw: dict, free_agents: list[dict] | None = None, pro_schedule:
     draft = raw.get("draftDetail") or {}
     picks = [pk for pk in draft.get("picks", []) if pk.get("playerId")]
     is_auction = (settings.get("draftSettings") or {}).get("type") == "AUCTION"
+    if market_adp:
+        for p in [p for t in teams for p in t.roster] + fas:
+            if not p.avg_draft_position:
+                p.avg_draft_position = market_adp.get(p.id, 0.0)
 
     return League(
         id=int(raw["id"]),
@@ -389,6 +402,7 @@ def parse_league(raw: dict, free_agents: list[dict] | None = None, pro_schedule:
         is_auction=is_auction,
         draft_prices={int(pk["playerId"]): float(pk.get("bidAmount") or 0) for pk in picks} if is_auction else {},
         draft_picks={int(pk["playerId"]): int(pk.get("overallPickNumber") or 0) for pk in picks},
+        draft_rounds=-(-max((int(pk.get("overallPickNumber") or 0) for pk in picks), default=0) // max(len(teams), 1)),
         lineup_slots=_lineup_slots(settings.get("rosterSettings", {})),
         calendar=parse_calendar(pro_schedule, raw) if pro_schedule else None,
     )

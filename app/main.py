@@ -71,6 +71,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 LEAGUE_TTL = float(os.getenv("LEAGUE_CACHE_SECONDS", "600"))
 SCHEDULE_TTL = 6 * 3600.0  # the NBA calendar changes rarely (postponements, NBA Cup knockouts)
+ADP_TTL = 6 * 3600.0  # ESPN's ADP barely moves once the season's drafts are done
 STATUS_FOR_ERROR = {LeaguePrivate: 401, LeagueNotFound: 404}
 # How long a trade-of-the-day request waits for the scan before answering "pending".
 DAILY_WAIT = float(os.getenv("DAILY_TRADE_WAIT_SECONDS", "20"))
@@ -159,6 +160,7 @@ def create_app(
     app.state.players = TTLCache(24 * 3600, max_items=20000)
     app.state.post_times = defaultdict(deque)
     app.state.schedules = TTLCache(SCHEDULE_TTL)
+    app.state.market_adp = TTLCache(ADP_TTL)
     app.state.score_days = TTLCache(LIVE_SCORES_TTL)
     app.state.settled_days = TTLCache(7 * 24 * 3600, max_items=512)
     app.state.score_locks = defaultdict(asyncio.Lock)
@@ -191,6 +193,17 @@ def create_app(
             app.state.schedules.set(season, cached)
         return cached
 
+    async def market_adp(season: int) -> dict[int, float] | None:
+        """ESPN's snake-draft ADP, for trade values in snake leagues. Analysis still works without it."""
+        cached = app.state.market_adp.get(season)
+        if cached is None:
+            try:
+                cached = await app.state.espn.market_adp(season)
+            except EspnError:
+                return None
+            app.state.market_adp.set(season, cached)
+        return cached
+
     async def load_league(league_id: int, season: int, creds: EspnCredentials | None, with_fa: bool) -> League:
         key = (league_id, season, credentials_key(creds), with_fa)
         league = app.state.leagues.get(key)
@@ -198,7 +211,9 @@ def create_app(
             raw = await app.state.espn.league(season, league_id, creds)
             fas = await app.state.espn.free_agents(season, league_id, creds) if with_fa else []
             schedule = await pro_schedule(season) if with_fa else None
-            league = parse_league(raw, fas, schedule)
+            snake = ((raw.get("settings") or {}).get("draftSettings") or {}).get("type") != "AUCTION"
+            adp = await market_adp(season) if with_fa and snake else None
+            league = parse_league(raw, fas, schedule, adp)
             app.state.leagues.set(key, league)
         return league
 

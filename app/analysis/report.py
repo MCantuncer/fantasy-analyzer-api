@@ -45,6 +45,8 @@ def league_summary(league: League) -> schemas.LeagueSummary:
         unsupported_reason=None
         if supported
         else f"{league.scoring_type} leagues are not supported yet. Only head-to-head category leagues are.",
+        draft_type="auction" if league.is_auction else "snake",
+        round_values=PerceivedValue(league).round_values(),
     )
 
 
@@ -309,7 +311,8 @@ class Analyzer:
                     else "Each matchup counts as one win, loss or tie in the standings.",
                     "Trades are shown only if they also help the other team in the categories it competes in "
                     "(its punts are ignored) and give it close to equal trade value. Trade value starts from ESPN "
-                    "rankings and draft prices, which fade as games are played, and blends % owned, "
+                    "rankings and draft prices (draft positions in snake leagues), which fade as games are "
+                    "played, and blends % owned, "
                     "rest-of-season value in your categories, this season's rank and the last 15 days. "
                     "Only lightly owned players are ever suggested as drops. One star counts for more "
                     "than two players adding up to the same dollars, and a player they'd have to cut counts "
