@@ -1,6 +1,8 @@
 import copy
 
-from app.espn.parse import parse_league
+import pytest
+
+from app.espn.parse import ACTUAL_WEIGHT_GAMES, parse_league, parse_player
 
 
 def test_league_settings(league):
@@ -51,3 +53,18 @@ def test_waiver_priority_only_without_faab(recorded):
     ranks = {t["id"]: t["waiverRank"] for t in raw["teams"]}
     assert {t.id: t.waiver_priority for t in rolling.teams} == ranks
     assert all(t.faab_remaining is None for t in rolling.teams)
+
+
+def test_season_stats_take_over_faster_for_points_than_for_free_throws():
+    def stats(source, values):
+        return {"seasonId": 2027, "statSourceId": source, "statSplitTypeId": 0, "averageStats": values}
+
+    projected = {"0": 20.0, "6": 8.0, "15": 4.0, "16": 5.0, "42": 70.0}
+    hot = {"0": 30.0, "6": 12.0, "15": 5.0, "16": 5.0, "42": 10.0}
+    p = parse_player({"player": {"id": 1, "fullName": "X", "stats": [stats(1, projected), stats(0, hot)]}}, 2027)
+    share = {
+        k: (p.per_game[k] - float(projected[str(k)])) / (float(hot[str(k)]) - float(projected[str(k)]))
+        for k in (0, 6, 15)
+    }
+    assert share[6] == pytest.approx(10 / (10 + ACTUAL_WEIGHT_GAMES))
+    assert share[0] > share[6] > share[15]
