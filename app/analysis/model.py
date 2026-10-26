@@ -27,7 +27,8 @@ DISPERSION = {0: 7.0, 1: 1.3, 2: 1.0, 3: 2.0, 4: 1.5, 5: 2.0, 6: 2.5, 11: 1.2, 1
 DEFAULT_DISPERSION = 1.5
 SCHEDULE_CV = 0.08  # weekly games played varies by about 8%
 KNOWN_SCHEDULE_CV = 0.10  # with the real calendar: rest days, DNPs and minutes (measured 9% in 2025-26)
-# ESPN gives no return dates, so a status means an expected number of days out.
+# ESPN gives no return dates. Players listed out get expected games still to miss from
+# how long they've been out (absence.py); without that, a status means a number of days.
 DAYS_OUT = {"DAY_TO_DAY": 2, "SUSPENSION": 5, "OUT": 14, "INJURY_RESERVE": 28}
 IR_DAYS_OUT = 28
 RATIO_OVERDISPERSION = 1.5
@@ -177,10 +178,22 @@ class CategoryModel:
     def return_day(self, p: Player) -> int:
         """First day an injured player is expected back (today for healthy players)."""
         today = self.cal.today if self.cal else 1
+        if p.games_out is not None and self.cal:
+            # Back for his team's first game after the ones he's expected to miss.
+            upcoming = sorted(d for d in self.cal.team_days.get(p.pro_team_id, ()) if d >= today)
+            missed = round(p.games_out)
+            return upcoming[missed] if missed < len(upcoming) else (upcoming[-1] + 1 if upcoming else today)
         out = DAYS_OUT.get(p.injury_status, 0)
         if p.lineup_slot == IR_SLOT:
             out = max(out, IR_DAYS_OUT)
         return today + out
+
+    def back_date(self, p: Player) -> str | None:
+        """Date (YYYY-MM-DD) of the expected first game back of a player listed out, when the calendar has it."""
+        if p.games_out is None or not self.cal:
+            return None
+        day = self.return_day(p)
+        return self.cal.date_of(day).isoformat() if day in self.cal.team_days.get(p.pro_team_id, ()) else None
 
     def plays(self, p: Player, horizon: object) -> np.ndarray:
         """(D,) bool: days in the horizon his team plays and he's expected to be healthy."""

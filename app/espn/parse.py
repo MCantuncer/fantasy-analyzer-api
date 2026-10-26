@@ -77,6 +77,7 @@ class Player:
     acquisition_type: str = ""  # DRAFT / ADD / TRADE, for rostered players
     acquired_ms: int | None = None  # when his current team got him, epoch milliseconds
     durability: float | None = None  # expected share of his team's remaining games (analysis/durability.py)
+    games_out: float | None = None  # expected team games he still misses while listed out (analysis/absence.py)
 
     @property
     def available(self) -> bool:
