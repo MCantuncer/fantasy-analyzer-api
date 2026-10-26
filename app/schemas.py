@@ -541,6 +541,54 @@ class TargetReport(BaseModel):
     elapsed_ms: int
 
 
+class InjuryImpactRequest(BaseModel):
+    player_id: int = Field(gt=0, description="The player who is out")
+    league_id: int | None = Field(default=None, gt=0, description="Tag each teammate with his fantasy team here")
+    season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")
+
+
+class CategoryGains(BaseModel):
+    pts: float
+    reb: float
+    ast: float
+    stl: float
+    blk: float
+    tpm: float
+    to: float
+    fg_impact: float = Field(description="FG makes above the league rate per game: positive helps FG%")
+    ft_impact: float = Field(description="FT makes above the league rate per game: positive helps FT%")
+
+
+class Beneficiary(BaseModel):
+    player_id: int
+    name: str
+    owner_team_id: int | None = Field(default=None, description="Fantasy team in the asked league; none = free agent")
+    minutes_before: float = Field(
+        description="Minutes per game with the injured player playing (recent games count more)"
+    )
+    minutes_after: float = Field(description="Expected minutes per game while he is out")
+    minutes_change: float
+    error: float = Field(description="80% band around the measured change; 0 when no games without him were seen")
+    games_without: float = Field(description="Games of evidence without him, this season and last (last counts half)")
+    gains: CategoryGains = Field(description="Expected change per game in each category")
+    value: float = Field(description="Change in 9-category z-score per game")
+    confidence: Literal["strong", "some", "estimate"] = Field(
+        description="strong: 8+ games without him and a clear change; some: 3+ games; estimate: mostly the prior"
+    )
+    note: str | None = None
+
+
+class InjuryImpact(BaseModel):
+    player_id: int
+    name: str
+    pro_team: str
+    minutes: float = Field(description="His recent minutes per game")
+    games_missed: float = Field(description="Games his team played without him, this season and last")
+    beneficiaries: list[Beneficiary] = Field(description="Teammates who gain, best first; at most 6")
+    method: str
+    track_record: str = Field(description="How the method did on past seasons' absences")
+
+
 class ScoresRequest(LeagueRequest):
     day: int | None = Field(
         default=None, ge=1, le=250, description="ESPN scoring period (a day). Default: the last day a game started"

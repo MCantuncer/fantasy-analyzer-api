@@ -47,6 +47,7 @@ uv run ruff check .
 | POST | `/api/reactions` | `{league_id, season?, target, reaction, on?}` | Toggles `steal`, `smart`, `overpay`, `lol`, or a `won:<team id>` trade vote |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
 | POST | `/api/scores` | `{league_id, season?, day?, team_id?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
+| POST | `/api/injury-impact` | `{player_id, league_id?, season?}` | Teammates who gain while a player is out, from games his team played without him, each tagged with his fantasy team in `league_id` |
 | GET | `/api/health` | | `{ok: true}` |
 
 Every endpoint except `/api/health` and `/api/auth/*` needs `Authorization: Bearer <token>` from sign-up or sign-in. `season` defaults to the current ESPN season (2026-27 is `2027`). `keep_player_ids` are never offered in trades or suggested as drops.
@@ -74,6 +75,30 @@ The feed pages through the season a week (seven scoring periods) at a time. Tran
 ESPN's fantasy API has no scoreboard, but for any day it returns every player's line for each game. `/api/scores` adds those up into team scores and box scores, and takes start times from the NBA calendar. There is no quarter or clock, so a game counts as live from tip-off until ESPN marks its stats official or three hours pass.
 
 A day is the same in every league. While a game is on, the day is fetched at most once a minute for everyone. Once a day's games are over (five hours after the last tip-off), it is saved to `DATABASE_URL` (table `nba_days`) and never fetched again. Other features can read finished games from there instead of calling ESPN.
+
+## Who gains from an injury
+
+`/api/injury-impact` (`app/analysis/injury.py`) compares each teammate's minutes and per-minute stats in games the team played without the injured player against games he played, this season and last. ESPN gives every game line of a team's current players in one call per team and season (`filterStatsForSplitTypeIds` 5).
+
+Checks before a number is trusted:
+
+- **Sample size.** The measured minutes change is pulled toward a prior until there are `MINUTES_K` games of evidence. The prior shares his minutes among teammates by position and room to grow, so it is a fallback, not the answer.
+- **Recency.** This season's games count half as much every `HALF_LIFE` team games back; last season counts `LAST_SEASON_WEIGHT`.
+- **Per-minute rates** are pulled toward the player's normal rates (`RATE_K` minutes), and those toward an average rotation player's (`BASE_RATE_K`), so garbage-time minutes don't project as a breakout.
+- **Other absences.** If another regular also missed most of those games, the result names him: part of the gain may be his.
+- **Confidence** is `strong` (8+ games without him and a change clear of its 80% error band), `some` (3+ games) or `estimate` (mostly the prior).
+
+The endpoint lists teammates whose 9-category value goes up and who would play 15+ minutes.
+
+`scripts/injury_backtest.py` replays real absences (a regular out 3+ games in a row, then back) using only games before each one. Tuned on 2024-25, checked on 2025-26 (202 absences):
+
+| | Minutes error per game | Top pick among the 2 biggest minutes gainers |
+| --- | --- | --- |
+| No change | 4.23 | |
+| "His backup gets his minutes" | 4.71 | 23% |
+| This model | 3.85 | 35% |
+
+Chance is about 20%. Even knowing the real minutes, the best value pick would be right about 41% of the time, because stats over a few games are noisy; the model's value pick was right 27% (backup rule 24%).
 
 ## Private leagues
 
