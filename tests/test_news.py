@@ -74,6 +74,40 @@ def test_rss_and_atom_feeds_parse_to_plain_text():
     assert atom[0].published.hour == 9
 
 
+def test_a_feed_repeating_its_own_title_or_home_page_as_an_item_is_skipped():
+    # RealGM's wiretap feed shipped an item that was only the channel's own blurb.
+    feed = b"""<?xml version="1.0"?>
+<rss version="2.0"><channel>
+<title>Get Your Latest NBA News From RealGM's Basketball Wiretap</title>
+<link>https://basketball.realgm.com/</link>
+<description>Get all the latest news and happenings from around the NBA with RealGM's Basketball Wiretap.</description>
+<item><title>Get Your Latest NBA News From RealGM&#39;s Basketball Wiretap</title>
+<link>https://basketball.realgm.com/wiretap</link><pubDate>Sun, 26 Oct 2026 08:00:00 GMT</pubDate></item>
+<item><title>Read the Wiretap</title><link>https://basketball.realgm.com</link>
+<pubDate>Sun, 26 Oct 2026 08:00:00 GMT</pubDate></item>
+<item><title>Kris Dunn Moves Into Clippers' Starting Lineup</title><link>https://basketball.realgm.com/wiretap/1</link>
+<pubDate>Sun, 26 Oct 2026 08:00:00 GMT</pubDate></item>
+</channel></rss>"""
+    assert [i.title for i in parse_rss("realgm", feed)] == ["Kris Dunn Moves Into Clippers' Starting Lineup"]
+    atom = ATOM.replace(b"<title>r/nba</title>", b"<title>[Fake] Zach LaVine traded to the Raptors</title>")
+    assert parse_rss("reddit", atom) == []
+
+
+def test_stories_that_name_no_player_are_not_published():
+    stories = build_stories(
+        [
+            item("realgm", "Get Your Latest NBA News From RealGM's Basketball Wiretap", 1),
+            item("cbs", "Subscribe to our NBA newsletter", 2),
+            item("yahoo", "NBA power rankings: Week 1", 3),
+            item("cbs", "Kris Dunn moves into the starting lineup", 4),
+        ],
+        states(),
+        TEAMS,
+        NOW,
+    )
+    assert [s.headline for s in stories] == ["Kris Dunn moves into the starting lineup"]
+
+
 def test_espn_articles_keep_athlete_ids():
     data = {
         "articles": [
@@ -204,6 +238,7 @@ def news_client(recorded, fake_espn, feeds: dict[str, httpx.Response]):
     pool = [
         {"id": JWILL, "fullName": "Jalen Williams", "proTeamId": 25, "injuryStatus": "DAY_TO_DAY"},
         {"id": DUNN, "fullName": "Kris Dunn", "proTeamId": 12, "injuryStatus": "ACTIVE"},
+        {"id": LAVINE, "fullName": "Zach LaVine", "proTeamId": 23, "injuryStatus": "ACTIVE"},
     ]
     trending = [
         {

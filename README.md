@@ -212,7 +212,7 @@ A day is the same in every league. While a game is on, the day is fetched at mos
 - **Outlets:** ESPN, RotoWire, CBS Sports, Yahoo Sports, RealGM, HoopsHype and The Stein Line. Outlets owned by the same company count once.
 - **Tips:** Reddit r/nba. Never enough on its own.
 
-Each item is tagged with the players its headline names in full (ESPN's own athlete tags for ESPN articles), never from a last name alone. The kind (injury, return, trade, rumor, signing, release, role) and an injury's severity come from keyword rules. Items about the same player and kind of news within 48 hours become one story:
+Each item is tagged with the players its headline names in full (ESPN's own athlete tags for ESPN articles), never from a last name alone. Items that name no player (promos, roundups, a feed repeating its own title) never become stories. The kind (injury, return, trade, rumor, signing, release, role) and an injury's severity come from keyword rules. Items about the same player and kind of news within 48 hours become one story:
 
 | Status | When |
 | --- | --- |

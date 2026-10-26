@@ -196,6 +196,10 @@ def build_stories(
     names = {pid: st.name for pid, st in states.items()}
     stories = []
     for c in cluster(items):
+        # Every story is about an NBA player. Items that name nobody (promos, roundups, a feed's
+        # own blurb, league business) are not news a fantasy manager can act on.
+        if not c.players:
+            continue
         trusted = [i for i in c.items if i.source_kind != "tip"]
         outlets = [i for i in trusted if i.source_kind == "outlet"]
         facts = [i for i in trusted if i.source_id == FACT_SOURCE]
