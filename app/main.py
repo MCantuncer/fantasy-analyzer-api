@@ -66,6 +66,8 @@ SCHEDULE_TTL = 6 * 3600.0  # the NBA calendar changes rarely (postponements, NBA
 STATUS_FOR_ERROR = {LeaguePrivate: 401, LeagueNotFound: 404}
 # How long a trade-of-the-day request waits for the scan before answering "pending".
 DAILY_WAIT = float(os.getenv("DAILY_TRADE_WAIT_SECONDS", "20"))
+# How often the day's pick is checked again for injuries, roster moves and better deals.
+DAILY_RECHECK = float(os.getenv("DAILY_TRADE_RECHECK_SECONDS", str(3 * 3600)))
 # The feed pages through the season a week (seven scoring periods) at a time.
 FEED_PAGE_PERIODS = 7
 POSTS_PER_MINUTE = 10
@@ -445,30 +447,54 @@ def create_app(
         app.state.reports.set(key, report)
         return report
 
-    async def daily_pick(key: TradeKey, creds: EspnCredentials | None) -> schemas.TradeOfTheDay:
-        """Today's pick from memory or the store, or by scanning the league (once, however many ask)."""
+    async def saved_pick(key: TradeKey) -> schemas.TradeOfTheDay | None:
         pick = app.state.daily.get(key)
         if pick is None:
             body = await run_in_threadpool(app.state.store.get_trade, key)
             if body is not None:
                 pick = schemas.TradeOfTheDay.model_validate(body)
-        if pick is None:
-            league_id, season, _, day = key
-            lg = await load_league(league_id, season, creds, with_fa=True)
-            summary = league_summary(lg)
-            if not summary.supported:
-                raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
-            pick = await run_in_threadpool(trade_of_the_day, lg, datetime.fromisoformat(day).date())
-            await run_in_threadpool(app.state.store.save_trade, key, pick.model_dump(mode="json", exclude={"votes"}))
-            # Another server may have saved first; the first pick of the day stands.
-            body = await run_in_threadpool(app.state.store.get_trade, key)
-            if body is not None:
-                pick = schemas.TradeOfTheDay.model_validate(body)
+                app.state.daily.set(key, pick)
+        return pick
+
+    def checked_recently(pick: schemas.TradeOfTheDay) -> bool:
+        if not pick.checked_at:
+            return False
+        return (datetime.now(UTC) - datetime.fromisoformat(pick.checked_at)).total_seconds() < DAILY_RECHECK
+
+    async def daily_pick(
+        key: TradeKey, creds: EspnCredentials | None, current: schemas.TradeOfTheDay | None
+    ) -> schemas.TradeOfTheDay:
+        """Scan the league for the day's pick. On a re-check, ``current`` stays unless something beats it."""
+        league_id, season, _, day = key
+        lg = await load_league(league_id, season, creds, with_fa=True)
+        summary = league_summary(lg)
+        if not summary.supported:
+            raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
+        keep = current.pick_id if current else None
+        pick = await run_in_threadpool(trade_of_the_day, lg, datetime.fromisoformat(day).date(), keep)
+        if current is not None and current.pick_id and pick.pick_id == current.pick_id:
+            pick.generated_at = current.generated_at  # same deal with fresh numbers
+        await run_in_threadpool(app.state.store.save_trade, key, pick.model_dump(mode="json", exclude={"votes"}))
         app.state.daily.set(key, pick)
         return pick
 
+    def daily_job(key: TradeKey, creds: EspnCredentials | None, current: schemas.TradeOfTheDay | None):
+        """One scan per league at a time, however many visitors ask."""
+        job = app.state.daily_jobs.get(key)
+        if job is None:
+            job = asyncio.create_task(daily_pick(key, creds, current))
+            app.state.daily_jobs[key] = job
+
+            def done(task: asyncio.Task) -> None:
+                app.state.daily_jobs.pop(key, None)
+                if not task.cancelled():
+                    task.exception()  # a failed re-check is retried on the next visit
+
+            job.add_done_callback(done)
+        return job
+
     async def with_votes(key: TradeKey, pick: schemas.TradeOfTheDay) -> schemas.TradeOfTheDay:
-        tally = await run_in_threadpool(app.state.store.tally, key)
+        tally = await run_in_threadpool(app.state.store.tally, key, pick.pick_id or "")
         votes = {tid: schemas.PollTally(yes=y, no=n) for tid, (y, n) in tally.items()}
         return pick.model_copy(update={"votes": votes})
 
@@ -485,16 +511,15 @@ def create_app(
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
         key: TradeKey = (body.league_id, season, credentials_key(creds), today())
-        cached = app.state.daily.get(key)
-        if cached is not None:
-            return await with_votes(key, cached)
-        # The scan takes a while on a small server: run it once in the background and
-        # tell callers to come back if it isn't done in time.
-        job = app.state.daily_jobs.get(key)
-        if job is None:
-            job = asyncio.create_task(daily_pick(key, creds))
-            app.state.daily_jobs[key] = job
-            job.add_done_callback(lambda _: app.state.daily_jobs.pop(key, None))
+        current = await saved_pick(key)
+        if current is not None:
+            # Serve the current pick right away; a stale one is re-checked in the background.
+            if not checked_recently(current):
+                daily_job(key, creds, current)
+            return await with_votes(key, current)
+        # The scan takes a while on a small server: run it in the background and tell
+        # callers to come back if it isn't done in time.
+        job = daily_job(key, creds, None)
         try:
             pick = await asyncio.wait_for(asyncio.shield(job), timeout=DAILY_WAIT)
         except TimeoutError:
@@ -517,17 +542,17 @@ def create_app(
         season = body.season or current_season()
         key: TradeKey = (body.league_id, season, credentials_key(creds), body.date)
         # Votes count only for today's pick and one of its two teams.
-        pick = None
-        if body.date == today():
-            pick = app.state.daily.get(key)
-            if pick is None:
-                saved = await run_in_threadpool(app.state.store.get_trade, key)
-                pick = schemas.TradeOfTheDay.model_validate(saved) if saved else None
+        pick = await saved_pick(key) if body.date == today() else None
         if pick is None or body.team_id not in {s.team_id for s in pick.sides}:
             raise HTTPException(
                 409, detail={"code": "poll_closed", "message": "This poll is closed. Reload for today's trade."}
             )
-        await run_in_threadpool(app.state.store.vote, key, body.team_id, body.voter, body.take)
+        if body.pick_id and body.pick_id != pick.pick_id:
+            raise HTTPException(
+                409,
+                detail={"code": "pick_changed", "message": "Today's trade was updated. Reload to vote on the new one."},
+            )
+        await run_in_threadpool(app.state.store.vote, key, pick.pick_id or "", body.team_id, body.voter, body.take)
         return await with_votes(key, pick)
 
     # League chat ---------------------------------------------------------------
