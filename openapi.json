@@ -2276,6 +2276,18 @@
             ],
             "title": "Faab Remaining"
           },
+          "waiver_priority": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiver Priority",
+            "description": "Your place in the rolling waiver order (1 = first claim), in leagues without FAAB. A successful claim usually moves you to the back."
+          },
           "assumptions": {
             "$ref": "#/components/schemas/Assumptions"
           },
@@ -3555,6 +3567,30 @@
               }
             ],
             "title": "Unsupported Reason"
+          },
+          "draft_type": {
+            "type": "string",
+            "enum": [
+              "auction",
+              "snake"
+            ],
+            "title": "Draft Type",
+            "default": "auction"
+          },
+          "round_values": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Round Values",
+            "description": "Snake leagues: trade value of the last pick in each draft round, round 1 first. A trade value at or above entry k is worth a round k+1 pick. Null in auction leagues."
           }
         },
         "type": "object",
@@ -4431,6 +4467,24 @@
             "title": "Owner Premium",
             "description": "What his owner wants on top of trade value, in auction dollars",
             "default": 0.0
+          },
+          "games_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Games Share",
+            "description": "Expected share of his team's remaining games he plays once back from any current injury, from his games-played record. A typical regular plays about 0.73."
+          },
+          "injury_prone": {
+            "type": "boolean",
+            "title": "Injury Prone",
+            "description": "He has missed many games in recent seasons: valued for fewer games",
+            "default": false
           }
         },
         "type": "object",

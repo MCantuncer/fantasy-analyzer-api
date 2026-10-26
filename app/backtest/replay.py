@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from app.analysis.durability import attach as attach_durability
 from app.analysis.model import CategoryModel
 from app.analysis.sim import EACH_CATEGORY, simulate_season
 from app.backtest.history import History
@@ -39,8 +40,10 @@ def _outcome(result: str | None) -> float:
 
 
 class Replay:
-    def __init__(self, h: History):
+    def __init__(self, h: History, past_games: list[dict[int, int]] | None = None):
+        """``past_games``: games played in the seasons before, most recent first, for durability."""
         self.h = h
+        self.past_games = past_games
         settings = h.league["settings"]
         self.n_periods = int(settings["scheduleSettings"]["matchupPeriodCount"])
         self.playoff_teams = int(settings["scheduleSettings"].get("playoffTeamCount", 4))
@@ -159,7 +162,10 @@ class Replay:
             "teams": teams,
             "schedule": schedule,
         }
-        return parse_league(raw, [], self.h.pro_schedule)
+        league = parse_league(raw, [], self.h.pro_schedule)
+        if self.past_games is not None:
+            attach_durability(league, self.past_games)
+        return league
 
     # ---- scoring --------------------------------------------------------------------------
 

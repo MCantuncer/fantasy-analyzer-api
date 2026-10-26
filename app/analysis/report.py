@@ -9,6 +9,7 @@ import numpy as np
 
 from app import schemas
 from app.analysis.badges import OwnerPremium, badge_refs
+from app.analysis.durability import injury_prone
 from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import EACH_CATEGORY, simulate_season
@@ -85,6 +86,8 @@ class Analyzer:
             tier=tier(p, self.keep),
             badges=badge_refs(self.premium, p),
             owner_premium=round(self.premium.dollars(p), 1),
+            games_share=round(p.durability, 3) if p.durability is not None else None,
+            injury_prone=injury_prone(p),
         )
 
     def avg_cat_win(self, i: int, dists: list[Dist]) -> np.ndarray:

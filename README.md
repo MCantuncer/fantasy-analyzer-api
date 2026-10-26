@@ -54,6 +54,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🏀 | **Live scores:** NBA scores and box scores tagged with fantasy teams | `/api/scores` |
 | 📰 | **Checked NBA news:** stories confirmed across sources before they show | `/api/news` |
 | 🩹 | **Injury impact:** which teammates gain while a player is out | `/api/injury-impact` |
+| 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |
 | 💬 | **Moves feed and league chat:** transactions, posts, replies and reactions | `/api/feed`, `/api/posts` |
 | 🔐 | **Accounts and verified managers:** email or Google sign-in, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
 
@@ -270,6 +271,16 @@ uv run python -m scripts.backtest 744636428 2025 2026
 ```
 
 The first run of a season downloads it from ESPN into `.cache/backtest/` (a couple of minutes); later runs read the cache. Lower Brier and log loss are better; a spread of 1.0 means the model is exactly as unsure as it should be, above 1 it is overconfident. Keep a model change only if it helps every season.
+
+Add `--flat-durability` to replay without injury risk (every player equally durable), to compare.
+
+### Injury-risk backtest
+
+Checks the expected-games model (`app/analysis/durability.py`) on past seasons: fitted on 2023-24, tested on 2024-25 and 2025-26 against game logs, with calibration by fifths and the injury-prone players who start healthy:
+
+```sh
+uv run python -m scripts.durability_backtest        # add --fit to search the constants again
+```
 
 ## Deployment
 

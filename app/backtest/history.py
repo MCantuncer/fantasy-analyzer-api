@@ -14,6 +14,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from app.analysis.durability import HISTORY_SEASONS, games_played
 from app.espn.client import EspnClient, EspnCredentials, LeagueNotFound
 
 # Box score stats the model reads: the scoring stats, makes/attempts, minutes, games played.
@@ -147,3 +148,17 @@ async def load_history(league_id: int, season: int, cache_dir: Path, client: Esp
     h = await fetch_history(client or EspnClient(timeout=60.0), league_id, season)
     h.save(path)
     return h
+
+
+async def load_past_games(season: int, cache_dir: Path, client: EspnClient | None = None) -> list[dict[int, int]]:
+    """Games played in the seasons before ``season``, most recent first (see analysis/durability.py)."""
+    out = []
+    for past in range(season - 1, season - 1 - HISTORY_SEASONS, -1):
+        path = cache_dir / f"games-{past}.json"
+        if not path.exists():
+            client = client or EspnClient(timeout=60.0)
+            played = games_played(await client.season_totals(past), past)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(played))
+        out.append({int(k): int(v) for k, v in json.loads(path.read_text()).items()})
+    return out
