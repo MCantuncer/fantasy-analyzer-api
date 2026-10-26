@@ -569,7 +569,9 @@ class Beneficiary(BaseModel):
     minutes_after: float = Field(description="Expected minutes per game while he is out")
     minutes_change: float
     error: float = Field(description="80% band around the measured change; 0 when no games without him were seen")
-    games_without: float = Field(description="Games of evidence without him, this season and last (last counts half)")
+    games_without: float = Field(
+        description="Effective games of evidence without him: older games and last season count less"
+    )
     gains: CategoryGains = Field(description="Expected change per game in each category")
     value: float = Field(description="Change in 9-category z-score per game")
     confidence: Literal["strong", "some", "estimate"] = Field(

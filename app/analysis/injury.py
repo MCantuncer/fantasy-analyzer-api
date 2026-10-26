@@ -2,7 +2,7 @@
 
 For an injured player X, each teammate's minutes and per-minute production are
 compared between games X played and games he missed, this season and last
-(last season counts half). Depth-chart guesses ("his backup gets his minutes")
+(last season counts a quarter). Depth-chart guesses ("his backup gets his minutes")
 are only a fallback, and every number is checked before it is trusted:
 
 - Sample size. With few games without X, the measured change is pulled toward a

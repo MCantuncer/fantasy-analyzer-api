@@ -85,7 +85,7 @@ MIN_RELEVANT_MINUTES = 15.0
 PAST_GAMELOG_TTL = 7 * 24 * 3600.0
 IMPACT_METHOD = (
     "Each teammate's minutes and per-minute stats in games his team played without him, against games he "
-    "played, this season and last (last season counts half, recent games count more). With few such games "
+    "played, this season and last (last season counts a quarter, recent games count more). With few such games "
     "the result leans on a prior that shares his minutes by position and room to grow."
 )
 IMPACT_TRACK_RECORD = (

@@ -2467,7 +2467,7 @@
           "games_without": {
             "type": "number",
             "title": "Games Without",
-            "description": "Games of evidence without him, this season and last (last counts half)"
+            "description": "Effective games of evidence without him: older games and last season count less"
           },
           "gains": {
             "$ref": "#/components/schemas/CategoryGains",
