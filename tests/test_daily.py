@@ -17,6 +17,26 @@ def pick(league):
     return trade_of_the_day(league, DAY)
 
 
+_scans: dict[tuple, object] = {}
+
+
+@pytest.fixture(autouse=True)
+def one_scan_per_pick(monkeypatch):
+    """The endpoint tests serve the same recorded league, so each distinct scan runs once per test process.
+
+    The scan itself is covered by the tests above that call ``trade_of_the_day`` directly.
+    """
+
+    def scan(lg, day, keep_id=None):
+        key = (lg.id, lg.season, day, keep_id)
+        if key not in _scans:
+            _scans[key] = trade_of_the_day(lg, day, keep_id)
+        return _scans[key].model_copy(deep=True)
+
+    monkeypatch.setattr(main, "trade_of_the_day", scan)
+    monkeypatch.setattr(main, "DAILY_WAIT", 120.0)  # a busy CI runner must not turn the first scan into "pending"
+
+
 def test_pick_is_a_win_win_between_two_teams(pick):
     assert pick.status == "ready"
     a, b = pick.sides
