@@ -119,7 +119,8 @@ def test_only_nba_news_becomes_a_story():
 
 
 def test_news_filter_precision_on_real_feed_items():
-    # 121 headlines from RotoWire, CBS, Yahoo and RealGM on 2026-10-26, each labelled by hand:
+    # 155 headlines from RotoWire, CBS, Yahoo and RealGM on 2026-10-26 (two pulls, morning and evening),
+    # each labelled by hand:
     # is it NBA news a manager would want (a move, injury, return, role change, league business)?
     sample = json.loads((Path(__file__).parent / "data" / "news_sample.json").read_text())
     shown = [s for s in sample if newsworthy(s["title"])]

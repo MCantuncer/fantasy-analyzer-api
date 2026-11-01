@@ -107,16 +107,16 @@ _BODY = re.compile(r"\b(" + "|".join(BODY_PARTS) + r")\b")
 OTHER_LEAGUE = _any(r"\b(wnba|ncaa|ncaab|college|wildcats|nfl|mlb|nhl|world series|euroleague)\b")
 NOT_NEWS = _any(
     r"\b(how to watch|where to watch|to watch|live stream|tv channels?|start time|odds|picks|props|best bets|"
-    r"bets|predictions?|promos?|sportsbooks?|parlays?|preview|discussion|game thread|"
+    r"bets|promos?|sportsbooks?|parlays?|preview|discussion|game thread|"
     r"post game thread|highlights?|player grades|grades|grading|observations|bell ringer|scenes from|"
     r"power rankings|rankings|winners and losers|overreactions|destinations|things|takeaways|mailbag|"
-    r"podcast|newsletter|final score)\b"
+    r"podcast|newsletter|final score|nba news|injury updates|waiver wire|fantasy basketball)\b"
 )
 SCORELINE = _any(r"\b\d{2,3} \d{2,3}\b|\b\d{2,3} [a-z]+( [a-z]+)? \d{2,3}\b")
 LEAGUE_NEWS = _any(
     r"\b(fire[sd]?|hire[sd]?|names? (\w+ )?(head )?coach|suspen(d|ds|ded|sion)|fined|arrest(ed)?|charged|"
     r"plea|indict(ed|ment)?|lawsuit|investigation|banned|retire[sd]?|retirement|rest(s|ed|ing)?|absence|"
-    r"scratched|sit out|to sit|listed out|g league)\b"
+    r"scratched|sit out|to sit|listed out|g league|shootaround|practices?|practiced)\b"
 )
 
 
