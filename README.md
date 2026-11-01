@@ -81,7 +81,7 @@ app/
 ├── accounts.py    Sign-up, sessions and team verification
 ├── feed.py        Moves feed from ESPN transactions
 ├── feedback.py    Feedback on trade ideas, with the idea as it was shown
-├── reader.py      Reads a manager's note on a trade idea to pick which checks run first
+├── reader.py      Reads a manager's note on a trade idea to pick which checks run first (Haiku), and unclear ones again in batches (Opus)
 ├── social.py      Posts, replies and reactions
 ├── scores.py      NBA scores and box scores
 └── store.py       Postgres persistence, with an in-memory fallback
@@ -150,6 +150,7 @@ All settings are optional for local development.
 | POST | `/api/trade-feedback` | `{league_id, team_id, season?, source, rating, reasons?, text?, idea}` | Saves what you thought of a trade idea (`bad` or `good`, quick reasons, your words) with the idea as shown; feedback on the same deal replaces the earlier entry |
 | POST | `/api/trade-feedback/mine` | `{league_id, team_id, season?}` | Your feedback in the league, newest first |
 | POST | `/api/trade-check` | `{league_id, team_id, season?, idea, reasons?, keep_player_ids?}` | Checks a trade idea against today's league: whether a free pickup carries the gain, simulation noise, a sideways talent swap, lost categories, thin samples, injuries; each with its evidence, the quick reasons' checks first, then the ones your note points at (read once by Claude Haiku, returned as `read_as`) |
+| GET | `/api/feedback/deep-read` | none | Called hourly by `.github/workflows/feedback.yml`: collects Claude Opus's closer reads of notes the first read marked unclear, and sends new ones as a half-price batch. Each note is sent once; a closer read says which check we'd need to add to verify the point |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
 | POST | `/api/scores` | `{league_id, season?, day?, team_id?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
 | POST | `/api/injury-impact` | `{player_id, league_id?, season?}` | Teammates who gain while a player is out, from games his team played without him, each tagged with his fantasy team in `league_id` |

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import anthropic
 import httpx
 
-from app.reader import SYSTEM, ClaudeNoteReader, Reading, describe
+from app.reader import SYSTEM, ClaudeDeepReader, ClaudeNoteReader, DeepReading, Reading, describe
 from tests.conftest import LEAGUE_ID, MY_TEAM
 from tests.test_checks import two_for_one
 
@@ -94,3 +94,83 @@ def test_claude_reader_gives_up_quietly(league):
 
     assert ClaudeNoteReader(client=SimpleNamespace(messages=Down())).read("x", idea, "bad", []) is None
     assert ClaudeNoteReader(client=SimpleNamespace(messages=Cut())).read("x", idea, "bad", []) is None
+
+
+class FakeDeep:
+    def __init__(self):
+        self.sent, self.ended = [], False
+
+    def submit(self, notes):
+        self.sent.append([n[0] for n in notes])
+        return f"batch{len(self.sent)}"
+
+    def collect(self, batch_id):
+        if not self.ended:
+            return None
+        deep = DeepReading(
+            kind="unclear",
+            reasons=["bad_for_build"],
+            checks=["build_conflict"],
+            players=[],
+            summary="It wrecks my punt.",
+            missing_check="Compare against the manager's stated punt categories.",
+        )
+        return {fid: deep for fid in self.sent[int(batch_id[5:]) - 1]}
+
+
+def test_unclear_notes_get_a_closer_read_in_batches(client, league):
+    client.app.state.reader = FakeReader(READ.model_copy(update={"kind": "unclear"}))
+    deep = FakeDeep()
+    client.app.state.deep_reader = deep
+    _, idea = two_for_one(league)
+    give_feedback(client, idea, "it ruins my punt")
+    check(client, idea)
+
+    out = client.get("/api/feedback/deep-read").json()
+    assert out["sent"] == 1 and deep.sent == [[1]]
+    assert client.get("/api/feedback/deep-read").json()["skipped"]  # not again within minutes
+
+    client.app.state.deep_read_last = None
+    deep.ended = True
+    out = client.get("/api/feedback/deep-read").json()
+    assert out["collected"] == 1 and out["sent"] == 0  # read once, never sent again
+    stored = next(iter(client.app.state.feedback.rows.values()))
+    assert stored.deep_reading["missing_check"].startswith("Compare") and stored.deep_batch is None
+    assert check(client, idea)["verdicts"][0]["check"] == "build_conflict"  # the closer read leads now
+
+
+def test_deep_read_is_off_without_a_key(client):
+    client.app.state.deep_reader = None
+    assert client.get("/api/feedback/deep-read").json() == {"ok": True, "enabled": False}
+
+
+def test_claude_deep_reader_batches_and_parses():
+    seen = {}
+    good = DeepReading(kind="clear", reasons=[], checks=["noise"], players=[], summary="s", missing_check="")
+
+    def result(text, kind="succeeded", stop="end_turn"):
+        msg = SimpleNamespace(stop_reason=stop, content=[SimpleNamespace(type="text", text=text)])
+        return SimpleNamespace(type=kind, message=msg)
+
+    class Batches:
+        def create(self, requests):
+            seen["requests"] = requests
+            return SimpleNamespace(id="b1")
+
+        def retrieve(self, batch_id):
+            return SimpleNamespace(processing_status="ended")
+
+        def results(self, batch_id):
+            return [
+                SimpleNamespace(custom_id="7", result=result(good.model_dump_json())),
+                SimpleNamespace(custom_id="8", result=result("not json")),
+                SimpleNamespace(custom_id="9", result=result("", kind="errored")),
+            ]
+
+    reader = ClaudeDeepReader(client=SimpleNamespace(messages=SimpleNamespace(batches=Batches())))
+    idea = SimpleNamespace(partner_team_name="X", give=[], get=[], my_add=None, my_drop=None)
+    assert reader.submit([(7, "note", idea, "bad", [])]) == "b1"
+    params = seen["requests"][0]["params"]
+    assert seen["requests"][0]["custom_id"] == "7" and params["model"] == "claude-opus-5-5"
+    assert params["output_config"]["format"]["type"] == "json_schema"
+    assert reader.collect("b1") == {7: good, 8: None, 9: None}

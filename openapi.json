@@ -2190,6 +2190,27 @@
         }
       }
     },
+    "/api/feedback/deep-read": {
+      "get": {
+        "summary": "Feedback Deep Read",
+        "description": "Collects finished closer reads of unclear notes and sends new ones, in batches. Called by a cron.\n\nSafe to call often: each note is sent once, and nothing runs more than every few minutes.",
+        "operationId": "feedback_deep_read_api_feedback_deep_read_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Feedback Deep Read Api Feedback Deep Read Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/scores": {
       "post": {
         "summary": "Scores",

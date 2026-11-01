@@ -64,6 +64,8 @@ class Feedback:
     checks: list[dict] | None = None  # CheckVerdicts from the last time the checks ran on this deal
     checked_at: datetime | None = None
     reading: dict | None = None  # how the note was read (app.reader.Reading), None until read
+    deep_reading: dict | None = None  # Opus's closer read of an unclear note (app.reader.DeepReading)
+    deep_batch: str | None = None  # the batch it was sent in, while the closer read is pending
 
 
 SCHEMA = """
@@ -86,6 +88,8 @@ create table if not exists trade_feedback (
 alter table trade_feedback add column if not exists checks jsonb;
 alter table trade_feedback add column if not exists checked_at timestamptz;
 alter table trade_feedback add column if not exists reading jsonb;
+alter table trade_feedback add column if not exists deep_reading jsonb;
+alter table trade_feedback add column if not exists deep_batch text;
 create index if not exists trade_feedback_by_league on trade_feedback (league_id, season, created_at desc);
 """
 
@@ -96,6 +100,10 @@ class FeedbackStore(Protocol):
     def record_checks(self, user_id: int, league_id: int, season: int, deal: str, checks: list[dict]) -> int: ...
     def for_deal(self, user_id: int, league_id: int, season: int, deal: str) -> list[Feedback]: ...
     def record_reading(self, feedback_id: int, reading: dict) -> None: ...
+    def pending_deep(self, limit: int) -> list[Feedback]: ...
+    def mark_deep_batch(self, feedback_ids: list[int], batch_id: str) -> None: ...
+    def deep_batches(self) -> list[str]: ...
+    def record_deep(self, feedback_id: int, batch_id: str, deep: dict | None) -> None: ...
 
 
 class MemoryFeedbackStore:
@@ -110,7 +118,8 @@ class MemoryFeedbackStore:
         if old is None:
             self._next += 1
         f.created_at = datetime.now(UTC)
-        f.checks, f.checked_at, f.reading = None, None, None  # changed feedback waits for a fresh check and read
+        # Changed feedback waits for a fresh check and read.
+        f.checks, f.checked_at, f.reading, f.deep_reading, f.deep_batch = None, None, None, None, None
         self.rows[key] = f
         return f
 
@@ -137,6 +146,27 @@ class MemoryFeedbackStore:
             if f.id == feedback_id:
                 f.reading = reading
 
+    def pending_deep(self, limit: int) -> list[Feedback]:
+        rows = [
+            f
+            for f in self.rows.values()
+            if (f.reading or {}).get("kind") == "unclear" and f.deep_reading is None and f.deep_batch is None
+        ]
+        return sorted(rows, key=lambda f: f.created_at)[:limit]
+
+    def mark_deep_batch(self, feedback_ids: list[int], batch_id: str) -> None:
+        for f in self.rows.values():
+            if f.id in feedback_ids:
+                f.deep_batch = batch_id
+
+    def deep_batches(self) -> list[str]:
+        return sorted({f.deep_batch for f in self.rows.values() if f.deep_batch and f.deep_reading is None})
+
+    def record_deep(self, feedback_id: int, batch_id: str, deep: dict | None) -> None:
+        for f in self.rows.values():
+            if f.id == feedback_id and f.deep_batch == batch_id:  # not if the feedback changed meanwhile
+                f.deep_reading, f.deep_batch = deep, None
+
     def mine(self, user_id: int, league_id: int, season: int, limit: int = LIST_LIMIT) -> list[Feedback]:
         rows = [f for (u, lg, s, _), f in self.rows.items() if (u, lg, s) == (user_id, league_id, season)]
         return sorted(rows, key=lambda f: f.created_at, reverse=True)[:limit]
@@ -145,7 +175,7 @@ class MemoryFeedbackStore:
 class PostgresFeedbackStore:
     _COLS = (
         "id, user_id, league_id, season, team_id, source, idea_key, rating, reasons, text, idea, "
-        "model_version, created_at, checks, checked_at, reading"
+        "model_version, created_at, checks, checked_at, reading, deep_reading, deep_batch"
     )
 
     def __init__(self, url: str):
@@ -162,7 +192,8 @@ class PostgresFeedbackStore:
                 "reasons, text, idea, model_version) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "on conflict (user_id, league_id, season, idea_key) do update set team_id=excluded.team_id, "
                 "rating=excluded.rating, reasons=excluded.reasons, text=excluded.text, idea=excluded.idea, "
-                "model_version=excluded.model_version, created_at=now(), checks=null, checked_at=null, reading=null "
+                "model_version=excluded.model_version, created_at=now(), checks=null, checked_at=null, reading=null, "
+                "deep_reading=null, deep_batch=null "
                 f"returning {self._COLS}",
                 (
                     f.user_id,
@@ -210,6 +241,34 @@ class PostgresFeedbackStore:
     def record_reading(self, feedback_id: int, reading: dict) -> None:
         with self._connect() as conn:
             conn.execute("update trade_feedback set reading=%s where id=%s", (json.dumps(reading), feedback_id))
+
+    def pending_deep(self, limit: int) -> list[Feedback]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"select {self._COLS} from trade_feedback where reading->>'kind' = 'unclear' "
+                "and deep_reading is null and deep_batch is null order by created_at limit %s",
+                (limit,),
+            ).fetchall()
+        return [Feedback(*r) for r in rows]
+
+    def mark_deep_batch(self, feedback_ids: list[int], batch_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("update trade_feedback set deep_batch=%s where id = any(%s)", (batch_id, feedback_ids))
+
+    def deep_batches(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select distinct deep_batch from trade_feedback where deep_batch is not null "
+                "and deep_reading is null order by 1"
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def record_deep(self, feedback_id: int, batch_id: str, deep: dict | None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "update trade_feedback set deep_reading=%s, deep_batch=null where id=%s and deep_batch=%s",
+                (json.dumps(deep) if deep is not None else None, feedback_id, batch_id),
+            )
 
 
 def create_feedback_store() -> FeedbackStore:
