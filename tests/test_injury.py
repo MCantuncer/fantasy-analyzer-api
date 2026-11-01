@@ -55,6 +55,18 @@ def test_with_no_games_without_him_the_prior_is_used_and_said():
     assert wing.minutes_change > big.minutes_change > 0  # same position and more room to grow
 
 
+def test_a_regular_is_not_also_out_before_he_joined():
+    # X misses the first 12 games, then plays; C only joins the team at game 13.
+    lines = []
+    for g in range(1, 31):
+        if g > 12:
+            lines += [line(X, g, 34, 25), line(C, g, 30, 15)]
+        lines += [line(A, g, 20 if g > 12 else 32, 10), line(B, g, 28, 12)]
+    roster = [*ROSTER, PlayerInfo(C, "Guard", "PG", TEAM)]
+    impact = analyze([Season(lines)], TEAM, X, roster)
+    assert all(b.note is None for b in impact.beneficiaries)
+
+
 def test_only_games_before_a_date_are_used():
     impact = analyze([season()], TEAM, X, ROSTER, before=19)
     assert impact.games_missed == 0
@@ -91,12 +103,31 @@ def test_parse_gamelogs_reads_game_splits_only():
     ]
     lines, info = parse_gamelogs(raw)
     assert [(ln.game_id, ln.minutes, ln.pts) for ln in lines] == [(401, 33, 21)]
+    # Early in a season ESPN sends last season's games too; they are not this season's.
+    raw[0]["stats"][0]["seasonId"] = 2026
+    assert parse_gamelogs(raw, 2027)[0] == [] and len(parse_gamelogs(raw, 2026)[0]) == 1
     assert info[X].position == "SF" and info[X].team == TEAM
 
 
-def raw_logs(n_games: int = 30) -> list[dict]:
+def raw_logs(n_games: int = 30, last_season_games: int = 0) -> list[dict]:
     def player(pid, name, pos, minutes):
         stats = []
+        # Last season's games, which ESPN mixes into the current season's reply early on: X sat
+        # them all and Big played more.
+        for g in range(1, last_season_games + 1):
+            m = {X: 0, A: 20, B: 36}[pid]
+            if m:
+                stats.append(
+                    {
+                        "statSplitTypeId": 5,
+                        "externalId": str(500 + g),
+                        "scoringPeriodId": 100 + g,
+                        "seasonId": 2026,
+                        "proTeamId": TEAM,
+                        "statSourceId": 0,
+                        "stats": {"40": m, "0": m * 0.6, "6": m / 5, "13": m / 4, "14": m / 2},
+                    }
+                )
         for g in range(1, n_games + 1):
             m = minutes(g)
             if m:
@@ -124,7 +155,8 @@ def test_injury_impact_endpoint(recorded, fake_espn):
         if request.url.path.endswith("/players"):
             if request.url.params["view"] == "kona_player_news":
                 return httpx.Response(200, json=[{"id": X, "fullName": "Star", "proTeamId": TEAM}])
-            return httpx.Response(200, json=raw_logs() if "/seasons/2027/" in request.url.path else [])
+            mixed = raw_logs(last_season_games=60)
+            return httpx.Response(200, json=mixed if "/seasons/2027/" in request.url.path else [])
         return fake_espn.handler(request)
 
     app = create_app(
@@ -134,7 +166,7 @@ def test_injury_impact_endpoint(recorded, fake_espn):
     assert body.status_code == 200, body.text
     data = body.json()
     assert data["name"] == "Star" and data["games_missed"] == 12
-    assert [b["name"] for b in data["beneficiaries"]] == ["Wing"]
+    assert [b["name"] for b in data["beneficiaries"]] == ["Wing"], "Big's change is inside the noise"
     assert data["beneficiaries"][0]["confidence"] == "strong" and data["track_record"]
 
 

@@ -97,6 +97,7 @@ POSTS_PER_MINUTE = 10
 # A team's game logs: this season's change after every game night, last season's never.
 GAMELOG_TTL = 3 * 3600.0
 MIN_RELEVANT_MINUTES = 15.0
+MIN_MINUTES_GAIN = 1.0  # minutes per game; a smaller rise is not worth listing
 PAST_GAMELOG_TTL = 7 * 24 * 3600.0
 GAMELOG_BATCH = 40  # players per game-log request: every line of a season is ~30 KB a player
 IMPACT_METHOD = (
@@ -388,8 +389,9 @@ def create_app(
         team = int(found[0].get("proTeamId") or 0)
         if team == 0:
             raise HTTPException(404, detail={"code": "no_team", "message": "He isn't on an NBA team."})
-        lines, info = parse_gamelogs(await team_gamelogs(season, team, past=False))
-        last_lines, _ = parse_gamelogs(await team_gamelogs(season - 1, team, past=True))
+        lines, info = parse_gamelogs(await team_gamelogs(season, team, past=False), season)
+        last_lines, _ = parse_gamelogs(await team_gamelogs(season - 1, team, past=True), season - 1)
+        # Only his current teammates, by ESPN's current team for each player.
         roster = [p for p in info.values() if p.team == team]
         impact = await run_in_threadpool(
             analyze_absence, [Season(lines), Season(last_lines, LAST_SEASON_WEIGHT)], team, body.player_id, roster
@@ -404,8 +406,18 @@ def create_app(
             for t in ((raw or {}).get("settings") or {}).get("proTeams", [])
             if t.get("id")
         }
-        # Fantasy-relevant gains only: a real share of minutes, and better per-game value.
-        gainers = [b for b in impact.beneficiaries if b.value > 0 and b.minutes_after >= MIN_RELEVANT_MINUTES][:6]
+        on_team = {p.id for p in roster}
+        # Fantasy-relevant gains only: more minutes (when measured, by more than the error band, since
+        # a change inside the band is noise), a real share of minutes, and better per-game value.
+        gainers = [
+            b
+            for b in impact.beneficiaries
+            if b.player_id in on_team
+            and b.minutes_change >= MIN_MINUTES_GAIN
+            and (b.confidence == "estimate" or b.minutes_change > b.error)
+            and b.minutes_after >= MIN_RELEVANT_MINUTES
+            and b.value > 0
+        ][:6]
         return schemas.InjuryImpact(
             player_id=body.player_id,
             name=str(found[0].get("fullName", "")),
