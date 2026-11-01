@@ -89,6 +89,8 @@ class Analyzer:
         not_for_sale = {pid for pid in not_for_sale_player_ids or [] if pid not in mine}
         self.premium = OwnerPremium(league, self.model, self.perceived, not_for_sale)
         self._sim: SeasonSim | None = None  # drawn on the first what-if, shared by every later one
+        self._today: tuple[float, np.ndarray] | None = None
+        self._after_pickup: dict[tuple[int, int], tuple[float, np.ndarray]] = {}
 
     # ---- helpers -----------------------------------------------------------------------
 
@@ -164,6 +166,24 @@ class Analyzer:
         period_dists = self.period_dists(changed) if moved else None
         return float(self._sim.what_if(moved, dists, period_dists).playoff_pct[self.idx])
 
+    def baseline(self, d: Deal) -> tuple[float, np.ndarray]:
+        """My playoff odds and category win rates that a deal is measured against.
+
+        Today's roster, or my roster after the free pickup when the deal's open spot uses it.
+        """
+        if d.vs_pickup is None:
+            if self._today is None:
+                self._today = (self.playoff_pct(self.dists), self.avg_cat_win(self.idx, self.dists))
+            return self._today
+        add, drop = d.vs_pickup
+        key = (add.id, drop.id)
+        if key not in self._after_pickup:
+            roster = [p for p in self.me.roster if p.id != drop.id] + [add]
+            dists = list(self.dists)
+            dists[self.idx] = self.model.dist(roster)
+            self._after_pickup[key] = (self.playoff_pct(dists, {self.idx: roster}), self.avg_cat_win(self.idx, dists))
+        return self._after_pickup[key]
+
     def trade_idea(
         self, finder: TradeFinder, d: Deal, before: float, after: float, base_cats: np.ndarray
     ) -> schemas.TradeIdea:
@@ -237,12 +257,11 @@ class Analyzer:
     def trades(self, mode: Mode = "fair", span: tuple[str, float, float] | None = None) -> list[schemas.TradeIdea]:
         self._tick(span, 0, 1)
         finder = TradeFinder(self.league, self.model, self.idx, self.keep, mode, premium=self.premium)
-        base_cats = self.avg_cat_win(self.idx, self.dists)
-        before = self.playoff_pct(self.dists)
         ideas = []
         shortlist = finder.shortlist()
         for n, d in enumerate(shortlist):
             self._tick(span, n, len(shortlist))
+            before, base_cats = self.baseline(d)
             after = self.playoff_pct(d.dists, d.rosters)
             # Small category gains can vanish in the full simulation; only keep moves that hold up there.
             if after < before:

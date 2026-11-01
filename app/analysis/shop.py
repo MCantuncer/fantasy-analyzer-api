@@ -205,11 +205,10 @@ class ShopAnalyzer(Analyzer):
     def report(self) -> schemas.ShopReport:
         started = time.perf_counter()
         by_team = {j: self.deals(j) for j in range(len(self.teams)) if j != self.idx}
-        base_cats = self.base_cats
-        before = self.playoff_pct(self.dists)
         offered_ids = {p.id for p in self.offered}
         shown: list[schemas.ShopDeal] = []
         for d in self._to_sim(by_team):
+            before, base_cats = self.baseline(d)
             after = self.playoff_pct(d.dists, d.rosters)
             # Small category gains can vanish in the full simulation; only keep moves that hold up there.
             if after - before < MIN_ODDS_GAIN:
@@ -248,7 +247,7 @@ class ShopAnalyzer(Analyzer):
             team_id=self.me.id,
             team_name=self.me.name,
             offered=[self.ref(p) for p in self.offered],
-            playoff_pct_before=round(before, 3),
+            playoff_pct_before=round(self.playoff_pct(self.dists), 3),
             faab_remaining=self.me.faab_remaining,
             faab_cap=self.faab_cap,
             targets=[

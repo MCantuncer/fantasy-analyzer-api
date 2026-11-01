@@ -171,9 +171,10 @@ class TargetAnalyzer(Analyzer):
                 unique.append(d)
         ideas = []
         for d in unique[:SIM_TOP]:
+            before, base_cats = self.baseline(d)
             after = self.playoff_pct(d.dists, d.rosters)
-            if after >= self.before:
-                ideas.append(self.trade_idea(self.finder, d, self.before, after, self.base_cats))
+            if after >= before:
+                ideas.append(self.trade_idea(self.finder, d, before, after, base_cats))
         if not ideas:
             return []
 
