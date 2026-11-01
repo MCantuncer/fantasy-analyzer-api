@@ -2084,7 +2084,7 @@
     "/api/trade-check": {
       "post": {
         "summary": "Trade Check",
-        "description": "Check a trade idea against today's league: what holds up, what doesn't, and the evidence.\n\nEvery check runs; the ones the quick reasons point at come first.",
+        "description": "Check a trade idea against today's league: what holds up, what doesn't, and the evidence.\n\nEvery check runs; the ones the quick reasons point at come first. When the manager has\ngiven feedback on this deal, the verdicts are kept with it.",
         "operationId": "trade_check_api_trade_check_post",
         "parameters": [
           {
@@ -4614,6 +4614,31 @@
         ],
         "title": "NewsStory"
       },
+      "NoteRead": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "clear",
+              "rant",
+              "unclear"
+            ],
+            "title": "Kind",
+            "description": "clear: maps onto our reasons and checks; rant: venting; unclear: a point no check covers"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "description": "What the note says, in one sentence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "summary"
+        ],
+        "title": "NoteRead"
+      },
       "Notice": {
         "properties": {
           "id": {
@@ -6513,6 +6538,17 @@
             },
             "type": "array",
             "title": "Verdicts"
+          },
+          "read_as": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NoteRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the manager's note was read, when it was"
           }
         },
         "type": "object",

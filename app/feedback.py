@@ -63,6 +63,7 @@ class Feedback:
     created_at: datetime
     checks: list[dict] | None = None  # CheckVerdicts from the last time the checks ran on this deal
     checked_at: datetime | None = None
+    reading: dict | None = None  # how the note was read (app.reader.Reading), None until read
 
 
 SCHEMA = """
@@ -84,6 +85,7 @@ create table if not exists trade_feedback (
 );
 alter table trade_feedback add column if not exists checks jsonb;
 alter table trade_feedback add column if not exists checked_at timestamptz;
+alter table trade_feedback add column if not exists reading jsonb;
 create index if not exists trade_feedback_by_league on trade_feedback (league_id, season, created_at desc);
 """
 
@@ -92,6 +94,8 @@ class FeedbackStore(Protocol):
     def save(self, f: Feedback) -> Feedback: ...
     def mine(self, user_id: int, league_id: int, season: int, limit: int = LIST_LIMIT) -> list[Feedback]: ...
     def record_checks(self, user_id: int, league_id: int, season: int, deal: str, checks: list[dict]) -> int: ...
+    def for_deal(self, user_id: int, league_id: int, season: int, deal: str) -> list[Feedback]: ...
+    def record_reading(self, feedback_id: int, reading: dict) -> None: ...
 
 
 class MemoryFeedbackStore:
@@ -106,7 +110,7 @@ class MemoryFeedbackStore:
         if old is None:
             self._next += 1
         f.created_at = datetime.now(UTC)
-        f.checks, f.checked_at = None, None  # changed feedback waits for a fresh check
+        f.checks, f.checked_at, f.reading = None, None, None  # changed feedback waits for a fresh check and read
         self.rows[key] = f
         return f
 
@@ -121,6 +125,18 @@ class MemoryFeedbackStore:
             f.checks, f.checked_at = checks, now
         return len(hits)
 
+    def for_deal(self, user_id: int, league_id: int, season: int, deal: str) -> list[Feedback]:
+        return [
+            f
+            for (u, lg, s, k), f in self.rows.items()
+            if (u, lg, s) == (user_id, league_id, season) and k.split(":", 1)[1] == deal
+        ]
+
+    def record_reading(self, feedback_id: int, reading: dict) -> None:
+        for f in self.rows.values():
+            if f.id == feedback_id:
+                f.reading = reading
+
     def mine(self, user_id: int, league_id: int, season: int, limit: int = LIST_LIMIT) -> list[Feedback]:
         rows = [f for (u, lg, s, _), f in self.rows.items() if (u, lg, s) == (user_id, league_id, season)]
         return sorted(rows, key=lambda f: f.created_at, reverse=True)[:limit]
@@ -129,7 +145,7 @@ class MemoryFeedbackStore:
 class PostgresFeedbackStore:
     _COLS = (
         "id, user_id, league_id, season, team_id, source, idea_key, rating, reasons, text, idea, "
-        "model_version, created_at, checks, checked_at"
+        "model_version, created_at, checks, checked_at, reading"
     )
 
     def __init__(self, url: str):
@@ -146,7 +162,7 @@ class PostgresFeedbackStore:
                 "reasons, text, idea, model_version) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "on conflict (user_id, league_id, season, idea_key) do update set team_id=excluded.team_id, "
                 "rating=excluded.rating, reasons=excluded.reasons, text=excluded.text, idea=excluded.idea, "
-                "model_version=excluded.model_version, created_at=now(), checks=null, checked_at=null "
+                "model_version=excluded.model_version, created_at=now(), checks=null, checked_at=null, reading=null "
                 f"returning {self._COLS}",
                 (
                     f.user_id,
@@ -181,6 +197,19 @@ class PostgresFeedbackStore:
                 (json.dumps(checks), user_id, league_id, season, deal),
             )
         return cur.rowcount
+
+    def for_deal(self, user_id: int, league_id: int, season: int, deal: str) -> list[Feedback]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"select {self._COLS} from trade_feedback where user_id=%s and league_id=%s and season=%s "
+                "and substr(idea_key, strpos(idea_key, ':') + 1)=%s order by created_at desc",
+                (user_id, league_id, season, deal),
+            ).fetchall()
+        return [Feedback(*r) for r in rows]
+
+    def record_reading(self, feedback_id: int, reading: dict) -> None:
+        with self._connect() as conn:
+            conn.execute("update trade_feedback set reading=%s where id=%s", (json.dumps(reading), feedback_id))
 
 
 def create_feedback_store() -> FeedbackStore:
