@@ -35,6 +35,8 @@ from app.accounts import (
     verify_google,
 )
 from app.analysis import absence
+from app.analysis.checks import TITLES as CHECK_TITLES
+from app.analysis.checks import IdeaChecker, StaleIdea, focus_order
 from app.analysis.daily import trade_of_the_day
 from app.analysis.durability import HISTORY_SEASONS, games_played
 from app.analysis.durability import attach as attach_durability
@@ -1236,6 +1238,53 @@ def create_app(
             return await run_in_threadpool(run)
         except TargetError as exc:
             raise HTTPException(400, detail={"code": exc.code, "message": str(exc)}) from exc
+
+    @app.post(
+        "/api/trade-check",
+        response_model=schemas.TradeCheck,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def trade_check(
+        body: schemas.TradeCheckRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.TradeCheck:
+        """Check a trade idea against today's league: what holds up, what doesn't, and the evidence.
+
+        Every check runs; the ones the quick reasons point at come first.
+        """
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        seat = await linked(authorization, body.league_id, season, required=True)
+        if seat.team_id != body.team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        lg = await load_league(body.league_id, season, creds, with_fa=True)
+        if lg.team(body.team_id) is None:
+            raise HTTPException(
+                404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
+            )
+        summary = league_summary(lg)
+        if not summary.supported:
+            raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
+        order = focus_order(body.reasons)
+
+        def run() -> schemas.TradeCheck:
+            try:
+                checker = IdeaChecker(lg, body.team_id, body.idea, body.keep_player_ids)
+            except StaleIdea as exc:
+                stale = [
+                    schemas.CheckVerdict(check=c, title=CHECK_TITLES[c], status="cant_check", evidence=str(exc))
+                    for c in order
+                ]
+                return schemas.TradeCheck(stale=str(exc), verdicts=stale)
+            return schemas.TradeCheck(
+                playoff_pct_before=round(checker.before, 3),
+                playoff_pct_after=round(checker.after, 3),
+                verdicts=checker.run(order),
+            )
+
+        return await run_in_threadpool(run)
 
     async def score_day(season: int, day: int, league_id: int, creds: EspnCredentials | None, sched) -> dict:
         """One day's games. Finished days come from the store; a day in progress is cached for a minute."""

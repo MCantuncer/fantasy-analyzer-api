@@ -2081,6 +2081,115 @@
         }
       }
     },
+    "/api/trade-check": {
+      "post": {
+        "summary": "Trade Check",
+        "description": "Check a trade idea against today's league: what holds up, what doesn't, and the evidence.\n\nEvery check runs; the ones the quick reasons point at come first.",
+        "operationId": "trade_check_api_trade_check_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeCheckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeCheck"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/scores": {
       "post": {
         "summary": "Scores",
@@ -2937,6 +3046,41 @@
           "tag"
         ],
         "title": "CategoryOutlook"
+      },
+      "CheckVerdict": {
+        "properties": {
+          "check": {
+            "type": "string",
+            "title": "Check",
+            "description": "free_pickup, noise, lateral_swap, build_conflict, small_sample, injury, ..."
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "not_supported",
+              "cant_check"
+            ],
+            "title": "Status"
+          },
+          "evidence": {
+            "type": "string",
+            "title": "Evidence",
+            "description": "What the data shows, in a sentence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "check",
+          "title",
+          "status",
+          "evidence"
+        ],
+        "title": "CheckVerdict"
       },
       "DeletePostRequest": {
         "properties": {
@@ -6301,6 +6445,119 @@
           "record"
         ],
         "title": "TeamSummary"
+      },
+      "TradeCheck": {
+        "properties": {
+          "playoff_pct_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Pct Before",
+            "description": "Today's odds, None when the idea is stale"
+          },
+          "playoff_pct_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Pct After"
+          },
+          "stale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stale",
+            "description": "Why the idea can't be rebuilt from today's rosters"
+          },
+          "verdicts": {
+            "items": {
+              "$ref": "#/components/schemas/CheckVerdict"
+            },
+            "type": "array",
+            "title": "Verdicts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "verdicts"
+        ],
+        "title": "TradeCheck"
+      },
+      "TradeCheckRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          },
+          "idea": {
+            "$ref": "#/components/schemas/TradeIdea",
+            "description": "The idea as it was shown"
+          },
+          "reasons": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "fake_gain",
+                "wont_accept",
+                "bad_for_build",
+                "player_concern",
+                "already_tried",
+                "other"
+              ]
+            },
+            "type": "array",
+            "maxItems": 6,
+            "title": "Reasons",
+            "description": "Quick reasons: their checks run first"
+          },
+          "keep_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Keep Player Ids",
+            "description": "Players never suggested as drops"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id",
+          "idea"
+        ],
+        "title": "TradeCheckRequest"
       },
       "TradeFeedback": {
         "properties": {

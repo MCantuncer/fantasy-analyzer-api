@@ -825,3 +825,26 @@ class TradeFeedbackList(BaseModel):
 
 class TradeFeedbackListRequest(LeagueRequest):
     team_id: int = Field(gt=0)
+
+
+class TradeCheckRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+    idea: TradeIdea = Field(description="The idea as it was shown")
+    reasons: list[FeedbackReason] = Field(
+        default_factory=list, max_length=6, description="Quick reasons: their checks run first"
+    )
+    keep_player_ids: list[int] = Field(default_factory=list, description="Players never suggested as drops")
+
+
+class CheckVerdict(BaseModel):
+    check: str = Field(description="free_pickup, noise, lateral_swap, build_conflict, small_sample, injury, ...")
+    title: str
+    status: Literal["confirmed", "not_supported", "cant_check"]
+    evidence: str = Field(description="What the data shows, in a sentence")
+
+
+class TradeCheck(BaseModel):
+    playoff_pct_before: float | None = Field(default=None, description="Today's odds, None when the idea is stale")
+    playoff_pct_after: float | None = None
+    stale: str | None = Field(default=None, description="Why the idea can't be rebuilt from today's rosters")
+    verdicts: list[CheckVerdict]
