@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import numpy as np
@@ -25,6 +26,12 @@ PICKUP_VIA_TRADE = 2  # at most this many "trade X to open a spot" ideas
 MIN_SAMPLE_GAMES = 5  # a free agent with no projection or last season needs this many games
 LOCKED, LOST = 0.70, 0.30
 SUPPORTED_SCORING = {"H2H_CATEGORY", "H2H_MOST_CATEGORIES"}
+# Share of a report's run time each step takes, measured on League A: (stage, start, end).
+FAIR_SPAN = ("Screening trades", 0.05, 0.60)
+EDGE_SPAN = ("Screening edge trades", 0.60, 0.80)
+PICKUP_SPAN = ("Screening pickups", 0.80, 0.94)
+
+Progress = Callable[[str, float], None]
 
 
 def record(t: Team) -> str:
@@ -62,8 +69,10 @@ class Analyzer:
         team_id: int,
         keep_player_ids: list[int] | None = None,
         not_for_sale_player_ids: list[int] | None = None,
+        progress: Progress | None = None,
     ):
         self.league = league
+        self.progress = progress
         self.model = CategoryModel(league)
         self.teams = league.teams
         self.idx = next(i for i, t in enumerate(self.teams) if t.id == team_id)
@@ -96,6 +105,12 @@ class Analyzer:
             games_out=round(p.games_out, 1) if p.games_out is not None else None,
             expected_back=self.model.back_date(p),
         )
+
+    def _tick(self, span: tuple[str, float, float] | None, done: int, total: int) -> None:
+        """Report how far through ``span`` the work is, for callers showing a progress bar."""
+        if self.progress is not None and span is not None:
+            stage, lo, hi = span
+            self.progress(stage, lo + (hi - lo) * (done / total if total else 1.0))
 
     def avg_cat_win(self, i: int, dists: list[Dist]) -> np.ndarray:
         """(C,) average weekly win probability per category against the rest of the league."""
@@ -194,12 +209,15 @@ class Analyzer:
             )
         return out
 
-    def trades(self, mode: Mode = "fair") -> list[schemas.TradeIdea]:
+    def trades(self, mode: Mode = "fair", span: tuple[str, float, float] | None = None) -> list[schemas.TradeIdea]:
+        self._tick(span, 0, 1)
         finder = TradeFinder(self.league, self.model, self.idx, self.keep, mode, premium=self.premium)
         base_cats = self.avg_cat_win(self.idx, self.dists)
         before = self.playoff_pct(self.dists)
         ideas = []
-        for d in finder.shortlist():
+        shortlist = finder.shortlist()
+        for n, d in enumerate(shortlist):
+            self._tick(span, n, len(shortlist))
             after = self.playoff_pct(d.dists, d.rosters)
             # Small category gains can vanish in the full simulation; only keep moves that hold up there.
             if after < before:
@@ -209,7 +227,8 @@ class Analyzer:
         ideas.sort(key=lambda t: t.acceptance * (t.playoff_pct_after - t.playoff_pct_before), reverse=True)
         return ideas[:TRADE_RESULTS]
 
-    def pickups(self) -> list[schemas.PickupIdea]:
+    def pickups(self, span: tuple[str, float, float] | None = None) -> list[schemas.PickupIdea]:
+        self._tick(span, 0, 1)
         base = self.model.strength(self.idx, self.dists)
         base_cats = self.avg_cat_win(self.idx, self.dists)
         # Only players with no trade value are ever released. A swap that needs a
@@ -241,7 +260,9 @@ class Analyzer:
         traded = [c for c in traded if c[0] > top_release + 0.05][:PICKUP_VIA_TRADE]
         before = self.playoff_pct(self.dists)
         ideas = []
-        for gain, fa, drop, dists, via_trade, roster in released + traded:
+        to_sim = released + traded
+        for n, (gain, fa, drop, dists, via_trade, roster) in enumerate(to_sim):
+            self._tick(span, n, len(to_sim))
             cats = self.avg_cat_win(self.idx, dists) - base_cats
             ideas.append(
                 schemas.PickupIdea(
@@ -279,6 +300,11 @@ class Analyzer:
         ]
         return sorted(rows, key=lambda r: r.mean_rank)
 
+    def _season_step(self) -> list[schemas.SeasonRow]:
+        if self.progress is not None:
+            self.progress("Simulating the season", PICKUP_SPAN[2])
+        return self.season()
+
     def league_rosters(self) -> list[schemas.TeamRoster]:
         """Other teams' players with how much each would help you, for the trade-for picker."""
         cuts = droppable(self.me.roster, self.keep)
@@ -310,10 +336,10 @@ class Analyzer:
             roster=[self.ref(p) for p in roster],
             categories=self.categories(),
             builds=self.builds(),
-            trades=self.trades(),
-            edge_trades=self.trades("edge"),
-            pickups=self.pickups(),
-            season=self.season(),
+            trades=self.trades(span=FAIR_SPAN),
+            edge_trades=self.trades("edge", span=EDGE_SPAN),
+            pickups=self.pickups(span=PICKUP_SPAN),
+            season=self._season_step(),
             league_rosters=self.league_rosters(),
             faab_remaining=self.me.faab_remaining,
             waiver_priority=self.me.waiver_priority,

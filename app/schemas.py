@@ -215,6 +215,16 @@ class ErrorBody(BaseModel):
     message: str
 
 
+class AnalysisJob(BaseModel):
+    """A team's analysis running in the background. Poll with the same request until it is done."""
+
+    status: Literal["running", "done", "failed"]
+    progress: float = Field(ge=0, le=1, description="Rough share of the work done, 0 to 1")
+    stage: str = ""
+    report: AnalysisReport | None = None
+    error: ErrorBody | None = None
+
+
 class TradeSide(BaseModel):
     team_id: int
     team_name: str

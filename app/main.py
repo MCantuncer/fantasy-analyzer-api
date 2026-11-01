@@ -101,9 +101,24 @@ IMPACT_TRACK_RECORD = (
 )
 # While a game is on, one ESPN call a minute serves every visitor.
 LIVE_SCORES_TTL = 60.0
+# How long a finished analysis job stays around for its last poll (the report itself is cached).
+ANALYSIS_JOB_KEEP = 120.0
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
 NOT_LINKED = {"code": "not_linked", "message": "Verify your team in this league first."}
 NOT_YOUR_TEAM = {"code": "not_your_team", "message": "Only this team's verified manager can see its analysis."}
+
+
+class AnalysisProgress:
+    """A background analysis: its task, and how far along it is (written from the worker thread)."""
+
+    def __init__(self) -> None:
+        self.task: asyncio.Task = None  # type: ignore[assignment]
+        self.progress = 0.0
+        self.stage = "Loading your league"
+
+    def update(self, stage: str, progress: float) -> None:
+        self.stage = stage
+        self.progress = max(self.progress, min(progress, 0.99))
 
 
 def current_season(now: datetime | None = None) -> int:
@@ -153,6 +168,7 @@ def create_app(
     app.state.store = store or create_store()
     app.state.daily = TTLCache(36 * 3600)
     app.state.daily_jobs = {}
+    app.state.analysis_jobs: dict[tuple, AnalysisProgress] = {}
     app.state.social = social or create_social_store()
     app.state.accounts = accounts or create_account_store()
     app.state.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip() or None
@@ -502,6 +518,69 @@ def create_app(
         lg = await load_league(body.league_id, body.season or current_season(), creds, with_fa=False)
         return league_summary(lg)
 
+    async def analysis_key(
+        body: schemas.AnalyzeRequest, authorization: str | None, creds: EspnCredentials | None
+    ) -> tuple:
+        """Check the caller may see this team's analysis and return its cache key."""
+        season = body.season or current_season()
+        # A team's analysis is for its verified manager only.
+        seat = await linked(authorization, body.league_id, season, required=True)
+        if seat.team_id != body.team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        return (
+            body.league_id,
+            season,
+            body.team_id,
+            tuple(sorted(body.keep_player_ids)),
+            tuple(sorted(body.not_for_sale_player_ids)),
+            credentials_key(creds),
+        )
+
+    async def build_report(
+        body: schemas.AnalyzeRequest, creds: EspnCredentials | None, key: tuple, job: AnalysisProgress
+    ) -> schemas.AnalysisReport:
+        season = key[1]
+        lg = await load_league(body.league_id, season, creds, with_fa=True)
+        if lg.team(body.team_id) is None:
+            raise HTTPException(
+                404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
+            )
+        summary = league_summary(lg)
+        if not summary.supported:
+            raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
+        job.update("Reading rosters", 0.02)
+        report = await run_in_threadpool(
+            lambda: Analyzer(
+                lg, body.team_id, body.keep_player_ids, body.not_for_sale_player_ids, progress=job.update
+            ).report()
+        )
+        app.state.reports.set(key, report)
+        return report
+
+    def analysis_job(
+        body: schemas.AnalyzeRequest, creds: EspnCredentials | None, key: tuple, retry_failed: bool = False
+    ) -> AnalysisProgress:
+        """One run per team and settings at a time, however many tabs or refreshes ask for it."""
+        job = app.state.analysis_jobs.get(key)
+        failed = job is not None and job.task.done() and (job.task.cancelled() or job.task.exception() is not None)
+        if job is None or (failed and retry_failed):
+            job = AnalysisProgress()
+            job.task = asyncio.create_task(build_report(body, creds, key, job))
+            app.state.analysis_jobs[key] = job
+
+            def forget() -> None:
+                if app.state.analysis_jobs.get(key) is job:
+                    del app.state.analysis_jobs[key]
+
+            def done(task: asyncio.Task) -> None:
+                if not task.cancelled():
+                    task.exception()  # read here so a failure nobody polls for isn't logged as lost
+                # Keep a finished job briefly so the next poll can pick up its result or error.
+                asyncio.get_running_loop().call_later(ANALYSIS_JOB_KEEP, forget)
+
+            job.task.add_done_callback(done)
+        return job
+
     @app.post(
         "/api/analyze",
         response_model=schemas.AnalysisReport,
@@ -513,36 +592,50 @@ def create_app(
         x_espn_s2: str | None = Header(default=None),
         x_espn_swid: str | None = Header(default=None),
     ) -> schemas.AnalysisReport:
+        """The whole analysis in one (slow) request. Prefer /api/analyze/job, which never blocks."""
         creds = read_credentials(x_espn_s2, x_espn_swid)
-        season = body.season or current_season()
-        # A team's analysis is for its verified manager only.
-        seat = await linked(authorization, body.league_id, season, required=True)
-        if seat.team_id != body.team_id:
-            raise HTTPException(403, detail=NOT_YOUR_TEAM)
-        key = (
-            body.league_id,
-            season,
-            body.team_id,
-            tuple(sorted(body.keep_player_ids)),
-            tuple(sorted(body.not_for_sale_player_ids)),
-            credentials_key(creds),
-        )
+        key = await analysis_key(body, authorization, creds)
         cached = app.state.reports.get(key)
         if cached is not None:
             return cached
-        lg = await load_league(body.league_id, season, creds, with_fa=True)
-        if lg.team(body.team_id) is None:
-            raise HTTPException(
-                404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
-            )
-        summary = league_summary(lg)
-        if not summary.supported:
-            raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
-        report = await run_in_threadpool(
-            lambda: Analyzer(lg, body.team_id, body.keep_player_ids, body.not_for_sale_player_ids).report()
-        )
-        app.state.reports.set(key, report)
-        return report
+        return await asyncio.shield(analysis_job(body, creds, key, retry_failed=True).task)
+
+    @app.post(
+        "/api/analyze/job",
+        response_model=schemas.AnalysisJob,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def analyze_job(
+        body: schemas.AnalyzeRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.AnalysisJob:
+        """Start the team's analysis in the background, or say how far along it is.
+
+        Answers at once. Call again with the same body (every couple of seconds) until
+        ``status`` is ``done`` (the report is included) or ``failed``.
+        """
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        key = await analysis_key(body, authorization, creds)
+        cached = app.state.reports.get(key)
+        if cached is not None:
+            return schemas.AnalysisJob(status="done", progress=1.0, stage="Done", report=cached)
+        job = analysis_job(body, creds, key)
+        if not job.task.done():
+            return schemas.AnalysisJob(status="running", progress=job.progress, stage=job.stage)
+        app.state.analysis_jobs.pop(key, None)  # a retry after a failure starts afresh
+        exc = job.task.exception()
+        if exc is None:
+            return schemas.AnalysisJob(status="done", progress=1.0, stage="Done", report=job.task.result())
+        if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
+            error = schemas.ErrorBody(**exc.detail)
+        elif isinstance(exc, EspnError):
+            error = schemas.ErrorBody(code=exc.code, message=str(exc))
+        else:
+            logging.getLogger(__name__).error("analysis failed", exc_info=exc)
+            error = schemas.ErrorBody(code="analysis_failed", message="The analysis failed. Try again.")
+        return schemas.AnalysisJob(status="failed", progress=job.progress, stage=job.stage, error=error)
 
     @app.post(
         "/api/shop",

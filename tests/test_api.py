@@ -1,4 +1,5 @@
 import logging
+import time
 
 import httpx
 from fastapi.testclient import TestClient
@@ -30,6 +31,55 @@ def test_analyze_and_cache(client, fake_espn):
     again = client.post("/api/analyze", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM, "season": 2027})
     assert again.status_code == 200
     assert fake_espn.calls == calls  # served from cache
+
+
+def test_analysis_job_runs_in_the_background(client, fake_espn):
+    body = {"league_id": LEAGUE_ID, "team_id": MY_TEAM, "season": 2027}
+    with client:  # one event loop for every request, as on the real server
+        first = client.post("/api/analyze/job", json=body)
+        assert first.status_code == 200
+        job = first.json()
+        assert job["status"] in {"running", "done"} and 0 <= job["progress"] <= 1
+        seen = [job["progress"]]
+        deadline = time.monotonic() + 120
+        while job["status"] == "running" and time.monotonic() < deadline:
+            time.sleep(0.2)
+            job = client.post("/api/analyze/job", json=body).json()
+            seen.append(job["progress"])
+        assert job["status"] == "done" and job["progress"] == 1.0
+        assert job["report"]["team_name"] == "Kucukesat Aspavas"
+        assert seen == sorted(seen)  # progress never goes backwards
+        # The blocking endpoint now serves the same cached report.
+        calls = fake_espn.calls
+        assert client.post("/api/analyze", json=body).json()["generated_at"] == job["report"]["generated_at"]
+        assert fake_espn.calls == calls
+
+
+def test_analysis_job_is_only_for_the_verified_manager(client):
+    r = client.post("/api/analyze/job", json={"league_id": LEAGUE_ID, "team_id": 8, "season": 2027})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "not_your_team"
+    r = TestClient(client.app).post("/api/analyze/job", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM})
+    assert r.status_code == 401
+
+
+def test_failed_analysis_job_reports_the_error_then_retries(client, monkeypatch):
+    import app.main as main
+
+    def boom(self):
+        raise RuntimeError("secret internals")
+
+    monkeypatch.setattr(main.Analyzer, "report", boom)
+    body = {"league_id": LEAGUE_ID, "team_id": MY_TEAM, "season": 2027}
+    with client:
+        job = client.post("/api/analyze/job", json=body).json()
+        deadline = time.monotonic() + 30
+        while job["status"] == "running" and time.monotonic() < deadline:
+            time.sleep(0.1)
+            job = client.post("/api/analyze/job", json=body).json()
+        assert job["status"] == "failed" and job["error"]["code"] == "analysis_failed"
+        assert "secret" not in str(job)
+        # The next call starts a fresh run.
+        assert client.post("/api/analyze/job", json=body).json()["status"] in {"running", "failed"}
 
 
 def test_analysis_is_only_for_the_verified_manager(client, fake_espn):
