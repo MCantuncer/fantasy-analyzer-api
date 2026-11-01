@@ -455,6 +455,23 @@ class OverviewTeam(BaseModel):
     record: str
     has_manager: bool = Field(description="Some account has verified it")
     mine: bool = False
+    wins: int = 0
+    losses: int = 0
+    ties: int = 0
+    seed: int | None = Field(default=None, description="ESPN's current standings place, 1 = first")
+    games_back: float | None = Field(default=None, description="Category wins behind the leader")
+
+
+class CategoryScore(BaseModel):
+    stat: str = Field(description="Category code, e.g. PTS or FG%")
+    value: float = Field(description="Running total this week; a fraction for FG% and FT%")
+    result: str = Field(description="W, L or T for this side so far")
+
+
+class WeekGames(BaseModel):
+    today: int = Field(description="Games today (US date) by rostered players outside IR, started or not")
+    left: int = Field(description="Games this week that have not tipped off yet")
+    total: int = Field(description="Every game this week")
 
 
 class MatchupSide(BaseModel):
@@ -462,6 +479,8 @@ class MatchupSide(BaseModel):
     wins: int
     losses: int
     ties: int
+    categories: list[CategoryScore] = Field(default_factory=list, description="Empty when ESPN sent none")
+    games: WeekGames | None = Field(default=None, description="None when rosters or the NBA calendar are unavailable")
 
 
 class OverviewMatchup(BaseModel):
@@ -492,6 +511,9 @@ class LeagueOverview(BaseModel):
     season: int
     name: str
     matchup_period: int
+    week_start: str | None = Field(default=None, description="Monday of this matchup week, ISO date")
+    week_end: str | None = Field(default=None, description="Sunday of this matchup week, ISO date")
+    playoff_teams: int | None = None
     teams: list[OverviewTeam]
     matchups: list[OverviewMatchup]
     mvp: MvpCandidate | None = Field(default=None, description="The team with the best category record this week")

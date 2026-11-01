@@ -3055,6 +3055,32 @@
         ],
         "title": "CategoryOutlook"
       },
+      "CategoryScore": {
+        "properties": {
+          "stat": {
+            "type": "string",
+            "title": "Stat",
+            "description": "Category code, e.g. PTS or FG%"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "Running total this week; a fraction for FG% and FT%"
+          },
+          "result": {
+            "type": "string",
+            "title": "Result",
+            "description": "W, L or T for this side so far"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stat",
+          "value",
+          "result"
+        ],
+        "title": "CategoryScore"
+      },
       "CheckVerdict": {
         "properties": {
           "check": {
@@ -3848,6 +3874,41 @@
             "type": "integer",
             "title": "Matchup Period"
           },
+          "week_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week Start",
+            "description": "Monday of this matchup week, ISO date"
+          },
+          "week_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week End",
+            "description": "Sunday of this matchup week, ISO date"
+          },
+          "playoff_teams": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Teams"
+          },
           "teams": {
             "items": {
               "$ref": "#/components/schemas/OverviewTeam"
@@ -4120,6 +4181,25 @@
           "ties": {
             "type": "integer",
             "title": "Ties"
+          },
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/CategoryScore"
+            },
+            "type": "array",
+            "title": "Categories",
+            "description": "Empty when ESPN sent none"
+          },
+          "games": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WeekGames"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None when rosters or the NBA calendar are unavailable"
           }
         },
         "type": "object",
@@ -4705,6 +4785,45 @@
             "type": "boolean",
             "title": "Mine",
             "default": false
+          },
+          "wins": {
+            "type": "integer",
+            "title": "Wins",
+            "default": 0
+          },
+          "losses": {
+            "type": "integer",
+            "title": "Losses",
+            "default": 0
+          },
+          "ties": {
+            "type": "integer",
+            "title": "Ties",
+            "default": 0
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed",
+            "description": "ESPN's current standings place, 1 = first"
+          },
+          "games_back": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Games Back",
+            "description": "Category wins behind the leader"
           }
         },
         "type": "object",
@@ -7413,6 +7532,32 @@
           "voter"
         ],
         "title": "VoteRequest"
+      },
+      "WeekGames": {
+        "properties": {
+          "today": {
+            "type": "integer",
+            "title": "Today",
+            "description": "Games today (US date) by rostered players outside IR, started or not"
+          },
+          "left": {
+            "type": "integer",
+            "title": "Left",
+            "description": "Games this week that have not tipped off yet"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Every game this week"
+          }
+        },
+        "type": "object",
+        "required": [
+          "today",
+          "left",
+          "total"
+        ],
+        "title": "WeekGames"
       }
     }
   }
