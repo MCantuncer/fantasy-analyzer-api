@@ -47,8 +47,10 @@ from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
 from app.espn.parse import League, parse_league
 from app.feed import PlayerName, Transaction, parse_players, parse_transactions
+from app.news.extract import timeline
 from app.news.facts import PlayerState
-from app.news.service import NewsService
+from app.news.service import KEEP as NEWS_KEEP
+from app.news.service import NewsService, parse_iso
 from app.news.service import iso as news_iso
 from app.news.sources import BY_ID as NEWS_SOURCES
 from app.news.sources import SOURCES as NEWS_SOURCE_LIST
@@ -254,7 +256,26 @@ def create_app(
             )
         except EspnError:
             return  # the flat days-out guess stays
-        absence.attach(league, {pid: played.get(pid, set()) for pid in out}, last_run)
+        absence.attach(league, {pid: played.get(pid, set()) for pid in out}, last_run, reported_timelines(league, out))
+
+    def reported_timelines(league: League, ids: list[int]) -> dict[int, absence.Report]:
+        """The latest stored news item giving a timeline for each of these players."""
+        cal = league.calendar
+        if cal is None:
+            return {}
+        wanted, out = set(ids), {}
+        now = app.state.now()
+        items = sorted(app.state.store.news_items(news_iso(now - NEWS_KEEP)), key=lambda d: d["published"])
+        for d in items:
+            if d.get("kind") != "injury":
+                continue
+            found = timeline(f"{d.get('title', '')}. {d.get('summary', '')}")
+            if found is None:
+                continue
+            day = (parse_iso(d["published"]).date() - cal.opening).days + 1
+            for pid in wanted.intersection(d.get("player_ids") or []):
+                out[pid] = absence.Report(day, found, d.get("title", ""))
+        return out
 
     async def player_gamelogs(season: int, ids: list[int], past: bool) -> list[dict]:
         cache = app.state.past_gamelogs if past else app.state.gamelogs
