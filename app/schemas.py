@@ -793,3 +793,26 @@ class NewsPage(BaseModel):
     trending: list[TrendingPlayer]
     updated_at: str | None = Field(default=None, description="Last time every source was checked, UTC")
     refreshing: bool = Field(description="A check of every source is running; ask again in a minute")
+
+
+class TradeCheckRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+    idea: TradeIdea = Field(description="The idea as it was shown")
+    reasons: list[Literal["fake_gain", "wont_accept", "bad_for_build", "player_concern", "already_tried", "other"]] = (
+        Field(default_factory=list, max_length=6, description="Quick reasons: their checks run first")
+    )
+    keep_player_ids: list[int] = Field(default_factory=list, description="Players never suggested as drops")
+
+
+class CheckVerdict(BaseModel):
+    check: str = Field(description="free_pickup, noise, lateral_swap, build_conflict, small_sample, injury, ...")
+    title: str
+    status: Literal["confirmed", "not_supported", "cant_check"]
+    evidence: str = Field(description="What the data shows, in a sentence")
+
+
+class TradeCheck(BaseModel):
+    playoff_pct_before: float | None = Field(default=None, description="Today's odds, None when the idea is stale")
+    playoff_pct_after: float | None = None
+    stale: str | None = Field(default=None, description="Why the idea can't be rebuilt from today's rosters")
+    verdicts: list[CheckVerdict]

@@ -143,6 +143,7 @@ All settings are optional for local development.
 | POST | `/api/posts` | `{league_id, season?, body, target?}` | Posts to the chat, or replies when `target` is set |
 | POST | `/api/posts/delete` | `{league_id, season?, post_id}` | Deletes your own post |
 | POST | `/api/reactions` | `{league_id, season?, target, reaction, on?}` | Toggles `steal`, `smart`, `overpay`, `lol`, or a `won:<team id>` trade vote |
+| POST | `/api/trade-check` | `{league_id, team_id, season?, idea, reasons?, keep_player_ids?}` | Checks a trade idea against today's league: whether a free pickup carries the gain, simulation noise, a sideways talent swap, lost categories, thin samples, injuries; each with its evidence, the quick reasons' checks first |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
 | POST | `/api/scores` | `{league_id, season?, day?, team_id?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
 | POST | `/api/injury-impact` | `{player_id, league_id?, season?}` | Teammates who gain while a player is out, from games his team played without him, each tagged with his fantasy team in `league_id` |
