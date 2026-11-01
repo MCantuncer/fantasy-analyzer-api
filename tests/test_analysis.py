@@ -132,3 +132,23 @@ def test_banked_stats_count_in_the_week_being_played(league):
     flat = simulate_season(banked, a.dists, a.model.reverse, n_sims=1000)
     plain = simulate_season(league, a.dists, a.model.reverse, n_sims=1000)
     assert np.allclose(flat.wins, plain.wins)
+
+
+def test_playoff_weeks_count_a_player_back_by_then(league):
+    from dataclasses import replace as dc_replace
+
+    a = Analyzer(league, 3)
+    assert a.playoff_periods() and min(a.playoff_periods()) > league.regular_season_periods
+    me = a.teams[a.idx]
+    star = max(me.roster, key=a.model.value)
+    hurt = dc_replace(star, id=-star.id, injury_status="OUT", games_out=20.0)  # new id: models cache by id
+    roster = [hurt if p is star else p for p in me.roster]
+    b = Analyzer(league, 3)
+    season_drop = b.model.strength(b.idx, b.dists) - b.model.strength(
+        b.idx, [b.model.dist(roster) if i == b.idx else d for i, d in enumerate(b.dists)]
+    )
+    playoff_drop = b.playoff_strength(b.idx) - b.playoff_strength(b.idx, {b.idx: roster})
+    # Out for 20 games costs regular-season weeks, not the playoff weeks in March.
+    assert season_drop > 0.01
+    assert abs(playoff_drop) < 1e-9
+    assert all(r.playoff_week_cats is not None for r in a.season())

@@ -27,6 +27,10 @@ LOCKED, LOST = 0.70, 0.30
 SUPPORTED_SCORING = {"H2H_CATEGORY", "H2H_MOST_CATEGORIES"}
 
 
+def _round(x: float | None, digits: int = 2) -> float | None:
+    return None if x is None else round(x, digits)
+
+
 def record(t: Team) -> str:
     return f"{t.wins}-{t.losses}-{t.ties}"
 
@@ -109,6 +113,24 @@ class Analyzer:
         periods = sorted({m.period for m in self.league.schedule if m.winner == "UNDECIDED"})
         return {p: [self.model.dist(r, p) for r in rosters] for p in periods}
 
+    def playoff_periods(self) -> list[int]:
+        """The league's playoff matchup periods, from the NBA calendar."""
+        if not self.model.cal:
+            return []
+        return sorted(p for p in self.model.cal.period_days if p > self.league.regular_season_periods)
+
+    def playoff_strength(self, i: int, changed: dict[int, list[Player]] | None = None) -> float | None:
+        """Team ``i``'s expected categories won per playoff week against an average team.
+
+        Each playoff week is projected on its real games (who plays, who's back from injury),
+        so a player out until then counts fully and a team with few games that week counts less.
+        """
+        periods = self.playoff_periods()
+        if not periods:
+            return None
+        rosters = [(changed or {}).get(j, t.roster) for j, t in enumerate(self.teams)]
+        return float(np.mean([self.model.strength(i, [self.model.dist(r, p) for r in rosters]) for p in periods]))
+
     def playoff_pct(
         self, dists: list[Dist], changed: dict[int, list[Player]] | None = None, sims: int = WHAT_IF_SIMS
     ) -> float:
@@ -151,6 +173,8 @@ class Analyzer:
             reasons=d.reasons,
             playoff_pct_before=round(before, 3),
             playoff_pct_after=round(after, 3),
+            playoff_week_cats_before=_round(self.playoff_strength(self.idx)),
+            playoff_week_cats_after=_round(self.playoff_strength(self.idx, d.rosters)),
             category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
         )
 
@@ -274,6 +298,7 @@ class Analyzer:
                 playoff_pct=round(float(res.playoff_pct[i]), 3),
                 first_seed_pct=round(float(res.first_seed_pct[i]), 3),
                 mean_rank=round(float(res.mean_rank[i]), 2),
+                playoff_week_cats=_round(self.playoff_strength(i)),
             )
             for i, t in enumerate(self.teams)
         ]

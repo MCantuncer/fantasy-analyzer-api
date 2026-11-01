@@ -139,6 +139,11 @@ class TradeIdea(BaseModel):
     reasons: list[str] = Field(description="Why it can work for both sides: sell high, buy low, their punts, timing")
     playoff_pct_before: float
     playoff_pct_after: float
+    playoff_week_cats_before: float | None = Field(
+        default=None,
+        description="My expected categories won per fantasy playoff week against an average team, before the deal",
+    )
+    playoff_week_cats_after: float | None = Field(default=None, description="The same after the deal")
     category_changes: dict[str, float] = Field(description="Change in my weekly win % per category")
 
 
@@ -165,6 +170,10 @@ class SeasonRow(BaseModel):
     playoff_pct: float
     first_seed_pct: float
     mean_rank: float
+    playoff_week_cats: float | None = Field(
+        default=None,
+        description="Expected categories won per fantasy playoff week against an average team, on that week's games",
+    )
 
 
 class Assumptions(BaseModel):
