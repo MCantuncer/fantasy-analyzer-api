@@ -865,3 +865,38 @@ class TradeCheck(BaseModel):
     stale: str | None = Field(default=None, description="Why the idea can't be rebuilt from today's rosters")
     verdicts: list[CheckVerdict]
     read_as: NoteRead | None = Field(default=None, description="How the manager's note was read, when it was")
+
+
+TradeRuleKind = Literal["protect_category", "skip_team", "no_injury_prone"]
+
+
+class TradeRuleRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+    kind: TradeRuleKind
+    value: str = Field(
+        default="", max_length=40, description="Category name for protect_category, team id for skip_team, else empty"
+    )
+    team_name: str = Field(default="", max_length=60, description="For skip_team: the team's name, for the label")
+    why: str = Field(default="", max_length=200, description="Where the rule came from, in a sentence")
+
+
+class TradeRule(BaseModel):
+    id: int
+    kind: TradeRuleKind
+    value: str
+    label: str = Field(description="How the rule reads, e.g. 'Protect TO'")
+    why: str
+    created_at: str
+
+
+class TradeRuleList(BaseModel):
+    rules: list[TradeRule]
+
+
+class TradeRuleListRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+
+
+class TradeRuleDeleteRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+    rule_id: int = Field(gt=0)
