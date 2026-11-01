@@ -67,9 +67,23 @@ SPECTACULAR_FLOOR = 2 * MIN_MY_GAIN
 KEYSTONE_LOSS = 0.10  # weekly win rate lost in that category
 KEYSTONE_PENALTY = 0.10  # acceptance
 
+# Vision mode: buy a player for what he'll be worth later, while his owner sees what he's
+# worth now. Targets are off to a slow start the projection expects to fade: on League A's
+# 2025 and 2026 seasons, players flagged this way at weeks 4-12 went on to play about as
+# well as projected, nowhere near their season so far (scripts/vision_backtest.py). The
+# deal may cost me a little this week, as long as I'm clearly stronger in the playoff weeks.
+#
+# Injured stars aren't targets yet: the same replay shows good players coming back from an
+# absence play about 1.1-2.3 fewer z-points per game than projected (beyond the usual
+# regression) and play 20-40% fewer games than expected, so the model would overpay for them.
+VISION_MIN_GAMES = 5  # games played before a slow start counts
+VISION_SLOW_GAP = 1.0  # projected value above his season so far (z-scores summed over categories)
+VISION_MIN_PLAYOFF_GAIN = 0.10  # expected categories won per playoff week
+VISION_MIN_SEASON_GAIN = -0.15  # what the deal may cost before the playoffs, per week on average
+
 LIKELY, POSSIBLE = 0.6, 0.4
 
-Mode = Literal["fair", "edge"]
+Mode = Literal["fair", "edge", "vision"]
 
 
 @dataclass
@@ -94,6 +108,8 @@ class Deal:
     warnings: list[str] = field(default_factory=list)  # what I give up that's hard to replace
     # The free pickup (add, drop) the deal is measured against, when the deal's own open spot uses it.
     vs_pickup: tuple[Player, Player] | None = None
+    playoff_gain: float = 0.0  # vision mode: change in my expected categories won per playoff week
+    vision: list[str] = field(default_factory=list)  # vision mode: why the players I get are worth more later
 
     @property
     def edge(self) -> float:
@@ -150,6 +166,14 @@ class TradeFinder:
         self.struggling = self._outside_playoffs()
         self.filler = best_pickup(league, model)
         self.free_move, self.free_roster, self.free_base = self._free_move()
+        cal = league.calendar
+        self.playoff_periods = (
+            sorted(p for p in cal.period_days if p > league.regular_season_periods) if cal is not None else []
+        )
+        self.base_playoff = self.playoff_strength({}) if mode == "vision" else None
+        self.free_playoff = (
+            self.playoff_strength({self.me_idx: self.free_roster}) if mode == "vision" and self.free_roster else None
+        )
         self.rivals = self._rivals()
         # Our projection in dollars: a player's model-value rank priced on ESPN's rank curve.
         pool = [p for t in self.teams for p in t.roster] + list(league.free_agents)
@@ -173,6 +197,29 @@ class TradeFinder:
             if strength > self.base[self.me_idx] and (best is None or strength > best[2]):
                 best = ((self.filler, drop), roster, strength)
         return best or (None, None, None)
+
+    def playoff_strength(self, rosters: dict[int, list[Player]]) -> float | None:
+        """My expected categories won per playoff week, each week on its own games, with these rosters swapped in."""
+        if not self.playoff_periods:
+            return None
+        teams = [rosters.get(i, t.roster) for i, t in enumerate(self.teams)]
+        return float(
+            np.mean(
+                [self.model.strength(self.me_idx, [self.model.dist(r, p) for r in teams]) for p in self.playoff_periods]
+            )
+        )
+
+    def vision_signals(self, p: Player) -> list[str]:
+        """Why a player is worth more later than his owner sees now. Empty: not a vision target."""
+        out = []
+        if p.available and p.games_played >= VISION_MIN_GAMES and p.season_line:
+            gap = self.model.value(p) - self.model.line_value(p.season_line)
+            if gap >= VISION_SLOW_GAP:
+                out.append(
+                    f"Slow start: his {p.games_played} games so far are well below what he's projected to do the "
+                    "rest of the way. Early stats like his usually bounce back."
+                )
+        return out
 
     def _outside_playoffs(self) -> set[int]:
         def pct(t: Team) -> float:
@@ -237,6 +284,7 @@ class TradeFinder:
         give_ids, get_ids = {p.id for p in give}, {p.id for p in get}
         their_roster = [p for p in partner.roster if p.id not in get_ids] + give
         their_drop = None
+        vision = self.mode == "vision"
         if len(give) > len(get):
             their_drop = self._worst(their_roster, give_ids)
             their_roster = [p for p in their_roster if p is not their_drop]
@@ -276,6 +324,8 @@ class TradeFinder:
         vs_pickup = self.free_move if my_add is not None and self.free_move is not None else None
         baseline = self.free_base if vs_pickup is not None else self.base[self.me_idx]
         my_gain = self.model.strength(self.me_idx, dists) - baseline
+        if vision and min_my_gain == MIN_MY_GAIN:
+            min_my_gain = VISION_MIN_SEASON_GAIN
         if my_gain < min_my_gain:
             return None
         their_gain = self.fit_gain(j, dists)
@@ -286,6 +336,16 @@ class TradeFinder:
             min_margin = EDGE_MIN_MARGIN if edge else float("-inf")
         if their_gain < min_their_gain or my_gain - their_gain < min_margin:
             return None
+        playoff_gain = 0.0
+        if vision:
+            after = self.playoff_strength({self.me_idx: my_roster, j: their_roster})
+            # Measured against the free pickup too, when the deal's open spot takes it.
+            before = self.base_playoff if vs_pickup is None else self.free_playoff
+            if after is None or before is None:
+                return None
+            playoff_gain = after - before
+            if playoff_gain < VISION_MIN_PLAYOFF_GAIN:
+                return None
         struggling = j in self.struggling
         reasons = self._reasons(j, give, get, dists, struggling)
         acceptance = acceptance_odds(ratio, their_gain, struggling)
@@ -321,6 +381,8 @@ class TradeFinder:
             premium=premium,
             warnings=self._warnings(give),
             vs_pickup=vs_pickup,
+            playoff_gain=playoff_gain,
+            vision=[line for p in get for line in self.vision_signals(p)] if vision else [],
         )
 
     def _keystones_lost(self, j: int, get: list[Player], dists: list[Dist]) -> list[str]:
@@ -396,6 +458,8 @@ class TradeFinder:
         me = self.teams[self.me_idx]
         mine = [p for p in me.roster if p.id not in self.keep and not self.premium.not_for_sale(p)]
         deals: list[Deal] = []
+        if self.mode == "vision":
+            return self._vision_candidates(mine, partners)
         for j in range(len(self.teams)) if partners is None else partners:
             if j == self.me_idx:
                 continue
@@ -419,7 +483,28 @@ class TradeFinder:
                         deals.append(d)
         return deals
 
+    def _vision_candidates(self, mine: list[Player], partners: Iterable[int] | None) -> list[Deal]:
+        """One target with a vision signal for one or two of my healthy players: they get production now."""
+        healthy = [p for p in mine if p.available]
+        deals: list[Deal] = []
+        for j in range(len(self.teams)) if partners is None else partners:
+            if j == self.me_idx:
+                continue
+            targets = [p for p in self.teams[j].roster if not self.premium.not_for_sale(p) and self.vision_signals(p)]
+            for get in targets:
+                for give in healthy:
+                    d = self._evaluate(j, [give], [get])
+                    if d:
+                        deals.append(d)
+                for pair in combinations(healthy, 2):
+                    d = self._evaluate(j, list(pair), [get])
+                    if d:
+                        deals.append(d)
+        return deals
+
     def rank_key(self, d: Deal) -> float:
+        if self.mode == "vision":
+            return d.acceptance * d.playoff_gain
         if self.mode == "edge":
             return d.score * (RIVAL_DISCOUNT if d.rival and d.their_gain > 0 else 1.0)
         return d.score

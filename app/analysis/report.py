@@ -27,8 +27,11 @@ MIN_SAMPLE_GAMES = 5  # a free agent with no projection or last season needs thi
 LOCKED, LOST = 0.70, 0.30
 SUPPORTED_SCORING = {"H2H_CATEGORY", "H2H_MOST_CATEGORIES"}
 # Share of a report's run time each step takes, measured on League A: (stage, start, end).
-FAIR_SPAN = ("Screening trades", 0.05, 0.60)
-EDGE_SPAN = ("Screening edge trades", 0.60, 0.80)
+FAIR_SPAN = ("Screening trades", 0.05, 0.50)
+EDGE_SPAN = ("Screening edge trades", 0.50, 0.65)
+VISION_SPAN = ("Screening vision trades", 0.65, 0.80)
+# A vision trade can cost a little now for a stronger playoff run: playoff odds may dip this much.
+VISION_ODDS_SLACK = 0.02
 PICKUP_SPAN = ("Screening pickups", 0.80, 0.94)
 
 Progress = Callable[[str, float], None]
@@ -36,6 +39,12 @@ Progress = Callable[[str, float], None]
 
 def _round(x: float | None, digits: int = 2) -> float | None:
     return None if x is None else round(x, digits)
+
+
+def _playoff_payoff(t: schemas.TradeIdea) -> float:
+    """Change in playoff odds times expected categories won per playoff week."""
+    before = t.playoff_pct_before * (t.playoff_week_cats_before or 0.0)
+    return t.playoff_pct_after * (t.playoff_week_cats_after or 0.0) - before
 
 
 def record(t: Team) -> str:
@@ -212,6 +221,7 @@ class Analyzer:
             playoff_week_cats_before=_round(self.playoff_strength(self.idx)),
             playoff_week_cats_after=_round(self.playoff_strength(self.idx, d.rosters)),
             category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
+            vision=d.vision,
         )
 
     # ---- sections ----------------------------------------------------------------------
@@ -264,11 +274,15 @@ class Analyzer:
             before, base_cats = self.baseline(d)
             after = self.playoff_pct(d.dists, d.rosters)
             # Small category gains can vanish in the full simulation; only keep moves that hold up there.
-            if after < before:
+            if after < before - (VISION_ODDS_SLACK if mode == "vision" else 0.0):
                 continue
             ideas.append(self.trade_idea(finder, d, before, after, base_cats))
-        # Expected payoff: playoff gain weighted by the chance the deal actually happens.
-        ideas.sort(key=lambda t: t.acceptance * (t.playoff_pct_after - t.playoff_pct_before), reverse=True)
+        if mode == "vision":
+            # Expected playoff payoff: the chance to be there times how strong I am once there.
+            ideas.sort(key=lambda t: t.acceptance * _playoff_payoff(t), reverse=True)
+        else:
+            # Expected payoff: playoff gain weighted by the chance the deal actually happens.
+            ideas.sort(key=lambda t: t.acceptance * (t.playoff_pct_after - t.playoff_pct_before), reverse=True)
         return ideas[:TRADE_RESULTS]
 
     def pickups(self, span: tuple[str, float, float] | None = None) -> list[schemas.PickupIdea]:
@@ -383,6 +397,7 @@ class Analyzer:
             builds=self.builds(),
             trades=self.trades(span=FAIR_SPAN),
             edge_trades=self.trades("edge", span=EDGE_SPAN),
+            vision_trades=self.trades("vision", span=VISION_SPAN),
             pickups=self.pickups(span=PICKUP_SPAN),
             season=self._season_step(),
             league_rosters=self.league_rosters(),

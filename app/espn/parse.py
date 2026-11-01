@@ -82,6 +82,7 @@ class Player:
     durability: float | None = None  # expected share of his team's remaining games (analysis/durability.py)
     games_out: float | None = None  # expected team games he still misses while listed out (analysis/absence.py)
     out_report: str | None = None  # the news headline games_out rests on, when it reported a timeline
+    season_line: dict[int, float] = field(default_factory=dict)  # this season's actual per-game stats
 
     @property
     def available(self) -> bool:
@@ -198,6 +199,14 @@ def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int, bool
     return out, gp, True
 
 
+def _season_line(player: dict, season: int) -> dict[int, float]:
+    """This season's actual per-game stats (what owners see), empty before his first game."""
+    for s in player.get("stats", []):
+        if s.get("seasonId") == season and s.get("statSourceId") == 0 and s.get("statSplitTypeId") == 0:
+            return {int(k): float(v) for k, v in (s.get("averageStats") or {}).items()}
+    return {}
+
+
 def _draft_rank(p: dict) -> tuple[int | None, float]:
     ranks = p.get("draftRanksByRankType") or {}
     r = ranks.get("ROTO") or ranks.get("STANDARD") or {}
@@ -224,6 +233,7 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None, roste
         on_team_id=int(entry.get("onTeamId", 0) or 0),
         lineup_slot=lineup_slot,
         per_game=per_game,
+        season_line=_season_line(p, season),
         games_played=gp,
         has_prior=has_prior,
         status=entry.get("status", "ONTEAM"),
