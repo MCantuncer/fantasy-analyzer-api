@@ -84,6 +84,13 @@ class PlayerRef(BaseModel):
     injury_prone: bool = Field(
         default=False, description="He has missed many games in recent seasons: valued for fewer games"
     )
+    games_out: float | None = Field(
+        default=None,
+        description="Listed out: expected team games he still misses, from how many he has missed in a row",
+    )
+    expected_back: str | None = Field(
+        default=None, description="Listed out: date of his expected first game back, YYYY-MM-DD"
+    )
 
 
 class CategoryOutlook(BaseModel):

@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from app.analysis import absence
 from app.analysis.durability import attach as attach_durability
 from app.analysis.model import CategoryModel
 from app.analysis.sim import EACH_CATEGORY, simulate_season
@@ -40,10 +41,14 @@ def _outcome(result: str | None) -> float:
 
 
 class Replay:
-    def __init__(self, h: History, past_games: list[dict[int, int]] | None = None):
-        """``past_games``: games played in the seasons before, most recent first, for durability."""
+    def __init__(self, h: History, past_games: list[dict[int, int]] | None = None, absences: bool = True):
+        """``past_games``: games played in the seasons before, most recent first, for durability.
+
+        ``absences``: players out get expected games still to miss (absence.py), not a flat guess.
+        """
         self.h = h
         self.past_games = past_games
+        self.absences = absences
         settings = h.league["settings"]
         self.n_periods = int(settings["scheduleSettings"]["matchupPeriodCount"])
         self.playoff_teams = int(settings["scheduleSettings"].get("playoffTeamCount", 4))
@@ -165,6 +170,9 @@ class Replay:
         league = parse_league(raw, [], self.h.pro_schedule)
         if self.past_games is not None:
             attach_durability(league, self.past_games)
+        if self.absences:
+            ids = {p.id for t in league.teams for p in t.roster if absence.is_out(p)}
+            absence.attach(league, {pid: {d for d, _, _ in self.lines.get(pid, []) if d < day} for pid in ids})
         return league
 
     # ---- scoring --------------------------------------------------------------------------

@@ -227,6 +227,21 @@ class EspnClient:
         )
         return data if isinstance(data, list) else []
 
+    async def player_gamelogs(self, season: int, player_ids: list[int]) -> list[dict]:
+        """Every game line of these players in one season, a line for each team game played or not. No league needed."""
+        flt = {
+            "filterIds": {"value": player_ids},
+            "filterStatsForSplitTypeIds": {"value": [5]},
+        }
+        data = await self._get(
+            f"{BASE_URL}/seasons/{season}/players",
+            [("view", "kona_player_info"), ("scoringPeriodId", "0")],
+            None,
+            headers={"X-Fantasy-Filter": json.dumps(flt)},
+            unwrap=False,
+        )
+        return data if isinstance(data, list) else []
+
     async def season_totals(self, season: int, limit: int = 600) -> list[dict]:
         """The most-owned players with that season's totals (games played among them). No league needed.
 

@@ -34,6 +34,7 @@ from app.accounts import (
     team_of,
     verify_google,
 )
+from app.analysis import absence
 from app.analysis.daily import trade_of_the_day
 from app.analysis.durability import HISTORY_SEASONS, games_played
 from app.analysis.durability import attach as attach_durability
@@ -222,6 +223,32 @@ def create_app(
             out.append(played)
         return out
 
+    async def attach_absences(league: League) -> None:
+        """Expected games still to miss for every player listed out, from his game lines."""
+        out = sorted({p.id for t in league.teams for p in t.roster if absence.is_out(p)})
+        out += sorted({p.id for p in league.free_agents if absence.is_out(p)} - set(out))
+        if not out:
+            return
+        season = league.season
+        try:
+            played = absence.played_days(await player_gamelogs(season, out, past=False), season)
+            idle = [pid for pid in out if not played.get(pid)]
+            last_run = (
+                absence.season_end_run(await player_gamelogs(season - 1, idle, past=True), season - 1) if idle else {}
+            )
+        except EspnError:
+            return  # the flat days-out guess stays
+        absence.attach(league, {pid: played.get(pid, set()) for pid in out}, last_run)
+
+    async def player_gamelogs(season: int, ids: list[int], past: bool) -> list[dict]:
+        cache = app.state.past_gamelogs if past else app.state.gamelogs
+        key = ("players", season, tuple(ids))
+        raw = cache.get(key)
+        if raw is None:
+            raw = await app.state.espn.player_gamelogs(season, ids)
+            cache.set(key, raw)
+        return raw
+
     async def load_league(league_id: int, season: int, creds: EspnCredentials | None, with_fa: bool) -> League:
         key = (league_id, season, credentials_key(creds), with_fa)
         league = app.state.leagues.get(key)
@@ -234,6 +261,7 @@ def create_app(
             league = parse_league(raw, fas, schedule, adp)
             if with_fa:
                 attach_durability(league, await past_games(season))
+                await attach_absences(league)
             app.state.leagues.set(key, league)
         return league
 
