@@ -49,6 +49,7 @@ from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
 from app.espn.parse import League, parse_league
 from app.feed import PlayerName, Transaction, parse_players, parse_transactions
+from app.feedback import Feedback, FeedbackStore, create_feedback_store, idea_key, model_version
 from app.news.extract import timeline
 from app.news.facts import PlayerState
 from app.news.service import KEEP as NEWS_KEEP
@@ -164,6 +165,7 @@ def create_app(
     social: SocialStore | None = None,
     accounts: AccountStore | None = None,
     google_transport=None,
+    feedback: FeedbackStore | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Fantasy Analyzer API", version="0.1.0")
     app.state.espn = espn or EspnClient()
@@ -175,6 +177,7 @@ def create_app(
     app.state.analysis_jobs: dict[tuple, AnalysisProgress] = {}
     app.state.social = social or create_social_store()
     app.state.accounts = accounts or create_account_store()
+    app.state.feedback = feedback or create_feedback_store()
     app.state.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip() or None
     app.state.login_attempts = defaultdict(deque)
     app.state.basics = TTLCache(60)
@@ -1491,6 +1494,68 @@ def create_app(
             updated_at=news_iso(last) if last else None,
             refreshing=refreshing,
         )
+
+    def feedback_out(f: Feedback) -> schemas.TradeFeedback:
+        return schemas.TradeFeedback(
+            id=f.id,
+            source=f.source,
+            rating=f.rating,
+            reasons=f.reasons,
+            text=f.text,
+            idea=schemas.TradeIdea(**f.idea),
+            created_at=iso(f.created_at),
+        )
+
+    @app.post(
+        "/api/trade-feedback",
+        response_model=schemas.TradeFeedback,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def trade_feedback(
+        body: schemas.TradeFeedbackRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.TradeFeedback:
+        """Save what a manager thought of a trade idea, with the idea as they saw it.
+
+        Giving feedback on the same deal again replaces the earlier entry.
+        """
+        season = body.season or current_season()
+        seat = await linked(authorization, body.league_id, season, required=True)
+        if seat.team_id != body.team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        idea = body.idea
+        entry = Feedback(
+            id=0,
+            user_id=seat.user_id,
+            league_id=body.league_id,
+            season=season,
+            team_id=body.team_id,
+            source=body.source,
+            idea_key=idea_key(body.source, idea.partner_team_id, [p.id for p in idea.give], [p.id for p in idea.get]),
+            rating=body.rating,
+            reasons=sorted(set(body.reasons)),
+            text=body.text.strip(),
+            idea=idea.model_dump(),
+            model_version=model_version(),
+            created_at=app.state.now(),
+        )
+        saved = await run_in_threadpool(app.state.feedback.save, entry)
+        return feedback_out(saved)
+
+    @app.post(
+        "/api/trade-feedback/mine",
+        response_model=schemas.TradeFeedbackList,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def my_trade_feedback(
+        body: schemas.TradeFeedbackListRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.TradeFeedbackList:
+        """The feedback this manager gave in the league, newest first."""
+        season = body.season or current_season()
+        seat = await linked(authorization, body.league_id, season, required=True)
+        if seat.team_id != body.team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        rows = await run_in_threadpool(app.state.feedback.mine, seat.user_id, body.league_id, season)
+        return schemas.TradeFeedbackList(feedback=[feedback_out(f) for f in rows])
 
     return app
 

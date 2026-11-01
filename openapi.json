@@ -2408,6 +2408,160 @@
           }
         }
       }
+    },
+    "/api/trade-feedback": {
+      "post": {
+        "summary": "Trade Feedback",
+        "description": "Save what a manager thought of a trade idea, with the idea as they saw it.\n\nGiving feedback on the same deal again replaces the earlier entry.",
+        "operationId": "trade_feedback_api_trade_feedback_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeFeedbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeFeedback"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trade-feedback/mine": {
+      "post": {
+        "summary": "My Trade Feedback",
+        "description": "The feedback this manager gave in the league, newest first.",
+        "operationId": "my_trade_feedback_api_trade_feedback_mine_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeFeedbackListRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeFeedbackList"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6404,6 +6558,203 @@
           "idea"
         ],
         "title": "TradeCheckRequest"
+      },
+      "TradeFeedback": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "trades",
+              "edge",
+              "shop",
+              "trade_for",
+              "trade_of_day"
+            ],
+            "title": "Source"
+          },
+          "rating": {
+            "type": "string",
+            "enum": [
+              "bad",
+              "good"
+            ],
+            "title": "Rating"
+          },
+          "reasons": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "fake_gain",
+                "wont_accept",
+                "bad_for_build",
+                "player_concern",
+                "already_tried",
+                "other"
+              ]
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "idea": {
+            "$ref": "#/components/schemas/TradeIdea"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "description": "When it was given (or last changed), UTC"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "rating",
+          "reasons",
+          "text",
+          "idea",
+          "created_at"
+        ],
+        "title": "TradeFeedback"
+      },
+      "TradeFeedbackList": {
+        "properties": {
+          "feedback": {
+            "items": {
+              "$ref": "#/components/schemas/TradeFeedback"
+            },
+            "type": "array",
+            "title": "Feedback",
+            "description": "This manager's feedback in the league, newest first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "feedback"
+        ],
+        "title": "TradeFeedbackList"
+      },
+      "TradeFeedbackListRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id"
+        ],
+        "title": "TradeFeedbackListRequest"
+      },
+      "TradeFeedbackRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "trades",
+              "edge",
+              "shop",
+              "trade_for",
+              "trade_of_day"
+            ],
+            "title": "Source",
+            "description": "Which list the idea was shown in"
+          },
+          "rating": {
+            "type": "string",
+            "enum": [
+              "bad",
+              "good"
+            ],
+            "title": "Rating"
+          },
+          "reasons": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "fake_gain",
+                "wont_accept",
+                "bad_for_build",
+                "player_concern",
+                "already_tried",
+                "other"
+              ]
+            },
+            "type": "array",
+            "maxItems": 6,
+            "title": "Reasons",
+            "description": "Quick reasons, any order"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Text",
+            "description": "What the manager wrote, in their own words",
+            "default": ""
+          },
+          "idea": {
+            "$ref": "#/components/schemas/TradeIdea",
+            "description": "The idea exactly as it was shown"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id",
+          "source",
+          "rating",
+          "idea"
+        ],
+        "title": "TradeFeedbackRequest"
       },
       "TradeIdea": {
         "properties": {
