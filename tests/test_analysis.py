@@ -3,7 +3,7 @@ import numpy as np
 import app.analysis.sim as sim
 from app.analysis.model import CategoryModel, norm_cdf
 from app.analysis.report import Analyzer
-from app.analysis.sim import category_links, simulate_season
+from app.analysis.sim import SeasonSim, category_links, simulate_season
 
 
 def test_norm_cdf_matches_known_values():
@@ -49,6 +49,25 @@ def test_season_sim_is_reproducible(league):
     a = simulate_season(league, dists, model.reverse, n_sims=300)
     b = simulate_season(league, dists, model.reverse, n_sims=300)
     assert np.array_equal(a.playoff_pct, b.playoff_pct)
+
+
+def test_what_if_matches_a_full_simulation(league):
+    model = CategoryModel(league)
+    dists = [model.dist(t.roster) for t in league.teams]
+    base = SeasonSim(league, dists, model.reverse, n_sims=400)
+    full = simulate_season(league, dists, model.reverse, n_sims=400)
+    assert np.allclose(base.base.playoff_pct, full.playoff_pct, atol=0.005)
+    # Swap the two teams' best players: only their matchups are re-scored.
+    a, b = league.teams[0], league.teams[1]
+    star_a, star_b = max(a.roster, key=model.value), max(b.roster, key=model.value)
+    changed = list(dists)
+    changed[0] = model.dist([p for p in a.roster if p is not star_a] + [star_b])
+    changed[1] = model.dist([p for p in b.roster if p is not star_b] + [star_a])
+    fast = base.what_if({0, 1}, changed)
+    slow = simulate_season(league, changed, model.reverse, n_sims=400)
+    assert np.allclose(fast.playoff_pct, slow.playoff_pct, atol=0.005)
+    assert np.allclose(fast.wins, slow.wins, atol=0.01)
+    assert base.what_if(set(), changed) is base.base
 
 
 def test_category_links_are_a_valid_correlation_matrix():
