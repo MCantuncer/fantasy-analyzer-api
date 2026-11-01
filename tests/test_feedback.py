@@ -1,8 +1,10 @@
 import copy
+import os
 
+import pytest
 from fastapi.testclient import TestClient
 
-from app.feedback import MemoryFeedbackStore, idea_key
+from app.feedback import Feedback, MemoryFeedbackStore, PostgresFeedbackStore, deal_key, idea_key
 from tests.conftest import LEAGUE_ID, MY_TEAM, signed_in
 
 
@@ -110,3 +112,19 @@ def test_idea_key_ignores_player_order():
     assert idea_key("trades", 3, [5, 2], [9]) == idea_key("trades", 3, [2, 5], [9])
     assert idea_key("trades", 3, [2], [9]) != idea_key("shop", 3, [2], [9])
     assert isinstance(MemoryFeedbackStore().mine(1, LEAGUE_ID, 2027), list)
+
+
+@pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="set TEST_DATABASE_URL to test against Postgres")
+def test_postgres_feedback_store():
+    store = PostgresFeedbackStore(os.environ["TEST_DATABASE_URL"])
+    with store._connect() as conn:
+        conn.execute("delete from trade_feedback where league_id = 999")
+    entry = lambda source, rating: Feedback(  # noqa: E731
+        0, 1, 999, 2027, 3, source, idea_key(source, 7, [1, 2], [3]), rating, [], "", IDEA, "dev", None
+    )
+    first = store.save(entry("edge", "bad"))
+    store.save(entry("trades", "bad"))
+    assert store.record_checks(1, 999, 2027, deal_key(7, [2, 1], [3]), [{"check": "noise"}]) == 2
+    assert all(f.checks == [{"check": "noise"}] and f.checked_at for f in store.mine(1, 999, 2027))
+    again = store.save(entry("edge", "good"))
+    assert again.id == first.id and again.checks is None and again.rating == "good"

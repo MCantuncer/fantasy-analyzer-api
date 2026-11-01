@@ -72,3 +72,28 @@ def test_trade_check_endpoint(client: TestClient, league):
 
     assert signed_in(client.app, team_id=None).post("/api/trade-check", json=body).status_code == 403
     assert client.post("/api/trade-check", json=dict(body, team_id=MY_TEAM + 1)).status_code == 403
+
+
+def test_checks_are_kept_with_the_managers_feedback_on_that_deal(client: TestClient, league):
+    _, idea = two_for_one(league)
+    seat = {"league_id": LEAGUE_ID, "season": 2027, "team_id": MY_TEAM}
+    for source in ("trades", "edge"):
+        r = client.post(
+            "/api/trade-feedback",
+            json=dict(seat, source=source, rating="bad", reasons=["fake_gain"], text="", idea=idea.model_dump()),
+        )
+        assert r.status_code == 200, r.text
+    rows = list(client.app.state.feedback.rows.values())
+    assert all(f.checks is None for f in rows)
+
+    r = client.post("/api/trade-check", json=dict(seat, idea=idea.model_dump(), reasons=["fake_gain"]))
+    assert r.status_code == 200, r.text
+    assert all(f.checks == r.json()["verdicts"] and f.checked_at for f in rows)
+
+    # Changing the feedback clears the old verdicts until the checks run again.
+    client.post(
+        "/api/trade-feedback",
+        json=dict(seat, source="edge", rating="good", reasons=[], text="", idea=idea.model_dump()),
+    )
+    edge = next(f for f in client.app.state.feedback.rows.values() if f.source == "edge")
+    assert edge.checks is None

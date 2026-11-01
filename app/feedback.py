@@ -8,6 +8,9 @@ same deal even after rosters change.
 One entry per manager and deal: giving feedback on the same deal again replaces the
 earlier entry, so a changed mind doesn't count twice.
 
+When the manager's checks run on a deal, their verdicts are kept on the entry with the
+time they ran, so later work can count which complaints the data backed up.
+
 **Storage.** The same Postgres as the trade of the day (``DATABASE_URL``), in memory without it.
 """
 
@@ -34,8 +37,13 @@ def model_version() -> str:
 
 def idea_key(source: str, partner_team_id: int, give: list[int], get: list[int]) -> str:
     """Names one deal for one source, whatever order the players were listed in."""
+    return f"{source}:{deal_key(partner_team_id, give, get)}"
+
+
+def deal_key(partner_team_id: int, give: list[int], get: list[int]) -> str:
+    """Names one deal whatever list it came from: the end of every idea_key for it."""
     ids = lambda xs: ",".join(str(x) for x in sorted(xs))  # noqa: E731
-    return f"{source}:{partner_team_id}:{ids(give)}>{ids(get)}"
+    return f"{partner_team_id}:{ids(give)}>{ids(get)}"
 
 
 @dataclass
@@ -53,6 +61,8 @@ class Feedback:
     idea: dict  # the TradeIdea as it was shown
     model_version: str
     created_at: datetime
+    checks: list[dict] | None = None  # CheckVerdicts from the last time the checks ran on this deal
+    checked_at: datetime | None = None
 
 
 SCHEMA = """
@@ -72,6 +82,8 @@ create table if not exists trade_feedback (
     created_at timestamptz not null default now(),
     unique (user_id, league_id, season, idea_key)
 );
+alter table trade_feedback add column if not exists checks jsonb;
+alter table trade_feedback add column if not exists checked_at timestamptz;
 create index if not exists trade_feedback_by_league on trade_feedback (league_id, season, created_at desc);
 """
 
@@ -79,6 +91,7 @@ create index if not exists trade_feedback_by_league on trade_feedback (league_id
 class FeedbackStore(Protocol):
     def save(self, f: Feedback) -> Feedback: ...
     def mine(self, user_id: int, league_id: int, season: int, limit: int = LIST_LIMIT) -> list[Feedback]: ...
+    def record_checks(self, user_id: int, league_id: int, season: int, deal: str, checks: list[dict]) -> int: ...
 
 
 class MemoryFeedbackStore:
@@ -93,8 +106,20 @@ class MemoryFeedbackStore:
         if old is None:
             self._next += 1
         f.created_at = datetime.now(UTC)
+        f.checks, f.checked_at = None, None  # changed feedback waits for a fresh check
         self.rows[key] = f
         return f
+
+    def record_checks(self, user_id: int, league_id: int, season: int, deal: str, checks: list[dict]) -> int:
+        now = datetime.now(UTC)
+        hits = [
+            f
+            for (u, lg, s, k), f in self.rows.items()
+            if (u, lg, s) == (user_id, league_id, season) and k.split(":", 1)[1] == deal
+        ]
+        for f in hits:
+            f.checks, f.checked_at = checks, now
+        return len(hits)
 
     def mine(self, user_id: int, league_id: int, season: int, limit: int = LIST_LIMIT) -> list[Feedback]:
         rows = [f for (u, lg, s, _), f in self.rows.items() if (u, lg, s) == (user_id, league_id, season)]
@@ -104,7 +129,7 @@ class MemoryFeedbackStore:
 class PostgresFeedbackStore:
     _COLS = (
         "id, user_id, league_id, season, team_id, source, idea_key, rating, reasons, text, idea, "
-        "model_version, created_at"
+        "model_version, created_at, checks, checked_at"
     )
 
     def __init__(self, url: str):
@@ -121,7 +146,7 @@ class PostgresFeedbackStore:
                 "reasons, text, idea, model_version) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "on conflict (user_id, league_id, season, idea_key) do update set team_id=excluded.team_id, "
                 "rating=excluded.rating, reasons=excluded.reasons, text=excluded.text, idea=excluded.idea, "
-                "model_version=excluded.model_version, created_at=now() "
+                "model_version=excluded.model_version, created_at=now(), checks=null, checked_at=null "
                 f"returning {self._COLS}",
                 (
                     f.user_id,
@@ -147,6 +172,15 @@ class PostgresFeedbackStore:
                 (user_id, league_id, season, limit),
             ).fetchall()
         return [Feedback(*r) for r in rows]
+
+    def record_checks(self, user_id: int, league_id: int, season: int, deal: str, checks: list[dict]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "update trade_feedback set checks=%s, checked_at=now() where user_id=%s and league_id=%s "
+                "and season=%s and substr(idea_key, strpos(idea_key, ':') + 1)=%s",
+                (json.dumps(checks), user_id, league_id, season, deal),
+            )
+        return cur.rowcount
 
 
 def create_feedback_store() -> FeedbackStore:

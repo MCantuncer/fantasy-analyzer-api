@@ -49,7 +49,7 @@ from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
 from app.espn.parse import League, parse_league
 from app.feed import PlayerName, Transaction, parse_players, parse_transactions
-from app.feedback import Feedback, FeedbackStore, create_feedback_store, idea_key, model_version
+from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.news.extract import timeline
 from app.news.facts import PlayerState
 from app.news.service import KEEP as NEWS_KEEP
@@ -1252,7 +1252,8 @@ def create_app(
     ) -> schemas.TradeCheck:
         """Check a trade idea against today's league: what holds up, what doesn't, and the evidence.
 
-        Every check runs; the ones the quick reasons point at come first.
+        Every check runs; the ones the quick reasons point at come first. When the manager has
+        given feedback on this deal, the verdicts are kept with it.
         """
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
@@ -1284,7 +1285,15 @@ def create_app(
                 verdicts=checker.run(order),
             )
 
-        return await run_in_threadpool(run)
+        result = await run_in_threadpool(run)
+        if result.stale is None:
+            idea = body.idea
+            deal = deal_key(idea.partner_team_id, [p.id for p in idea.give], [p.id for p in idea.get])
+            verdicts = [v.model_dump() for v in result.verdicts]
+            await run_in_threadpool(
+                app.state.feedback.record_checks, seat.user_id, body.league_id, season, deal, verdicts
+            )
+        return result
 
     async def score_day(season: int, day: int, league_id: int, creds: EspnCredentials | None, sched) -> dict:
         """One day's games. Finished days come from the store; a day in progress is cached for a minute."""
