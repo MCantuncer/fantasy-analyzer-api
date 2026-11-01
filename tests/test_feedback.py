@@ -126,5 +126,9 @@ def test_postgres_feedback_store():
     store.save(entry("trades", "bad"))
     assert store.record_checks(1, 999, 2027, deal_key(7, [2, 1], [3]), [{"check": "noise"}]) == 2
     assert all(f.checks == [{"check": "noise"}] and f.checked_at for f in store.mine(1, 999, 2027))
+    store.record_reading(first.id, {"kind": "rant"})
+    assert [f.reading for f in store.for_deal(1, 999, 2027, deal_key(7, [1, 2], [3])) if f.id == first.id] == [
+        {"kind": "rant"}
+    ]
     again = store.save(entry("edge", "good"))
-    assert again.id == first.id and again.checks is None and again.rating == "good"
+    assert again.id == first.id and again.checks is None and again.reading is None and again.rating == "good"

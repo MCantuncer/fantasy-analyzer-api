@@ -35,8 +35,8 @@ from app.accounts import (
     verify_google,
 )
 from app.analysis import absence
+from app.analysis.checks import REASON_CHECKS, IdeaChecker, StaleIdea, focus_order
 from app.analysis.checks import TITLES as CHECK_TITLES
-from app.analysis.checks import IdeaChecker, StaleIdea, focus_order
 from app.analysis.daily import trade_of_the_day
 from app.analysis.durability import HISTORY_SEASONS, games_played
 from app.analysis.durability import attach as attach_durability
@@ -58,6 +58,7 @@ from app.news.service import iso as news_iso
 from app.news.sources import BY_ID as NEWS_SOURCES
 from app.news.sources import SOURCES as NEWS_SOURCE_LIST
 from app.news.verify import FACT_SOURCE, describe_fact
+from app.reader import NoteReader, Reading, create_reader
 from app.scores import build_day, needs_stats, parse_schedule, settled, week_fixtures
 from app.social import (
     CHALLENGE_SECONDS,
@@ -166,6 +167,7 @@ def create_app(
     accounts: AccountStore | None = None,
     google_transport=None,
     feedback: FeedbackStore | None = None,
+    reader: NoteReader | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Fantasy Analyzer API", version="0.1.0")
     app.state.espn = espn or EspnClient()
@@ -178,6 +180,7 @@ def create_app(
     app.state.social = social or create_social_store()
     app.state.accounts = accounts or create_account_store()
     app.state.feedback = feedback or create_feedback_store()
+    app.state.reader = reader or create_reader()
     app.state.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip() or None
     app.state.login_attempts = defaultdict(deque)
     app.state.basics = TTLCache(60)
@@ -1268,7 +1271,16 @@ def create_app(
         summary = league_summary(lg)
         if not summary.supported:
             raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
-        order = focus_order(body.reasons)
+        idea = body.idea
+        deal = deal_key(idea.partner_team_id, [p.id for p in idea.give], [p.id for p in idea.get])
+        reading = await note_reading(seat, deal)
+        if reading is None:
+            order = focus_order(body.reasons)
+        else:
+            # Ticked reasons first, then what the note points at, then what it implies.
+            implied = [c for r in reading.reasons for c in REASON_CHECKS.get(r, [])]
+            order = focus_order(body.reasons, extra=[*reading.checks, *implied])
+        read_as = schemas.NoteRead(kind=reading.kind, summary=reading.summary) if reading else None
 
         def run() -> schemas.TradeCheck:
             try:
@@ -1278,22 +1290,37 @@ def create_app(
                     schemas.CheckVerdict(check=c, title=CHECK_TITLES[c], status="cant_check", evidence=str(exc))
                     for c in order
                 ]
-                return schemas.TradeCheck(stale=str(exc), verdicts=stale)
+                return schemas.TradeCheck(stale=str(exc), verdicts=stale, read_as=read_as)
             return schemas.TradeCheck(
                 playoff_pct_before=round(checker.before, 3),
                 playoff_pct_after=round(checker.after, 3),
                 verdicts=checker.run(order),
+                read_as=read_as,
             )
 
         result = await run_in_threadpool(run)
         if result.stale is None:
-            idea = body.idea
-            deal = deal_key(idea.partner_team_id, [p.id for p in idea.give], [p.id for p in idea.get])
             verdicts = [v.model_dump() for v in result.verdicts]
             await run_in_threadpool(
                 app.state.feedback.record_checks, seat.user_id, body.league_id, season, deal, verdicts
             )
         return result
+
+    async def note_reading(seat: Seat, deal: str) -> Reading | None:
+        """How the manager's note on this deal reads: read once, then kept with the feedback."""
+        entries = await run_in_threadpool(app.state.feedback.for_deal, seat.user_id, seat.league_id, seat.season, deal)
+        entry = next((f for f in entries if f.text), None)
+        if entry is None:
+            return None
+        if entry.reading is not None:
+            return Reading.model_validate(entry.reading)
+        if app.state.reader is None:
+            return None
+        idea = schemas.TradeIdea(**entry.idea)
+        reading = await run_in_threadpool(app.state.reader.read, entry.text, idea, entry.rating, entry.reasons)
+        if reading is not None:
+            await run_in_threadpool(app.state.feedback.record_reading, entry.id, reading.model_dump())
+        return reading
 
     async def score_day(season: int, day: int, league_id: int, creds: EspnCredentials | None, sched) -> dict:
         """One day's games. Finished days come from the store; a day in progress is cached for a minute."""

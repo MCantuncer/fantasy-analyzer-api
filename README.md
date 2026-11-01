@@ -81,6 +81,7 @@ app/
 ├── accounts.py    Sign-up, sessions and team verification
 ├── feed.py        Moves feed from ESPN transactions
 ├── feedback.py    Feedback on trade ideas, with the idea as it was shown
+├── reader.py      Reads a manager's note on a trade idea to pick which checks run first
 ├── social.py      Posts, replies and reactions
 ├── scores.py      NBA scores and box scores
 └── store.py       Postgres persistence, with an in-memory fallback
@@ -116,6 +117,7 @@ All settings are optional for local development.
 | `DATABASE_URL` | none (in memory) | Postgres connection string for accounts, chat, the trade of the day, finished NBA days and news |
 | `SECRET_KEY` | random per start | Signs team verification challenges; set it so they survive a restart |
 | `GOOGLE_CLIENT_ID` | none | Google OAuth web client ID; Google sign-in stays off until it is set |
+| `ANTHROPIC_API_KEY` | none | Lets Claude Haiku read managers' notes on trade ideas so the checks start where the note points; notes are kept unread without it |
 | `LEAGUE_CACHE_SECONDS` | `600` | How long league data from ESPN is cached |
 | `DAILY_TRADE_WAIT_SECONDS` | `20` | How long a trade-of-the-day request waits before answering `pending` |
 | `DAILY_TRADE_RECHECK_SECONDS` | `10800` | How often the day's pick is checked again |
@@ -147,7 +149,7 @@ All settings are optional for local development.
 | POST | `/api/reactions` | `{league_id, season?, target, reaction, on?}` | Toggles `steal`, `smart`, `overpay`, `lol`, or a `won:<team id>` trade vote |
 | POST | `/api/trade-feedback` | `{league_id, team_id, season?, source, rating, reasons?, text?, idea}` | Saves what you thought of a trade idea (`bad` or `good`, quick reasons, your words) with the idea as shown; feedback on the same deal replaces the earlier entry |
 | POST | `/api/trade-feedback/mine` | `{league_id, team_id, season?}` | Your feedback in the league, newest first |
-| POST | `/api/trade-check` | `{league_id, team_id, season?, idea, reasons?, keep_player_ids?}` | Checks a trade idea against today's league: whether a free pickup carries the gain, simulation noise, a sideways talent swap, lost categories, thin samples, injuries; each with its evidence, the quick reasons' checks first |
+| POST | `/api/trade-check` | `{league_id, team_id, season?, idea, reasons?, keep_player_ids?}` | Checks a trade idea against today's league: whether a free pickup carries the gain, simulation noise, a sideways talent swap, lost categories, thin samples, injuries; each with its evidence, the quick reasons' checks first, then the ones your note points at (read once by Claude Haiku, returned as `read_as`) |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
 | POST | `/api/scores` | `{league_id, season?, day?, team_id?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
 | POST | `/api/injury-impact` | `{player_id, league_id?, season?}` | Teammates who gain while a player is out, from games his team played without him, each tagged with his fantasy team in `league_id` |

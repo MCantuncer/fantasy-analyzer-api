@@ -852,8 +852,16 @@ class CheckVerdict(BaseModel):
     evidence: str = Field(description="What the data shows, in a sentence")
 
 
+class NoteRead(BaseModel):
+    kind: Literal["clear", "rant", "unclear"] = Field(
+        description="clear: maps onto our reasons and checks; rant: venting; unclear: a point no check covers"
+    )
+    summary: str = Field(description="What the note says, in one sentence")
+
+
 class TradeCheck(BaseModel):
     playoff_pct_before: float | None = Field(default=None, description="Today's odds, None when the idea is stale")
     playoff_pct_after: float | None = None
     stale: str | None = Field(default=None, description="Why the idea can't be rebuilt from today's rosters")
     verdicts: list[CheckVerdict]
+    read_as: NoteRead | None = Field(default=None, description="How the manager's note was read, when it was")
