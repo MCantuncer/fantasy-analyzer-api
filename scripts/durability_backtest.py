@@ -8,7 +8,8 @@ games played and his first N team games of the season (N = 0, 10,
 20, 40). It predicts the share of his team's remaining games he plays once any absence
 running at that point is over (the injury status covers that one), which game logs
 then tell. Compared with: the league's typical share for everyone, ESPN's projection
-alone, and the model without this season's games.
+alone, the model without this season's games, and the model counting every past absence
+(no single major injury set aside). Past seasons' game logs say which absences were long.
 
 Season pools (games played, ESPN projections) are cached in .cache/season_pools and
 game logs in .cache/gamelogs (shared with scripts/injury_backtest.py).
@@ -26,7 +27,7 @@ from pathlib import Path
 import httpx
 
 from app.analysis import durability as dur
-from app.analysis.durability import PastSeason, expected_share
+from app.analysis.durability import LONG_ABSENCE, PastSeason, expected_share, missed_runs, set_aside_one_off
 from app.espn.parse import GAMES_PLAYED
 
 URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/fba/seasons/{season}/players"
@@ -104,6 +105,10 @@ class Case:
     projected: float
     played: int
     rest: float  # share of the remaining team games he played
+    absences: list[list[int] | None]  # long absences in each past season (None: no game logs)
+
+    def record(self, one_off: bool = True) -> list[PastSeason | None]:
+        return set_aside_one_off(self.past, self.absences) if one_off else self.past
 
 
 def season_length(played: dict[int, int]) -> int:
@@ -116,6 +121,7 @@ def cases(season: int) -> list[Case]:
     lengths = {s: season_length(pools[s][0]) for s in pools}
     _, projected = pools[season]
     logs = game_logs(season)
+    past_logs = [game_logs(s) for s in range(season - 1, season - 1 - dur.HISTORY_SEASONS, -1)]
     out = []
     for pid, proj in projected.items():
         games = logs.get(pid)
@@ -125,6 +131,7 @@ def cases(season: int) -> list[Case]:
             PastSeason(pools[s][0][pid], lengths[s]) if pid in pools[s][0] else None
             for s in range(season - 1, season - 1 - dur.HISTORY_SEASONS, -1)
         ]
+        absences = [[r for r in missed_runs(lg[pid]) if r >= LONG_ABSENCE] if pid in lg else None for lg in past_logs]
         for n in CUTOFFS:
             # An absence still running at the cutoff is a known injury, which the model
             # handles from the injury status; the outcome starts from his next game.
@@ -132,7 +139,7 @@ def cases(season: int) -> list[Case]:
             rest = games[back:]
             if len(rest) < MIN_REST:
                 continue
-            out.append(Case(season, n, past, proj, sum(games[:n]), sum(rest) / len(rest)))
+            out.append(Case(season, n, past, proj, sum(games[:n]), sum(rest) / len(rest), absences))
     return out
 
 
@@ -141,15 +148,16 @@ def rmse(cs: list[Case], predict) -> float:
     return statistics.fmean((predict(c) - c.rest) ** 2 for c in cs) ** 0.5
 
 
-def model(**kw):
-    return lambda c: expected_share(c.past, c.played, c.cutoff, **kw)
+def model(one_off: bool = True, **kw):
+    return lambda c: expected_share(c.record(one_off), c.played, c.cutoff, **kw)
 
 
 def report(name: str, cs: list[Case], kw: dict) -> None:
     rules = {
         "typical share": lambda c: kw.get("league_share", dur.LEAGUE_SHARE),
         "ESPN projection": lambda c: min(c.projected / dur.FULL_SEASON, 1.0),
-        "model, no season games": lambda c: expected_share(c.past, **kw),
+        "model, no season games": lambda c: expected_share(c.record(), **kw),
+        "every absence counted": model(one_off=False, **kw),
         "model": model(**kw),
     }
     print(f"\n{name}: root mean squared error in share of remaining games (lower is better)")
@@ -170,7 +178,7 @@ def report(name: str, cs: list[Case], kw: dict) -> None:
             + "  (predicted->played)"
         )
     # The case asked about: injury-prone players off to a healthy start.
-    prone = [c for c in cs if c.cutoff == 10 and expected_share(c.past, **kw) < dur.PRONE_SHARE]
+    prone = [c for c in cs if c.cutoff == 10 and expected_share(c.record(), **kw) < dur.PRONE_SHARE]
     for label, group in (
         ("prone, 9+ of first 10", [c for c in prone if c.played >= 9]),
         ("prone, missed 2+ of 10", [c for c in prone if c.played < 9]),
@@ -179,6 +187,15 @@ def report(name: str, cs: list[Case], kw: dict) -> None:
             actual = statistics.fmean(c.rest for c in group)
             pred = statistics.fmean(model(**kw)(c) for c in group)
             print(f"  {label:24} n={len(group):3}  played {actual:.3f} of the rest, model said {pred:.3f}")
+    # The case the set-aside is for: one major absence and no other long one.
+    one_off = [c for c in cs if c.record() != c.past]
+    if one_off:
+        actual = statistics.fmean(c.rest for c in one_off)
+        counted = statistics.fmean(model(one_off=False, **kw)(c) for c in one_off)
+        print(
+            f"  {'one major absence':24} n={len(one_off):3}  played {actual:.3f} of the rest,"
+            f" model said {statistics.fmean(model(**kw)(c) for c in one_off):.3f} ({counted:.3f} counting it)"
+        )
 
 
 def fit(cs: list[Case]) -> dict:

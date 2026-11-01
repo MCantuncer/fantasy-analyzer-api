@@ -4,13 +4,19 @@ import pytest
 
 from app.analysis.durability import (
     LEAGUE_SHARE,
+    ONE_OFF_LENGTH,
+    PRONE_SHARE,
     PastSeason,
     attach,
     expected_share,
     games_played,
     keep_share,
     kept,
+    long_absences,
+    missed_runs,
+    one_off_candidates,
     season_length,
+    set_aside_one_off,
 )
 from app.analysis.model import CategoryModel
 
@@ -115,3 +121,70 @@ def test_player_refs_carry_the_expected_share(league):
     lg.teams[0].roster[0] = prone = replace(star, durability=0.5)
     ref = Analyzer(lg, MY_TEAM).ref(prone)
     assert ref.games_share == 0.5 and ref.injury_prone
+
+
+# Tatum 2025-26: a torn Achilles kept him out 62 games, after years of 72-76.
+ACHILLES = [PastSeason(16, 82), PastSeason(72, 82), PastSeason(74, 82)]
+
+
+def test_missed_runs():
+    assert missed_runs([True, False, False, True, False]) == [2, 1]
+    assert missed_runs([]) == []
+    assert missed_runs([False] * 3) == [3]
+
+
+def test_a_single_major_absence_is_set_aside():
+    record = set_aside_one_off(ACHILLES, [[62], [], []])
+    assert record[0] == PastSeason(16, 20)
+    assert expected_share(ACHILLES) < PRONE_SHARE < LEAGUE_SHARE < expected_share(record)
+
+
+def test_several_long_absences_still_count():
+    # Zion-like: a major absence plus other long ones in the window keeps every game counted.
+    assert set_aside_one_off(ACHILLES, [[62], [12], []]) == ACHILLES
+    assert set_aside_one_off(ACHILLES, [[45, 17], [], []]) == ACHILLES
+    # A long absence shorter than half a season is wear and tear, not a one-off.
+    short = [PastSeason(50, 82), PastSeason(82, 82)]
+    assert set_aside_one_off(short, [[ONE_OFF_LENGTH - 1], []]) == short
+
+
+def test_missing_game_logs_keep_the_record():
+    assert set_aside_one_off(ACHILLES, [[62], None, []]) == ACHILLES
+    # No record that season, so no logs needed for it.
+    rookie = [PastSeason(16, 82), None, None]
+    assert set_aside_one_off(rookie, [[62], None, None])[0] == PastSeason(16, 20)
+
+
+def test_only_players_with_half_a_season_missed_need_logs():
+    past = [{1: 16, 2: 70, 0: 82}, {1: 72, 2: 30, 0: 82}, {0: 82}]
+    assert one_off_candidates(past, {1, 2, 3}) == {1, 2}
+    assert one_off_candidates([{1: 43, 0: 82}], {1}) == set()
+
+
+def test_long_absences_from_espn_game_lines():
+    def line(day, played, season=2026):
+        return {
+            "seasonId": season,
+            "statSplitTypeId": 5,
+            "statSourceId": 0,
+            "scoringPeriodId": day,
+            "stats": {"42": played},
+        }
+
+    games = [line(d, 0) for d in range(1, 13)] + [line(13, 1), line(14, 0), line(15, 1)]
+    other = [line(1, 0, 2025), {"seasonId": 2026, "statSplitTypeId": 0, "statSourceId": 0, "stats": {"42": 3}}]
+    assert long_absences([{"player": {"id": 7, "stats": list(reversed(games)) + other}}], 2026) == {7: [12]}
+
+
+def test_attach_sets_aside_a_one_off(league):
+    league = replace(
+        league,
+        teams=[replace(t, roster=[replace(p) for p in t.roster]) for t in league.teams],
+        free_agents=[replace(p) for p in league.free_agents],
+    )
+    star = league.teams[0].roster[0]
+    past = [{star.id: 16, 0: 82}, {star.id: 72, 0: 82}, {star.id: 74, 0: 82}]
+    attach(league, past)
+    counted = star.durability
+    attach(league, past, [{star.id: [62]}, {star.id: []}, {star.id: []}])
+    assert counted < PRONE_SHARE < LEAGUE_SHARE < star.durability

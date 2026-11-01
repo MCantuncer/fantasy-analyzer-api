@@ -38,7 +38,7 @@ from app.analysis import absence
 from app.analysis.checks import REASON_CHECKS, IdeaChecker, StaleIdea, focus_order
 from app.analysis.checks import TITLES as CHECK_TITLES
 from app.analysis.daily import trade_of_the_day
-from app.analysis.durability import HISTORY_SEASONS, games_played
+from app.analysis.durability import HISTORY_SEASONS, games_played, long_absences, one_off_candidates
 from app.analysis.durability import attach as attach_durability
 from app.analysis.injury import LAST_SEASON_WEIGHT, Season, parse_gamelogs
 from app.analysis.injury import analyze as analyze_absence
@@ -96,6 +96,7 @@ POSTS_PER_MINUTE = 10
 GAMELOG_TTL = 3 * 3600.0
 MIN_RELEVANT_MINUTES = 15.0
 PAST_GAMELOG_TTL = 7 * 24 * 3600.0
+GAMELOG_BATCH = 40  # players per game-log request: every line of a season is ~30 KB a player
 IMPACT_METHOD = (
     "Each teammate's minutes and per-minute stats in games his team played without him, against games he "
     "played, this season and last (last season counts a quarter, recent games count more). With few such games "
@@ -200,6 +201,8 @@ def create_app(
     app.state.schedules = TTLCache(SCHEDULE_TTL)
     app.state.market_adp = TTLCache(ADP_TTL)
     app.state.past_games = TTLCache(PAST_GAMES_TTL)
+    # (season, player id) -> his long absences that season; finished seasons don't change.
+    app.state.past_absences = TTLCache(PAST_GAMES_TTL, max_items=20_000)
     app.state.score_days = TTLCache(LIVE_SCORES_TTL)
     app.state.settled_days = TTLCache(7 * 24 * 3600, max_items=512)
     app.state.score_locks = defaultdict(asyncio.Lock)
@@ -255,6 +258,33 @@ def create_app(
                     return []
                 app.state.past_games.set(past, played)
             out.append(played)
+        return out
+
+    async def past_absences(league: League, past: list[dict[int, int]]) -> list[dict[int, list[int]]] | None:
+        """Long absences in the seasons before this one, for players who missed half a season in one of them.
+
+        Only those players can have a single major injury set aside (durability.py), so only
+        their game logs are fetched. None when ESPN won't say: every absence then counts.
+        """
+        ids = {p.id for t in league.teams for p in t.roster} | {p.id for p in league.free_agents}
+        wanted = sorted(one_off_candidates(past, ids))
+        out: list[dict[int, list[int]]] = []
+        for k in range(len(past)):
+            season = league.season - 1 - k
+            # Cached as a 1-tuple: (None,) means ESPN had no game lines for him that season.
+            cached = {pid: app.state.past_absences.get((season, pid)) for pid in wanted}
+            found = {pid: v[0] for pid, v in cached.items() if v is not None}
+            missing = [pid for pid, v in cached.items() if v is None]
+            for i in range(0, len(missing), GAMELOG_BATCH):
+                batch = missing[i : i + GAMELOG_BATCH]
+                try:
+                    got = long_absences(await app.state.espn.player_gamelogs(season, batch), season)
+                except EspnError:
+                    return None
+                for pid in batch:
+                    found[pid] = got.get(pid)
+                    app.state.past_absences.set((season, pid), (found[pid],))
+            out.append({pid: v for pid, v in found.items() if v is not None})
         return out
 
     async def attach_absences(league: League) -> None:
@@ -313,7 +343,8 @@ def create_app(
             adp = await market_adp(season) if with_fa and snake else None
             league = parse_league(raw, fas, schedule, adp)
             if with_fa:
-                attach_durability(league, await past_games(season))
+                past = await past_games(season)
+                attach_durability(league, past, await past_absences(league, past) if past else None)
                 await attach_absences(league)
             app.state.leagues.set(key, league)
         return league

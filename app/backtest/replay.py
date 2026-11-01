@@ -41,13 +41,22 @@ def _outcome(result: str | None) -> float:
 
 
 class Replay:
-    def __init__(self, h: History, past_games: list[dict[int, int]] | None = None, absences: bool = True):
+    def __init__(
+        self,
+        h: History,
+        past_games: list[dict[int, int]] | None = None,
+        absences: bool = True,
+        past_absences: list[dict[int, list[int]]] | None = None,
+    ):
         """``past_games``: games played in the seasons before, most recent first, for durability.
+
+        ``past_absences``: long absences in those seasons, so a single major injury is set aside.
 
         ``absences``: players out get expected games still to miss (absence.py), not a flat guess.
         """
         self.h = h
         self.past_games = past_games
+        self.past_absences = past_absences
         self.absences = absences
         settings = h.league["settings"]
         self.n_periods = int(settings["scheduleSettings"]["matchupPeriodCount"])
@@ -169,7 +178,7 @@ class Replay:
         }
         league = parse_league(raw, [], self.h.pro_schedule)
         if self.past_games is not None:
-            attach_durability(league, self.past_games)
+            attach_durability(league, self.past_games, self.past_absences)
         if self.absences:
             ids = {p.id for t in league.teams for p in t.roster if absence.is_out(p)}
             absence.attach(league, {pid: {d for d, _, _ in self.lines.get(pid, []) if d < day} for pid in ids})
