@@ -793,3 +793,35 @@ class NewsPage(BaseModel):
     trending: list[TrendingPlayer]
     updated_at: str | None = Field(default=None, description="Last time every source was checked, UTC")
     refreshing: bool = Field(description="A check of every source is running; ask again in a minute")
+
+
+FeedbackRating = Literal["bad", "good"]
+FeedbackReason = Literal["fake_gain", "wont_accept", "bad_for_build", "player_concern", "already_tried", "other"]
+FeedbackSource = Literal["trades", "edge", "shop", "trade_for", "trade_of_day"]
+
+
+class TradeFeedbackRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+    source: FeedbackSource = Field(description="Which list the idea was shown in")
+    rating: FeedbackRating
+    reasons: list[FeedbackReason] = Field(default_factory=list, max_length=6, description="Quick reasons, any order")
+    text: str = Field(default="", max_length=500, description="What the manager wrote, in their own words")
+    idea: TradeIdea = Field(description="The idea exactly as it was shown")
+
+
+class TradeFeedback(BaseModel):
+    id: int
+    source: FeedbackSource
+    rating: FeedbackRating
+    reasons: list[FeedbackReason]
+    text: str
+    idea: TradeIdea
+    created_at: str = Field(description="When it was given (or last changed), UTC")
+
+
+class TradeFeedbackList(BaseModel):
+    feedback: list[TradeFeedback] = Field(description="This manager's feedback in the league, newest first")
+
+
+class TradeFeedbackListRequest(LeagueRequest):
+    team_id: int = Field(gt=0)

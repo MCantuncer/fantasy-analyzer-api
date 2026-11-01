@@ -79,6 +79,7 @@ app/
 ├── backtest/      Week-by-week replays of finished seasons
 ├── accounts.py    Sign-up, sessions and team verification
 ├── feed.py        Moves feed from ESPN transactions
+├── feedback.py    Feedback on trade ideas, with the idea as it was shown
 ├── social.py      Posts, replies and reactions
 ├── scores.py      NBA scores and box scores
 └── store.py       Postgres persistence, with an in-memory fallback
@@ -143,6 +144,8 @@ All settings are optional for local development.
 | POST | `/api/posts` | `{league_id, season?, body, target?}` | Posts to the chat, or replies when `target` is set |
 | POST | `/api/posts/delete` | `{league_id, season?, post_id}` | Deletes your own post |
 | POST | `/api/reactions` | `{league_id, season?, target, reaction, on?}` | Toggles `steal`, `smart`, `overpay`, `lol`, or a `won:<team id>` trade vote |
+| POST | `/api/trade-feedback` | `{league_id, team_id, season?, source, rating, reasons?, text?, idea}` | Saves what you thought of a trade idea (`bad` or `good`, quick reasons, your words) with the idea as shown; feedback on the same deal replaces the earlier entry |
+| POST | `/api/trade-feedback/mine` | `{league_id, team_id, season?}` | Your feedback in the league, newest first |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
 | POST | `/api/scores` | `{league_id, season?, day?, team_id?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
 | POST | `/api/injury-impact` | `{player_id, league_id?, season?}` | Teammates who gain while a player is out, from games his team played without him, each tagged with his fantasy team in `league_id` |
