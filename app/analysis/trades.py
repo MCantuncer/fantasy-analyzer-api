@@ -14,6 +14,11 @@ carry a category, fresh signings (see badges.py). Getting one of those costs the
 owner premium on top of trade value, and giving up one of yours takes a deal near
 the top of what the finder sees.
 
+A 2-for-1 fills the spot it opens with the best free agent. That pickup needs no
+trade: you could cut your weakest player for him today. So such a deal is measured
+against your roster after that free pickup, not against today's roster, and the trade
+gets credit only for what it adds on top.
+
 Each surviving deal gets an acceptance estimate and a list of reasons to use when
 pitching it. Deals are ranked by playoff-odds gain weighted by that estimate.
 """
@@ -87,6 +92,8 @@ class Deal:
     faab: int = 0  # FAAB dollars I send with the players
     premium: float = 0.0  # owner premium included in get_value, in dollars
     warnings: list[str] = field(default_factory=list)  # what I give up that's hard to replace
+    # The free pickup (add, drop) the deal is measured against, when the deal's own open spot uses it.
+    vs_pickup: tuple[Player, Player] | None = None
 
     @property
     def edge(self) -> float:
@@ -142,11 +149,30 @@ class TradeFinder:
         self.punts = [cats < PUNT_WIN for cats in self.base_cats]
         self.struggling = self._outside_playoffs()
         self.filler = best_pickup(league, model)
+        self.free_move, self.free_roster, self.free_base = self._free_move()
         self.rivals = self._rivals()
         # Our projection in dollars: a player's model-value rank priced on ESPN's rank curve.
         pool = [p for t in self.teams for p in t.roster] + list(league.free_agents)
         by_model = sorted(pool, key=model.value, reverse=True)
         self.model_dollars = {p.id: self.perceived.dollars_at_rank(r) for r, p in enumerate(by_model, 1)}
+
+    def _free_move(self) -> tuple[tuple[Player, Player] | None, list[Player] | None, float | None]:
+        """The best pickup I can make without a trade: the filler for one of my droppable players.
+
+        Returns (add, drop), my roster after it, and my strength after it; all None when it doesn't help.
+        """
+        me = self.teams[self.me_idx]
+        if self.filler is None:
+            return None, None, None
+        best = None
+        for drop in droppable(me.roster, self.keep):
+            roster = [p for p in me.roster if p.id != drop.id] + [self.filler]
+            dists = list(self.dists)
+            dists[self.me_idx] = self.model.dist(roster)
+            strength = self.model.strength(self.me_idx, dists)
+            if strength > self.base[self.me_idx] and (best is None or strength > best[2]):
+                best = ((self.filler, drop), roster, strength)
+        return best or (None, None, None)
 
     def _outside_playoffs(self) -> set[int]:
         def pct(t: Team) -> float:
@@ -246,7 +272,10 @@ class TradeFinder:
         dists = list(self.dists)
         dists[self.me_idx] = self.model.dist(my_roster)
         dists[j] = self.model.dist(their_roster)
-        my_gain = self.model.strength(self.me_idx, dists) - self.base[self.me_idx]
+        # A deal whose open spot takes the free pickup is compared with just making that pickup.
+        vs_pickup = self.free_move if my_add is not None and self.free_move is not None else None
+        baseline = self.free_base if vs_pickup is not None else self.base[self.me_idx]
+        my_gain = self.model.strength(self.me_idx, dists) - baseline
         if my_gain < min_my_gain:
             return None
         their_gain = self.fit_gain(j, dists)
@@ -267,6 +296,12 @@ class TradeFinder:
         rival = j in self.rivals
         if self.mode == "edge":
             reasons = self._edge_reasons(j, give, get, ratio, rival) + reasons
+        if vs_pickup is not None:
+            add, drop = vs_pickup
+            reasons.append(
+                f"Measured against just adding {add.name} for {drop.name}, which needs no trade: "
+                "the odds above count only what the trade adds."
+            )
         return Deal(
             partner_idx=j,
             give=give,
@@ -285,6 +320,7 @@ class TradeFinder:
             my_add=my_add,
             premium=premium,
             warnings=self._warnings(give),
+            vs_pickup=vs_pickup,
         )
 
     def _keystones_lost(self, j: int, get: list[Player], dists: list[Dist]) -> list[str]:
