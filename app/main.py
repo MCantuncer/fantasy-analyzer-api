@@ -59,6 +59,7 @@ from app.news.sources import BY_ID as NEWS_SOURCES
 from app.news.sources import SOURCES as NEWS_SOURCE_LIST
 from app.news.verify import FACT_SOURCE, describe_fact
 from app.reader import DEEP_BATCH_MAX, DeepReader, NoteReader, Reading, create_deep_reader, create_reader
+from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
 from app.scores import build_day, needs_stats, parse_schedule, settled, week_fixtures
 from app.social import (
     CHALLENGE_SECONDS,
@@ -170,6 +171,7 @@ def create_app(
     feedback: FeedbackStore | None = None,
     reader: NoteReader | None = None,
     deep_reader: DeepReader | None = None,
+    rules: RuleStore | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Fantasy Analyzer API", version="0.1.0")
     app.state.espn = espn or EspnClient()
@@ -184,6 +186,7 @@ def create_app(
     app.state.feedback = feedback or create_feedback_store()
     app.state.reader = reader or create_reader()
     app.state.deep_reader = deep_reader or create_deep_reader()
+    app.state.rules = rules or create_rule_store()
     app.state.deep_read_lock = asyncio.Lock()
     app.state.deep_read_last = None
     app.state.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip() or None
@@ -1629,6 +1632,82 @@ def create_app(
             raise HTTPException(403, detail=NOT_YOUR_TEAM)
         rows = await run_in_threadpool(app.state.feedback.mine, seat.user_id, body.league_id, season)
         return schemas.TradeFeedbackList(feedback=[feedback_out(f) for f in rows])
+
+    def rule_out(r: Rule) -> schemas.TradeRule:
+        return schemas.TradeRule(
+            id=r.id, kind=r.kind, value=r.value, label=r.label, why=r.why, created_at=iso(r.created_at)
+        )
+
+    async def rule_seat(authorization: str | None, league_id: int, season: int | None, team_id: int) -> Seat:
+        seat = await linked(authorization, league_id, season or current_season(), required=True)
+        if seat.team_id != team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        return seat
+
+    @app.post(
+        "/api/trade-rules",
+        response_model=schemas.TradeRule,
+        responses={
+            400: {"model": schemas.ErrorBody},
+            401: {"model": schemas.ErrorBody},
+            403: {"model": schemas.ErrorBody},
+        },
+    )
+    async def add_trade_rule(
+        body: schemas.TradeRuleRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.TradeRule:
+        """Adds one of this manager's trade rules. Adding a rule they already have returns it unchanged."""
+        seat = await rule_seat(authorization, body.league_id, body.season, body.team_id)
+        value = body.value.strip()
+        bad = None
+        if body.kind == "protect_category" and not value:
+            bad = "Say which category to protect."
+        elif body.kind == "skip_team" and (not value.isdigit() or int(value) == seat.team_id):
+            bad = "Say which other team to skip, by its id."
+        elif body.kind == "no_injury_prone":
+            value = ""
+        if bad:
+            raise HTTPException(400, detail={"code": "bad_rule", "message": bad})
+        existing = await run_in_threadpool(app.state.rules.mine, seat.user_id, seat.league_id, seat.season)
+        if len(existing) >= MAX_RULES and not any((r.kind, r.value) == (body.kind, value) for r in existing):
+            raise HTTPException(
+                400, detail={"code": "too_many_rules", "message": f"You can keep up to {MAX_RULES} rules."}
+            )
+        label = {
+            "protect_category": f"Protect {value}",
+            "skip_team": f"Skip {body.team_name.strip() or 'team ' + value}",
+            "no_injury_prone": "No injury-prone players in",
+        }[body.kind]
+        why = body.why.strip()
+        rule = Rule(0, seat.user_id, seat.league_id, seat.season, body.kind, value, label, why, app.state.now())
+        return rule_out(await run_in_threadpool(app.state.rules.add, rule))
+
+    @app.post(
+        "/api/trade-rules/mine",
+        response_model=schemas.TradeRuleList,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def my_trade_rules(
+        body: schemas.TradeRuleListRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.TradeRuleList:
+        """This manager's trade rules in the league, oldest first."""
+        seat = await rule_seat(authorization, body.league_id, body.season, body.team_id)
+        rows = await run_in_threadpool(app.state.rules.mine, seat.user_id, seat.league_id, seat.season)
+        return schemas.TradeRuleList(rules=[rule_out(r) for r in rows])
+
+    @app.post(
+        "/api/trade-rules/delete",
+        response_model=schemas.TradeRuleList,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def delete_trade_rule(
+        body: schemas.TradeRuleDeleteRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.TradeRuleList:
+        """Removes one of this manager's rules and returns the ones left."""
+        seat = await rule_seat(authorization, body.league_id, body.season, body.team_id)
+        await run_in_threadpool(app.state.rules.remove, seat.user_id, body.rule_id)
+        rows = await run_in_threadpool(app.state.rules.mine, seat.user_id, seat.league_id, seat.season)
+        return schemas.TradeRuleList(rules=[rule_out(r) for r in rows])
 
     return app
 
