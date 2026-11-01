@@ -74,6 +74,7 @@ from app.social import (
     valid_reaction,
 )
 from app.store import Store, TradeKey, create_store
+from app.week import category_scores, roster_pro_teams, week_bounds, week_games
 
 # httpx logs request lines at INFO; keep its logs quiet so nothing about a request leaks.
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -1115,6 +1116,28 @@ def create_app(
         out = schemas.Reactions(counts=rc.counts, mine=sorted(rc.mine)) if rc else schemas.Reactions()
         return schemas.ReactionsOut(target=body.target, reactions=out)
 
+    async def overview_games(
+        league_id: int, season: int, creds: EspnCredentials | None, now: datetime
+    ) -> dict[int, schemas.WeekGames]:
+        """Each team's games today and this week. Empty if rosters or the NBA calendar can't be had."""
+        raw_schedule = await pro_schedule(season)
+        if raw_schedule is None:
+            return {}
+        try:
+            lg = await load_league(league_id, season, creds, with_fa=False)
+        except EspnError:
+            return {}
+        try:
+            sched = parse_schedule(raw_schedule)
+        except (KeyError, TypeError, ValueError):
+            logging.getLogger(__name__).warning("NBA calendar has an unexpected shape; overview sent without games")
+            return {}
+        out = {}
+        for team in lg.teams:
+            g = week_games(roster_pro_teams(team.roster), sched, now)
+            out[team.id] = schemas.WeekGames(today=g.today, left=g.left, total=g.total)
+        return out
+
     @app.post(
         "/api/league-overview", response_model=schemas.LeagueOverview, responses={401: {"model": schemas.ErrorBody}}
     )
@@ -1142,6 +1165,9 @@ def create_app(
             r = (t.get("record") or {}).get("overall") or {}
             return f"{r.get('wins', 0)}-{r.get('losses', 0)}" + (f"-{r['ties']}" if r.get("ties") else "")
 
+        def overall(t: dict) -> dict:
+            return (t.get("record") or {}).get("overall") or {}
+
         teams = [
             schemas.OverviewTeam(
                 id=int(t["id"]),
@@ -1150,17 +1176,31 @@ def create_app(
                 record=record(t),
                 has_manager=int(t["id"]) in managers,
                 mine=seat is not None and seat.team_id == int(t["id"]),
+                wins=int(overall(t).get("wins") or 0),
+                losses=int(overall(t).get("losses") or 0),
+                ties=int(overall(t).get("ties") or 0),
+                seed=int(t["playoffSeed"]) if t.get("playoffSeed") else None,
+                games_back=overall(t).get("gamesBack"),
             )
             for t in raw.get("teams", [])
         ]
+        settings = raw.get("settings") or {}
+        stat_ids = [
+            int(i["statId"]) for i in (settings.get("scoringSettings") or {}).get("scoringItems", []) if "statId" in i
+        ]
+        now = app.state.now()
+        games = await overview_games(body.league_id, season, creds, now)
 
         def side(m: dict) -> schemas.MatchupSide:
             score = m.get("cumulativeScore") or {}
+            team_id = int(m["teamId"])
             return schemas.MatchupSide(
-                team_id=int(m["teamId"]),
+                team_id=team_id,
                 wins=int(score.get("wins", 0)),
                 losses=int(score.get("losses", 0)),
                 ties=int(score.get("ties", 0)),
+                categories=[schemas.CategoryScore(**c.__dict__) for c in category_scores(m, stat_ids)],
+                games=games.get(team_id),
             )
 
         matchups = [
@@ -1206,8 +1246,11 @@ def create_app(
         return schemas.LeagueOverview(
             league_id=body.league_id,
             season=season,
-            name=((raw.get("settings") or {}).get("name") or f"League {body.league_id}").strip(),
+            name=(settings.get("name") or f"League {body.league_id}").strip(),
             matchup_period=period,
+            week_start=week_bounds(now)[0].isoformat(),
+            week_end=week_bounds(now)[1].isoformat(),
+            playoff_teams=(settings.get("scheduleSettings") or {}).get("playoffTeamCount"),
             teams=teams,
             matchups=matchups,
             mvp=mvp,
