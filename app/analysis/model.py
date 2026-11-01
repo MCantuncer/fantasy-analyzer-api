@@ -90,19 +90,21 @@ class CategoryModel:
     def row(self, p: Player) -> np.ndarray:
         """(3, C): makes-or-total, attempts, variance contribution for one week."""
         cached = self._rows.get(p.id)
-        if cached is not None:
-            return cached
+        if cached is None:
+            cached = self._rows[p.id] = self._row_of(p.per_game)
+        return cached
+
+    def _row_of(self, per_game: dict[int, float]) -> np.ndarray:
         r = np.zeros((3, len(self.cats)))
         for i, c in enumerate(self.cats):
             if c.ratio:
                 m, a = c.ratio
-                r[0, i] = self.g * p.per_game.get(m, 0.0)
-                r[1, i] = self.g * p.per_game.get(a, 0.0)
+                r[0, i] = self.g * per_game.get(m, 0.0)
+                r[1, i] = self.g * per_game.get(a, 0.0)
             else:
-                avg = max(p.per_game.get(c.stat_id, 0.0), 0.0)
+                avg = max(per_game.get(c.stat_id, 0.0), 0.0)
                 r[0, i] = self.g * avg
                 r[2, i] = self.g * DISPERSION.get(c.stat_id, DEFAULT_DISPERSION) * avg
-        self._rows[p.id] = r
         return r
 
     # ---- generic player value (z-scores), used for lineups and "on paper" checks -------
@@ -119,7 +121,13 @@ class CategoryModel:
         self._z_sd = impact.std(0) + 1e-9
 
     def z_scores(self, p: Player) -> np.ndarray:
-        r = self.row(p)
+        return self._z_of(self.row(p))
+
+    def line_value(self, per_game: dict[int, float]) -> float:
+        """Value of a per-game line on the same scale as ``value``, e.g. a season so far."""
+        return float(self._z_of(self._row_of(per_game)).sum())
+
+    def _z_of(self, r: np.ndarray) -> np.ndarray:
         impact = np.where(self.is_ratio, r[0] - self._lg_pct * r[1], r[0])
         z = (impact - self._z_mean) / self._z_sd
         return np.where(self.reverse, -z, z)

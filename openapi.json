@@ -2559,6 +2559,14 @@
             "title": "Edge Trades",
             "description": "Edge deals: they get at least equal trade value on paper, you gain clearly more on the court"
           },
+          "vision_trades": {
+            "items": {
+              "$ref": "#/components/schemas/TradeIdea"
+            },
+            "type": "array",
+            "title": "Vision Trades",
+            "description": "Vision deals: players off to a slow start the projection expects to fade, worth more by the playoff weeks; you send players who help their owner now"
+          },
           "pickups": {
             "items": {
               "$ref": "#/components/schemas/PickupIdea"
@@ -5422,6 +5430,14 @@
             "title": "Playoff Week Cats After",
             "description": "The same after the deal"
           },
+          "vision": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Vision",
+            "description": "Vision trades: why the players you get are worth more later than their owner sees now"
+          },
           "category_changes": {
             "additionalProperties": {
               "type": "number"
@@ -5950,6 +5966,14 @@
             ],
             "title": "Playoff Week Cats After",
             "description": "The same after the deal"
+          },
+          "vision": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Vision",
+            "description": "Vision trades: why the players you get are worth more later than their owner sees now"
           },
           "category_changes": {
             "additionalProperties": {
@@ -6653,6 +6677,14 @@
             ],
             "title": "Playoff Week Cats After",
             "description": "The same after the deal"
+          },
+          "vision": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Vision",
+            "description": "Vision trades: why the players you get are worth more later than their owner sees now"
           },
           "category_changes": {
             "additionalProperties": {

@@ -47,6 +47,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | | Feature | Endpoint |
 | --- | --- | --- |
 | 🔁 | **Trade finder:** 1-for-1, 2-for-1 and 1-for-2 deals that help both builds and look fair to the other owner | `/api/analyze` |
+| 🔭 | **Vision trades:** buy players off to a slow start before they bounce back, for a stronger playoff run, checked on past seasons | `/api/analyze` |
 | 🎯 | **Trade for one player:** fit, his owner's needs and the best three offers | `/api/target` |
 | 🛒 | **Pickups:** every healthy free agent against every possible drop | `/api/analyze` |
 | 🎲 | **Season simulation:** 4,000 runs of the remaining schedule in the league's real format | `/api/analyze` |
@@ -284,6 +285,16 @@ Checks the expected-games model (`app/analysis/durability.py`) on past seasons: 
 ```sh
 uv run python -m scripts.durability_backtest        # add --fit to search the constants again
 ```
+
+### Vision-trade backtest
+
+Checks that vision-trade targets are worth more later: at weeks 4 to 12 of past seasons, players off to a slow start (projection 1+ above their season so far) are scored against what they did the rest of the way, and so are players out for a while once they came back:
+
+```sh
+uv run python -m scripts.vision_backtest 744636428 2025 2026
+```
+
+On League A, slow starters played about as well as projected in both seasons (+0.20 projected, +0.16 actual; -0.14 and -0.30), far above their season so far (-1.67, -2.10). Good players back from an absence fell well short of their projection (+1.34 against +4.28; +2.67 against +4.42) and played fewer games than expected, so injured players aren't vision targets yet.
 
 ## Deployment
 

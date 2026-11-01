@@ -147,6 +147,10 @@ class TradeIdea(BaseModel):
         description="My expected categories won per fantasy playoff week against an average team, before the deal",
     )
     playoff_week_cats_after: float | None = Field(default=None, description="The same after the deal")
+    vision: list[str] = Field(
+        default_factory=list,
+        description="Vision trades: why the players you get are worth more later than their owner sees now",
+    )
     category_changes: dict[str, float] = Field(description="Change in my weekly win % per category")
 
 
@@ -207,6 +211,11 @@ class AnalysisReport(BaseModel):
     trades: list[TradeIdea] = Field(description="Fair deals: both teams' categories improve")
     edge_trades: list[TradeIdea] = Field(
         description="Edge deals: they get at least equal trade value on paper, you gain clearly more on the court"
+    )
+    vision_trades: list[TradeIdea] = Field(
+        default_factory=list,
+        description="Vision deals: players off to a slow start the projection expects to fade, worth more by the "
+        "playoff weeks; you send players who help their owner now",
     )
     pickups: list[PickupIdea]
     season: list[SeasonRow]
