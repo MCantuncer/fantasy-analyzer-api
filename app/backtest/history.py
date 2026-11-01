@@ -14,7 +14,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from app.analysis.durability import HISTORY_SEASONS, games_played
+from app.analysis.durability import HISTORY_SEASONS, games_played, long_absences, one_off_candidates
 from app.espn.client import EspnClient, EspnCredentials, LeagueNotFound, LeaguePrivate
 
 # Box score stats the model reads: the scoring stats, makes/attempts, minutes, games played.
@@ -161,4 +161,28 @@ async def load_past_games(season: int, cache_dir: Path, client: EspnClient | Non
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(played))
         out.append({int(k): int(v) for k, v in json.loads(path.read_text()).items()})
+    return out
+
+
+async def load_past_absences(
+    season: int, past: list[dict[int, int]], cache_dir: Path, client: EspnClient | None = None, batch: int = 40
+) -> list[dict[int, list[int]]]:
+    """Long absences in the seasons before ``season`` for every player who could have one set aside.
+
+    Same order as ``past`` (load_past_games). Only players who missed half a season in one of
+    those seasons are fetched (see analysis/durability.py).
+    """
+    wanted = sorted(one_off_candidates(past, {pid for gp in past for pid in gp}))
+    out = []
+    for k in range(len(past)):
+        year = season - 1 - k
+        path = cache_dir / f"absences-{season}-{year}.json"
+        if not path.exists():
+            client = client or EspnClient(timeout=60.0)
+            found: dict[int, list[int]] = {}
+            for i in range(0, len(wanted), batch):
+                found |= long_absences(await client.player_gamelogs(year, wanted[i : i + batch]), year)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(found))
+        out.append({int(k2): v for k2, v in json.loads(path.read_text()).items()})
     return out
