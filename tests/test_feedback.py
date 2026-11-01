@@ -130,5 +130,13 @@ def test_postgres_feedback_store():
     assert [f.reading for f in store.for_deal(1, 999, 2027, deal_key(7, [1, 2], [3])) if f.id == first.id] == [
         {"kind": "rant"}
     ]
+    store.record_reading(first.id, {"kind": "unclear"})
+    assert [f.id for f in store.pending_deep(10) if f.league_id == 999] == [first.id]
+    store.mark_deep_batch([first.id], "batch-999")
+    assert "batch-999" in store.deep_batches() and not [f for f in store.pending_deep(10) if f.league_id == 999]
+    store.record_deep(first.id, "batch-999", {"kind": "clear"})
+    assert "batch-999" not in store.deep_batches()
+    assert next(f for f in store.mine(1, 999, 2027) if f.id == first.id).deep_reading == {"kind": "clear"}
     again = store.save(entry("edge", "good"))
     assert again.id == first.id and again.checks is None and again.reading is None and again.rating == "good"
+    assert again.deep_reading is None and again.deep_batch is None

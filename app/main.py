@@ -58,7 +58,7 @@ from app.news.service import iso as news_iso
 from app.news.sources import BY_ID as NEWS_SOURCES
 from app.news.sources import SOURCES as NEWS_SOURCE_LIST
 from app.news.verify import FACT_SOURCE, describe_fact
-from app.reader import NoteReader, Reading, create_reader
+from app.reader import DEEP_BATCH_MAX, DeepReader, NoteReader, Reading, create_deep_reader, create_reader
 from app.scores import build_day, needs_stats, parse_schedule, settled, week_fixtures
 from app.social import (
     CHALLENGE_SECONDS,
@@ -82,6 +82,7 @@ LEAGUE_TTL = float(os.getenv("LEAGUE_CACHE_SECONDS", "600"))
 SCHEDULE_TTL = 6 * 3600.0  # the NBA calendar changes rarely (postponements, NBA Cup knockouts)
 PAST_GAMES_TTL = 7 * 24 * 3600.0  # finished seasons don't change
 ADP_TTL = 6 * 3600.0  # ESPN's ADP barely moves once the season's drafts are done
+DEEP_READ_MIN_SECONDS = 300.0  # the deep-read cron does nothing if it ran in the last five minutes
 STATUS_FOR_ERROR = {LeaguePrivate: 401, LeagueNotFound: 404}
 # How long a trade-of-the-day request waits for the scan before answering "pending".
 DAILY_WAIT = float(os.getenv("DAILY_TRADE_WAIT_SECONDS", "20"))
@@ -168,6 +169,7 @@ def create_app(
     google_transport=None,
     feedback: FeedbackStore | None = None,
     reader: NoteReader | None = None,
+    deep_reader: DeepReader | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Fantasy Analyzer API", version="0.1.0")
     app.state.espn = espn or EspnClient()
@@ -181,6 +183,9 @@ def create_app(
     app.state.accounts = accounts or create_account_store()
     app.state.feedback = feedback or create_feedback_store()
     app.state.reader = reader or create_reader()
+    app.state.deep_reader = deep_reader or create_deep_reader()
+    app.state.deep_read_lock = asyncio.Lock()
+    app.state.deep_read_last = None
     app.state.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip() or None
     app.state.login_attempts = defaultdict(deque)
     app.state.basics = TTLCache(60)
@@ -1312,6 +1317,8 @@ def create_app(
         entry = next((f for f in entries if f.text), None)
         if entry is None:
             return None
+        if entry.deep_reading is not None:  # Opus's closer read, when an unclear note got one
+            return Reading.model_validate(entry.deep_reading)
         if entry.reading is not None:
             return Reading.model_validate(entry.reading)
         if app.state.reader is None:
@@ -1321,6 +1328,36 @@ def create_app(
         if reading is not None:
             await run_in_threadpool(app.state.feedback.record_reading, entry.id, reading.model_dump())
         return reading
+
+    @app.get("/api/feedback/deep-read")
+    async def feedback_deep_read() -> dict:
+        """Collects finished closer reads of unclear notes and sends new ones, in batches. Called by a cron.
+
+        Safe to call often: each note is sent once, and nothing runs more than every few minutes.
+        """
+        reader = app.state.deep_reader
+        if reader is None:
+            return {"ok": True, "enabled": False}
+        async with app.state.deep_read_lock:
+            now = app.state.now()
+            last = app.state.deep_read_last
+            if last is not None and (now - last).total_seconds() < DEEP_READ_MIN_SECONDS:
+                return {"ok": True, "enabled": True, "skipped": True}
+            app.state.deep_read_last = now
+            store = app.state.feedback
+            collected = 0
+            for batch_id in await run_in_threadpool(store.deep_batches):
+                results = await run_in_threadpool(reader.collect, batch_id)
+                for feedback_id, deep in (results or {}).items():
+                    data = deep.model_dump() if deep is not None else None
+                    await run_in_threadpool(store.record_deep, feedback_id, batch_id, data)
+                    collected += deep is not None
+            pending = await run_in_threadpool(store.pending_deep, DEEP_BATCH_MAX)
+            notes = [(f.id, f.text, schemas.TradeIdea(**f.idea), f.rating, f.reasons) for f in pending]
+            batch_id = await run_in_threadpool(reader.submit, notes) if notes else None
+            if batch_id is not None:
+                await run_in_threadpool(store.mark_deep_batch, [f.id for f in pending], batch_id)
+            return {"ok": True, "enabled": True, "collected": collected, "sent": len(notes) if batch_id else 0}
 
     async def score_day(season: int, day: int, league_id: int, creds: EspnCredentials | None, sched) -> dict:
         """One day's games. Finished days come from the store; a day in progress is cached for a minute."""

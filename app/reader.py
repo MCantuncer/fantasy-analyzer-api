@@ -124,3 +124,93 @@ class ClaudeNoteReader:
 
 def create_reader() -> NoteReader | None:
     return ClaudeNoteReader() if os.getenv("ANTHROPIC_API_KEY", "").strip() else None
+
+
+# ---- deep read of unclear notes -----------------------------------------------------------
+
+DEEP_MODEL = "claude-opus-5-5"
+DEEP_BATCH_MAX = 100
+
+DEEP_SYSTEM = (
+    SYSTEM
+    + """
+
+This note was first marked unclear: it seemed to make a point none of our checks covers. Read it \
+closely. Say what the manager's point is, map it onto our reasons and checks where you honestly can, \
+and if a check we don't have would be needed to verify it, describe that check in one sentence \
+(what data it would compare). Leave missing_check empty when our checks cover the point. kind is \
+rant only if, on a close read, there is no point at all."""
+)
+
+
+class DeepReading(Reading):
+    missing_check: str = Field(description="A check we'd need to verify the point, in one sentence; empty if none")
+
+
+class DeepReader(Protocol):
+    def submit(self, notes: list[tuple[int, str, schemas.TradeIdea, str, list[str]]]) -> str | None: ...
+    def collect(self, batch_id: str) -> dict[int, DeepReading | None] | None: ...
+
+
+class ClaudeDeepReader:
+    """Opus reads the unclear notes in a batch: half price, answers within a day (usually an hour)."""
+
+    def __init__(self, client=None, model: str = DEEP_MODEL):
+        import anthropic
+
+        self.client = client or anthropic.Anthropic(timeout=60.0, max_retries=2)
+        self.model = model
+
+    def submit(self, notes: list[tuple[int, str, schemas.TradeIdea, str, list[str]]]) -> str | None:
+        import anthropic
+
+        schema = anthropic.transform_schema(DeepReading)
+        requests = [
+            {
+                "custom_id": str(feedback_id),
+                "params": {
+                    "model": self.model,
+                    "max_tokens": 4096,
+                    "system": [{"type": "text", "text": DEEP_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+                    "messages": [{"role": "user", "content": describe(idea, rating, reasons, note)}],
+                    "output_config": {"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
+                },
+            }
+            for feedback_id, note, idea, rating, reasons in notes[:DEEP_BATCH_MAX]
+        ]
+        if not requests:
+            return None
+        try:
+            return self.client.messages.batches.create(requests=requests).id
+        except anthropic.APIError as exc:
+            log.warning("deep read batch not sent: %s", exc)
+            return None
+
+    def collect(self, batch_id: str) -> dict[int, DeepReading | None] | None:
+        """Each note's reading once the batch has ended (None for one that failed), or None while it runs."""
+        import anthropic
+
+        try:
+            if self.client.messages.batches.retrieve(batch_id).processing_status != "ended":
+                return None
+            out: dict[int, DeepReading | None] = {}
+            for r in self.client.messages.batches.results(batch_id):
+                out[int(r.custom_id)] = _parse_deep(r.result)
+            return out
+        except anthropic.APIError as exc:
+            log.warning("deep read batch %s not collected: %s", batch_id, exc)
+            return None
+
+
+def _parse_deep(result) -> DeepReading | None:
+    if result.type != "succeeded" or result.message.stop_reason != "end_turn":
+        return None
+    text = next((b.text for b in result.message.content if b.type == "text"), "")
+    try:
+        return DeepReading.model_validate_json(text)
+    except ValueError:
+        return None
+
+
+def create_deep_reader() -> DeepReader | None:
+    return ClaudeDeepReader() if os.getenv("ANTHROPIC_API_KEY", "").strip() else None
