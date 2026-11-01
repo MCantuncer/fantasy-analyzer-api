@@ -10,6 +10,9 @@ from app.analysis.trades import (
     MAX_VALUE_RATIO,
     MIN_THEIR_GAIN,
     MIN_VALUE_RATIO,
+    VISION_MIN_GAMES,
+    VISION_MIN_PLAYOFF_GAIN,
+    VISION_MIN_SEASON_GAIN,
     TradeFinder,
     acceptance_label,
     acceptance_odds,
@@ -226,3 +229,46 @@ def test_trade_odds_start_from_the_free_pickup_when_the_deal_uses_it(league):
         else:
             assert t.playoff_pct_before > today
         assert t.playoff_pct_after >= t.playoff_pct_before
+
+
+def _slow_starter(league, name="Walker Kessler"):
+    """A copy of the league where a rival's player has had a bad first 10 games, and owners see it."""
+    lg = copy.deepcopy(league)
+    model = CategoryModel(lg)
+    me = next(i for i, t in enumerate(lg.teams) if t.id == 3)
+    star = next(p for t in lg.teams for p in t.roster if p.name == name)
+    star.games_played = 10
+    star.season_line = {k: 0.6 * v for k, v in star.per_game.items()}
+    star.season_rank = star.recent_rank = 150
+    return lg, model, me, star
+
+
+def test_vision_signal_is_a_slow_start_the_projection_expects_to_fade(league):
+    lg, model, me, star = _slow_starter(league)
+    finder = TradeFinder(lg, model, me, keep=set(), mode="vision")
+    assert finder.vision_signals(star) and "Slow start" in finder.vision_signals(star)[0]
+    # Playing to his projection, too few games, or out: no signal.
+    steady = copy.copy(star)
+    steady.season_line = dict(star.per_game)
+    assert finder.vision_signals(steady) == []
+    early = copy.copy(star)
+    early.games_played = VISION_MIN_GAMES - 1
+    assert finder.vision_signals(early) == []
+    hurt = copy.copy(star)
+    hurt.injury_status = "OUT"
+    assert finder.vision_signals(hurt) == []
+
+
+def test_vision_deals_buy_the_target_and_pay_in_the_playoffs(league):
+    lg, model, me, star = _slow_starter(league)
+    finder = TradeFinder(lg, model, me, keep=set(), mode="vision")
+    deals = finder.candidates()
+    assert deals
+    for d in deals:
+        assert d.get == [star] and d.vision
+        assert all(p.available for p in d.give) and 1 <= len(d.give) <= 2
+        assert d.playoff_gain >= VISION_MIN_PLAYOFF_GAIN
+        assert d.my_gain >= VISION_MIN_SEASON_GAIN
+    ranked = finder.shortlist()
+    keys = [finder.rank_key(d) for d in ranked]
+    assert keys == sorted(keys, reverse=True)
