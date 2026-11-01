@@ -168,6 +168,56 @@ def body_part(text: str) -> str | None:
     return m.group(1) if m else None
 
 
+# A reported timeline: "out 4-6 weeks", "will miss two to three weeks", "re-evaluated in two
+# weeks", "will miss 3 games", "out for the season". Read from normalized text, where "4-6"
+# reads "4 6". Only the number and its unit are taken, never a guess from the injury's kind.
+NUMBERS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "twelve": 12,
+}  # fmt: skip
+_NUM = r"(\d{1,2}|" + "|".join(NUMBERS) + r")"
+UNIT_DAYS = {"day": 1.0, "week": 7.0, "month": 30.0}
+_SPAN = re.compile(rf"\b{_NUM}(?: to | ){_NUM} (day|week|month)s?\b|\b{_NUM} (day|week|month)s?\b")
+_GAMES = re.compile(
+    rf"\b(?:miss|missing|misses|sit out|sidelined for)(?: at least| the next)? {_NUM} (?:more )?games?\b"
+)
+_SEASON = re.compile(
+    r"\b(out for the (rest of the )?season|season ending|rest of the season|remainder of the season)\b"
+)
+SEASON = float("inf")
+
+
+@dataclass(frozen=True)
+class Timeline:
+    days: float = 0.0  # middle of the reported span, from the report; inf: out for the season
+    games: int = 0  # or a number of games, when that's what was reported
+
+
+def _number(word: str) -> int:
+    return int(word) if word.isdigit() else NUMBERS[word]
+
+
+def timeline(text: str) -> Timeline | None:
+    """The absence a news item reports, if it gives one."""
+    t = normalize(text)
+    if _SEASON.search(t):
+        return Timeline(days=SEASON)
+    m = _GAMES.search(t)
+    if m:
+        return Timeline(games=_number(m.group(1)))
+    m = _SPAN.search(t)
+    if not m:
+        return None
+    if m.group(1):
+        low, high, unit = _number(m.group(1)), _number(m.group(2)), m.group(3)
+    else:
+        low = high = _number(m.group(4))
+        unit = m.group(5)
+    if high < low:
+        return None
+    return Timeline(days=(low + high) / 2 * UNIT_DAYS[unit])
+
+
 @dataclass
 class Tags:
     kind: Kind

@@ -17,13 +17,25 @@ below the season before), so older seasons overstate them. ``scripts/absence_bac
 fits it and checks the rule "fit on the last season" on the seasons after. A player's
 games-played record (durability.py) was tried as a second input and didn't help: it
 says how often a player gets hurt, not how long he stays out.
+
+Early in an absence the table knows nothing of the injury: a torn ligament and a
+sprained ankle look the same after one game. When the news reports a timeline ("out
+4-6 weeks", "will miss 3 games", "out for the season") after his last game, the games
+his team plays before the middle of that span count instead, if that's more. A
+timeline only lengthens the estimate: teams often give the date of a re-evaluation,
+not of a return, and the table is what past absences of that length did. Reported
+timelines can't be checked on past seasons (there's no archive of old news), so the
+estimate says when it rests on one.
 """
 
 from __future__ import annotations
 
 import bisect
+import math
+from dataclasses import dataclass
 
 from app.espn.parse import IR_SLOT, League, Player
+from app.news.extract import Timeline
 
 # Expected team games still to miss, by team games missed in a row so far (from that
 # number up to the next). Fitted on 2025-26 by scripts/absence_backtest.py; made
@@ -113,19 +125,52 @@ def season_end_run(logs: list[dict], season: int) -> dict[int, int]:
     return out
 
 
-def attach(league: League, played: dict[int, set[int]], last_season_run: dict[int, int] | None = None) -> None:
+@dataclass(frozen=True)
+class Report:
+    """A news item reporting how long a player is out."""
+
+    day: int  # scoring period it was published on
+    timeline: Timeline
+    title: str
+
+
+def reported_missed(report: Report, team_days: list[int], today: int) -> float:
+    """Team games from today on that fall inside the reported absence."""
+    upcoming = [d for d in team_days if d >= today]
+    if report.timeline.games:
+        since = sum(report.day <= d < today for d in team_days)  # games already missed since the report
+        return float(max(report.timeline.games - since, 0))
+    if math.isinf(report.timeline.days):
+        return float(len(upcoming))
+    return float(sum(d < report.day + report.timeline.days for d in upcoming))
+
+
+def attach(
+    league: League,
+    played: dict[int, set[int]],
+    last_season_run: dict[int, int] | None = None,
+    reports: dict[int, Report] | None = None,
+) -> None:
     """Sets the expected games still to miss of every player listed out.
 
     ``played`` holds the days each of them played this season; ``last_season_run`` the
-    games they missed in a row at the end of last season.
+    games they missed in a row at the end of last season; ``reports`` the latest news
+    item giving a timeline for each, if any.
     """
     cal = league.calendar
     if cal is None:
         return
     last_season_run = last_season_run or {}
+    reports = reports or {}
     for p in [p for t in league.teams for p in t.roster] + list(league.free_agents):
         if not is_out(p) or p.id not in played:
             continue
         days = sorted(cal.team_days.get(p.pro_team_id, ()))
         streak = missed_in_a_row(days, played[p.id], cal.today, last_season_run.get(p.id, 0))
         p.games_out = expected_missed(streak)
+        report = reports.get(p.id)
+        # A report from before his last game is about an absence that's over.
+        if report and report.day >= max(played[p.id], default=0):
+            reported = reported_missed(report, days, cal.today)
+            if reported > p.games_out:
+                p.games_out, p.out_report = reported, report.title

@@ -4,6 +4,7 @@ import pytest
 
 from app.analysis.absence import (
     REMAINING,
+    Report,
     attach,
     expected_missed,
     is_out,
@@ -13,6 +14,7 @@ from app.analysis.absence import (
 )
 from app.analysis.model import CategoryModel
 from app.espn.parse import IR_SLOT
+from app.news.extract import timeline
 
 
 def _line(season, day, played, source=0):
@@ -95,3 +97,39 @@ def test_only_players_listed_out_get_games_out(league):
     assert healthy.games_out is None
     # Without game lines the flat guess stays.
     assert CategoryModel(lg).back_date(replace(p, injury_status="OUT")) is None
+
+
+def test_a_reported_timeline_lengthens_the_estimate(league):
+    p = next(p for t in league.teams for p in t.roster if p.injury_status == "ACTIVE" and p.pro_team_id)
+    cal = replace(league.calendar, today=40)
+    league = replace(league, calendar=cal)
+    team_days = sorted(cal.team_days[p.pro_team_id])
+    last = [d for d in team_days if d < cal.today][-1]
+
+    def estimate(report):
+        out = replace(p, injury_status="OUT")
+        lg = replace(league, teams=[replace(league.teams[0], roster=[out])], free_agents=[])
+        attach(lg, {out.id: {last}}, reports={out.id: report} if report else None)
+        return out
+
+    weeks = estimate(Report(cal.today, timeline("Out 4-6 weeks with an ankle sprain"), "Out 4-6 weeks"))
+    assert weeks.games_out == sum(cal.today <= d < cal.today + 35 for d in team_days)
+    assert weeks.games_out > expected_missed(0) and weeks.out_report == "Out 4-6 weeks"
+    season = estimate(Report(cal.today, timeline("Out for the season after surgery"), "Season over"))
+    assert season.games_out == sum(d >= cal.today for d in team_days)
+    # A short timeline never cuts the estimate, and a report older than his last game is ignored.
+    short = estimate(Report(cal.today, timeline("Will miss 1 game"), "One game"))
+    assert short.games_out == expected_missed(0) and short.out_report is None
+    old = estimate(Report(last - 5, timeline("Out 4-6 weeks"), "Old news"))
+    assert old.games_out == expected_missed(0)
+    assert estimate(None).out_report is None
+
+
+def test_timelines_are_read_from_the_words():
+    assert timeline("Jalen Williams (ankle) out 4-6 weeks").days == 35
+    assert timeline("Banchero will miss two to three weeks").days == 17.5
+    assert timeline("Flagg to be re-evaluated in two weeks").days == 14
+    assert timeline("LaVine will miss at least 3 games").games == 3
+    assert timeline("Embiid out for the season").days == float("inf")
+    assert timeline("Coby White questionable vs Bulls") is None
+    assert timeline("Duren agrees to 5-year extension") is None

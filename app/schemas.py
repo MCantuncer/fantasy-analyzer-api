@@ -91,6 +91,9 @@ class PlayerRef(BaseModel):
     expected_back: str | None = Field(
         default=None, description="Listed out: date of his expected first game back, YYYY-MM-DD"
     )
+    out_report: str | None = Field(
+        default=None, description="Listed out: the news headline games_out rests on, when it reported a timeline"
+    )
 
 
 class CategoryOutlook(BaseModel):

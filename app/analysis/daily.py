@@ -172,6 +172,7 @@ class DailyTrade:
             injury_prone=injury_prone(p),
             games_out=round(p.games_out, 1) if p.games_out is not None else None,
             expected_back=self.model.back_date(p),
+            out_report=p.out_report,
         )
 
     def side(
