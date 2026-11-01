@@ -707,6 +707,7 @@ class Game(BaseModel):
     id: int
     start: str = Field(description="UTC start time, ISO 8601")
     status: Literal["scheduled", "live", "final"]
+    clock: str | None = Field(default=None, description='Live games only: "Q4 2:31", "Half", "End Q3", "OT 0:48"')
     away: GameSide
     home: GameSide
     lines: list[GameLine] = Field(description="Everyone who played, most minutes first")

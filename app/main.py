@@ -50,6 +50,7 @@ from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFou
 from app.espn.parse import League, parse_league
 from app.feed import PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
+from app.gameclock import apply_clocks, fetch_clocks
 from app.news.extract import timeline
 from app.news.facts import PlayerState
 from app.news.service import KEEP as NEWS_KEEP
@@ -174,6 +175,7 @@ def create_app(
     reader: NoteReader | None = None,
     deep_reader: DeepReader | None = None,
     rules: RuleStore | None = None,
+    clock_transport=None,
 ) -> FastAPI:
     app = FastAPI(title="Fantasy Analyzer API", version="0.1.0")
     app.state.espn = espn or EspnClient()
@@ -205,6 +207,9 @@ def create_app(
     # (season, player id) -> his long absences that season; finished seasons don't change.
     app.state.past_absences = TTLCache(PAST_GAMES_TTL, max_items=20_000)
     app.state.score_days = TTLCache(LIVE_SCORES_TTL)
+    # Quarter and clock from ESPN's scoreboard, by date; refreshed as often as live scores.
+    app.state.clocks = TTLCache(LIVE_SCORES_TTL)
+    app.state.clock_transport = clock_transport
     app.state.settled_days = TTLCache(7 * 24 * 3600, max_items=512)
     app.state.score_locks = defaultdict(asyncio.Lock)
     app.state.now = lambda: datetime.now(UTC)
@@ -1462,6 +1467,16 @@ def create_app(
                 app.state.score_days.set(key, body)
             return body
 
+    async def with_clocks(data: dict, day_date) -> dict:
+        """Adds the quarter and clock to games in progress, and ends games ESPN has called final."""
+        if day_date is None or not any(g["status"] == "live" for g in data["games"]):
+            return data
+        clocks = app.state.clocks.get(day_date)
+        if clocks is None:
+            clocks = await fetch_clocks(day_date, app.state.clock_transport)
+            app.state.clocks.set(day_date, clocks or {})
+        return apply_clocks(data, clocks) if clocks else data
+
     @app.post("/api/scores", response_model=schemas.ScoreDay, responses={401: {"model": schemas.ErrorBody}})
     async def scores(
         body: schemas.ScoresRequest,
@@ -1485,6 +1500,7 @@ def create_app(
         if day not in sched.games:
             raise HTTPException(404, detail={"code": "no_games", "message": "No NBA games that day."})
         data = await score_day(season, day, body.league_id, creds, sched)
+        data = await with_clocks(data, sched.date_of(day))
         owners = {p.id: t.id for t in lg.teams for p in t.roster}
         games = [
             schemas.Game(
