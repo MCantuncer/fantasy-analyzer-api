@@ -12,7 +12,7 @@ from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.durability import injury_prone
 from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
-from app.analysis.sim import EACH_CATEGORY, simulate_season
+from app.analysis.sim import EACH_CATEGORY, SeasonSim, simulate_season
 from app.analysis.tiers import droppable, has_market, tier
 from app.analysis.trades import Deal, Mode, TradeFinder, acceptance_label
 from app.espn.parse import League, Player, Team
@@ -51,6 +51,10 @@ def league_summary(league: League) -> schemas.LeagueSummary:
     )
 
 
+def same_dist(a: Dist, b: Dist) -> bool:
+    return a is b or (np.array_equal(a.mu, b.mu) and np.array_equal(a.sd, b.sd))
+
+
 class Analyzer:
     def __init__(
         self,
@@ -71,6 +75,7 @@ class Analyzer:
         mine = {p.id for p in self.me.roster}
         not_for_sale = {pid for pid in not_for_sale_player_ids or [] if pid not in mine}
         self.premium = OwnerPremium(league, self.model, self.perceived, not_for_sale)
+        self._sim: SeasonSim | None = None  # drawn on the first what-if, shared by every later one
 
     # ---- helpers -----------------------------------------------------------------------
 
@@ -107,10 +112,19 @@ class Analyzer:
     def playoff_pct(
         self, dists: list[Dist], changed: dict[int, list[Player]] | None = None, sims: int = WHAT_IF_SIMS
     ) -> float:
-        res = simulate_season(
-            self.league, dists, self.model.reverse, n_sims=sims, period_dists=self.period_dists(changed)
-        )
-        return float(res.playoff_pct[self.idx])
+        """My playoff odds with these projections. ``changed`` holds the rosters that differ from today's."""
+        if sims != WHAT_IF_SIMS:
+            res = simulate_season(
+                self.league, dists, self.model.reverse, n_sims=sims, period_dists=self.period_dists(changed)
+            )
+            return float(res.playoff_pct[self.idx])
+        if self._sim is None:
+            self._sim = SeasonSim(
+                self.league, self.dists, self.model.reverse, n_sims=WHAT_IF_SIMS, period_dists=self.period_dists()
+            )
+        moved = set(changed or {}) | {i for i, d in enumerate(dists) if not same_dist(d, self.dists[i])}
+        period_dists = self.period_dists(changed) if moved else None
+        return float(self._sim.what_if(moved, dists, period_dists).playoff_pct[self.idx])
 
     def trade_idea(
         self, finder: TradeFinder, d: Deal, before: float, after: float, base_cats: np.ndarray
