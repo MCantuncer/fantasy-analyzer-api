@@ -1,6 +1,6 @@
 name: News feed sample
 
-# One-off (run 2): prints every item the news sources return, to label a sample for the news filter.
+# One-off (run 3): checks candidate news sources for reachability, size and freshness.
 on:
   push:
     branches: [feature/news-feed-sample]
@@ -9,29 +9,66 @@ permissions:
   contents: read
 
 jobs:
-  sample:
+  probe:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: uv sync --locked
       - run: |
-          uv run python - <<'PY'
-          import asyncio, json, httpx
-          from dataclasses import asdict
-          from app.news.sources import SOURCES, fetch
-          async def main():
-              for s in SOURCES:
-                  if s.id == "espn_players":
-                      continue
+          python3 - <<'PY'
+          import json, re, urllib.request, urllib.parse, email.utils, datetime as dt
+          UA = {"User-Agent": "Mozilla/5.0 (fantasy-analyzer news probe)"}
+          def get(u):
+              try:
+                  r = urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=20)
+                  return r.status, r.headers.get("content-type",""), r.read().decode("utf-8","replace")
+              except Exception as e:
+                  return getattr(e, "code", "ERR"), repr(e)[:80], ""
+          now = dt.datetime.now(dt.timezone.utc)
+          FEEDS = {
+            "rotowire_rss": "https://www.rotowire.com/rss/news.php?sport=NBA",
+            "rotoworld_page": "https://www.nbcsports.com/fantasy/basketball/player-news",
+            "rotoballer_feed": "https://www.rotoballer.com/category/nba-fantasy-basketball-advice/feed",
+            "rotoballer_news": "https://www.rotoballer.com/player-news?sport=nba",
+            "fantasypros_rss": "https://www.fantasypros.com/nba/rss/news.xml",
+            "fantasypros_page": "https://www.fantasypros.com/nba/injury-news.php",
+            "rotogrinders_page": "https://rotogrinders.com/lineups/nba",
+            "fantasylabs_news": "https://www.fantasylabs.com/nba/news/",
+            "underdog_news": "https://underdognetwork.com/basketball/news",
+            "espn_news": "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/news?limit=50",
+            "nba_injury_page": "https://official.nba.com/nba-injury-report-2026-27-season/",
+            "reddit_fbb": "https://www.reddit.com/r/fantasybball/new/.rss?limit=50",
+            "reddit_nba": "https://www.reddit.com/r/nba/new/.rss?limit=50",
+            "hoopsrumors": "https://www.hoopsrumors.com/feed",
+            "stein": "https://marcstein.substack.com/feed",
+            "nitter": "https://nitter.net/UnderdogNBA/rss",
+            "x_profile": "https://x.com/UnderdogNBA",
+          }
+          def newest(body):
+              ds = []
+              for m in re.findall(r"<pubDate>([^<]+)</pubDate>|<updated>([^<]+)</updated>", body):
+                  s = m[0] or m[1]
                   try:
-                      items = await fetch(s)
-                  except Exception as e:
-                      print("SOURCEERR", s.id, repr(e)); continue
-                  print("SOURCE", s.id, len(items))
-                  for it in items:
-                      d = asdict(it); d["published"] = it.published.isoformat()
-                      print("ITEM", json.dumps(d))
-          asyncio.run(main())
+                      d = email.utils.parsedate_to_datetime(s) if m[0] else dt.datetime.fromisoformat(s.replace("Z","+00:00"))
+                      ds.append(d)
+                  except Exception: pass
+              for s in re.findall(r'"published":"([^"]+)"', body):
+                  try: ds.append(dt.datetime.fromisoformat(s.replace("Z","+00:00")))
+                  except Exception: pass
+              return (len(ds), str(now - max(ds)).split(".")[0]) if ds else (0, "-")
+          for k, u in FEEDS.items():
+              st, ct, body = get(u)
+              print("FEED", k, st, ct[:30], len(body), *newest(body))
+          # Bluesky: who is there, and how fresh.
+          for q in ["underdog nba", "shams charania", "rotowire", "hoops rumors", "fantasypros", "marc stein", "jake fischer", "chris haynes", "nba beat writer", "fantasy basketball", "brett siegel", "the athletic nba", "espn nba", "rotoworld", "fantasylabs", "keith smith"]:
+              st, ct, body = get("https://public.api.bsky.app/xrpc/app.bsky.actor.searchActors?" + urllib.parse.urlencode({"q": q, "limit": 5}))
+              try:
+                  for a in json.loads(body)["actors"]:
+                      print("BSKY", q, "|", a["handle"], "|", a.get("displayName"))
+              except Exception: print("BSKYERR", q, st)
+          for h in ["hoopsrumors.com", "marcstein.bsky.social", "rotowire.bsky.social", "underdognba.bsky.social", "fantasypros.com"]:
+              st, ct, body = get("https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?" + urllib.parse.urlencode({"actor": h, "limit": 20}))
+              try:
+                  f = json.loads(body)["feed"]
+                  ts = [dt.datetime.fromisoformat(p["post"]["record"]["createdAt"].replace("Z","+00:00")) for p in f]
+                  print("BSKYFEED", h, len(f), str(now - max(ts)).split(".")[0] if ts else "-", (f[0]["post"]["record"].get("text","")[:90] if f else "").replace("\n"," "))
+              except Exception: print("BSKYFEEDERR", h, st, body[:80])
           PY
-      - run: curl -sS -A "Mozilla/5.0" https://basketball.realgm.com/rss/wiretap/0/0.xml | head -c 2500
