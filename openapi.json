@@ -731,6 +731,7 @@
     "/api/analyze": {
       "post": {
         "summary": "Analyze",
+        "description": "The whole analysis in one (slow) request. Prefer /api/analyze/job, which never blocks.",
         "operationId": "analyze_api_analyze_post",
         "parameters": [
           {
@@ -799,6 +800,115 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AnalysisReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/analyze/job": {
+      "post": {
+        "summary": "Analyze Job",
+        "description": "Start the team's analysis in the background, or say how far along it is.\n\nAnswers at once. Call again with the same body (every couple of seconds) until\n``status`` is ``done`` (the report is included) or ``failed``.",
+        "operationId": "analyze_job_api_analyze_job_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisJob"
                 }
               }
             }
@@ -1971,6 +2081,136 @@
         }
       }
     },
+    "/api/trade-check": {
+      "post": {
+        "summary": "Trade Check",
+        "description": "Check a trade idea against today's league: what holds up, what doesn't, and the evidence.\n\nEvery check runs; the ones the quick reasons point at come first. When the manager has\ngiven feedback on this deal, the verdicts are kept with it.",
+        "operationId": "trade_check_api_trade_check_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeCheckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeCheck"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/feedback/deep-read": {
+      "get": {
+        "summary": "Feedback Deep Read",
+        "description": "Collects finished closer reads of unclear notes and sends new ones, in batches. Called by a cron.\n\nSafe to call often: each note is sent once, and nothing runs more than every few minutes.",
+        "operationId": "feedback_deep_read_api_feedback_deep_read_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Feedback Deep Read Api Feedback Deep Read Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/scores": {
       "post": {
         "summary": "Scores",
@@ -2189,10 +2429,457 @@
           }
         }
       }
+    },
+    "/api/trade-feedback": {
+      "post": {
+        "summary": "Trade Feedback",
+        "description": "Save what a manager thought of a trade idea, with the idea as they saw it.\n\nGiving feedback on the same deal again replaces the earlier entry.",
+        "operationId": "trade_feedback_api_trade_feedback_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeFeedbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeFeedback"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trade-feedback/mine": {
+      "post": {
+        "summary": "My Trade Feedback",
+        "description": "The feedback this manager gave in the league, newest first.",
+        "operationId": "my_trade_feedback_api_trade_feedback_mine_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeFeedbackListRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeFeedbackList"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trade-rules": {
+      "post": {
+        "summary": "Add Trade Rule",
+        "description": "Adds one of this manager's trade rules. Adding a rule they already have returns it unchanged.",
+        "operationId": "add_trade_rule_api_trade_rules_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeRuleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeRule"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trade-rules/mine": {
+      "post": {
+        "summary": "My Trade Rules",
+        "description": "This manager's trade rules in the league, oldest first.",
+        "operationId": "my_trade_rules_api_trade_rules_mine_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeRuleListRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeRuleList"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trade-rules/delete": {
+      "post": {
+        "summary": "Delete Trade Rule",
+        "description": "Removes one of this manager's rules and returns the ones left.",
+        "operationId": "delete_trade_rule_api_trade_rules_delete_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeRuleDeleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeRuleList"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AnalysisJob": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "done",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "progress": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "description": "Rough share of the work done, 0 to 1"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage",
+            "default": ""
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErrorBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "progress"
+        ],
+        "title": "AnalysisJob",
+        "description": "A team's analysis running in the background. Poll with the same request until it is done."
+      },
       "AnalysisReport": {
         "properties": {
           "league": {
@@ -2243,6 +2930,14 @@
             "title": "Edge Trades",
             "description": "Edge deals: they get at least equal trade value on paper, you gain clearly more on the court"
           },
+          "vision_trades": {
+            "items": {
+              "$ref": "#/components/schemas/TradeIdea"
+            },
+            "type": "array",
+            "title": "Vision Trades",
+            "description": "Vision deals: players off to a slow start the projection expects to fade, worth more by the playoff weeks; you send players who help their owner now"
+          },
           "pickups": {
             "items": {
               "$ref": "#/components/schemas/PickupIdea"
@@ -2275,6 +2970,18 @@
               }
             ],
             "title": "Faab Remaining"
+          },
+          "waiver_priority": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiver Priority",
+            "description": "Your place in the rolling waiver order (1 = first claim), in leagues without FAAB. A successful claim usually moves you to the back."
           },
           "assumptions": {
             "$ref": "#/components/schemas/Assumptions"
@@ -2609,6 +3316,67 @@
           "tag"
         ],
         "title": "CategoryOutlook"
+      },
+      "CategoryScore": {
+        "properties": {
+          "stat": {
+            "type": "string",
+            "title": "Stat",
+            "description": "Category code, e.g. PTS or FG%"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "Running total this week; a fraction for FG% and FT%"
+          },
+          "result": {
+            "type": "string",
+            "title": "Result",
+            "description": "W, L or T for this side so far"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stat",
+          "value",
+          "result"
+        ],
+        "title": "CategoryScore"
+      },
+      "CheckVerdict": {
+        "properties": {
+          "check": {
+            "type": "string",
+            "title": "Check",
+            "description": "free_pickup, noise, lateral_swap, build_conflict, small_sample, injury, ..."
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "not_supported",
+              "cant_check"
+            ],
+            "title": "Status"
+          },
+          "evidence": {
+            "type": "string",
+            "title": "Evidence",
+            "description": "What the data shows, in a sentence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "check",
+          "title",
+          "status",
+          "evidence"
+        ],
+        "title": "CheckVerdict"
       },
       "DeletePostRequest": {
         "properties": {
@@ -3368,6 +4136,41 @@
             "type": "integer",
             "title": "Matchup Period"
           },
+          "week_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week Start",
+            "description": "Monday of this matchup week, ISO date"
+          },
+          "week_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week End",
+            "description": "Sunday of this matchup week, ISO date"
+          },
+          "playoff_teams": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Teams"
+          },
           "teams": {
             "items": {
               "$ref": "#/components/schemas/OverviewTeam"
@@ -3555,6 +4358,30 @@
               }
             ],
             "title": "Unsupported Reason"
+          },
+          "draft_type": {
+            "type": "string",
+            "enum": [
+              "auction",
+              "snake"
+            ],
+            "title": "Draft Type",
+            "default": "auction"
+          },
+          "round_values": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Round Values",
+            "description": "Snake leagues: trade value of the last pick in each draft round, round 1 first. A trade value at or above entry k is worth a round k+1 pick. Null in auction leagues."
           }
         },
         "type": "object",
@@ -3616,6 +4443,25 @@
           "ties": {
             "type": "integer",
             "title": "Ties"
+          },
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/CategoryScore"
+            },
+            "type": "array",
+            "title": "Categories",
+            "description": "Empty when ESPN sent none"
+          },
+          "games": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WeekGames"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None when rosters or the NBA calendar are unavailable"
           }
         },
         "type": "object",
@@ -4110,6 +4956,31 @@
         ],
         "title": "NewsStory"
       },
+      "NoteRead": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "clear",
+              "rant",
+              "unclear"
+            ],
+            "title": "Kind",
+            "description": "clear: maps onto our reasons and checks; rant: venting; unclear: a point no check covers"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "description": "What the note says, in one sentence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "summary"
+        ],
+        "title": "NoteRead"
+      },
       "Notice": {
         "properties": {
           "id": {
@@ -4176,6 +5047,45 @@
             "type": "boolean",
             "title": "Mine",
             "default": false
+          },
+          "wins": {
+            "type": "integer",
+            "title": "Wins",
+            "default": 0
+          },
+          "losses": {
+            "type": "integer",
+            "title": "Losses",
+            "default": 0
+          },
+          "ties": {
+            "type": "integer",
+            "title": "Ties",
+            "default": 0
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed",
+            "description": "ESPN's current standings place, 1 = first"
+          },
+          "games_back": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Games Back",
+            "description": "Category wins behind the leader"
           }
         },
         "type": "object",
@@ -4431,6 +5341,60 @@
             "title": "Owner Premium",
             "description": "What his owner wants on top of trade value, in auction dollars",
             "default": 0.0
+          },
+          "games_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Games Share",
+            "description": "Expected share of his team's remaining games he plays once back from any current injury, from his games-played record. A typical regular plays about 0.73."
+          },
+          "injury_prone": {
+            "type": "boolean",
+            "title": "Injury Prone",
+            "description": "He has missed many games in recent seasons: valued for fewer games",
+            "default": false
+          },
+          "games_out": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Games Out",
+            "description": "Listed out: expected team games he still misses, from how many he has missed in a row"
+          },
+          "expected_back": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Back",
+            "description": "Listed out: date of his expected first game back, YYYY-MM-DD"
+          },
+          "out_report": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Out Report",
+            "description": "Listed out: the news headline games_out rests on, when it reported a timeline"
           }
         },
         "type": "object",
@@ -4833,6 +5797,18 @@
           "mean_rank": {
             "type": "number",
             "title": "Mean Rank"
+          },
+          "playoff_week_cats": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Week Cats",
+            "description": "Expected categories won per fantasy playoff week against an average team, on that week's games"
           }
         },
         "type": "object",
@@ -4979,6 +5955,38 @@
           "playoff_pct_after": {
             "type": "number",
             "title": "Playoff Pct After"
+          },
+          "playoff_week_cats_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Week Cats Before",
+            "description": "My expected categories won per fantasy playoff week against an average team, before the deal"
+          },
+          "playoff_week_cats_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Week Cats After",
+            "description": "The same after the deal"
+          },
+          "vision": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Vision",
+            "description": "Vision trades: why the players you get are worth more later than their owner sees now"
           },
           "category_changes": {
             "additionalProperties": {
@@ -5485,6 +6493,38 @@
             "type": "number",
             "title": "Playoff Pct After"
           },
+          "playoff_week_cats_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Week Cats Before",
+            "description": "My expected categories won per fantasy playoff week against an average team, before the deal"
+          },
+          "playoff_week_cats_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Week Cats After",
+            "description": "The same after the deal"
+          },
+          "vision": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Vision",
+            "description": "Vision trades: why the players you get are worth more later than their owner sees now"
+          },
           "category_changes": {
             "additionalProperties": {
               "type": "number"
@@ -5836,6 +6876,327 @@
         ],
         "title": "TeamSummary"
       },
+      "TradeCheck": {
+        "properties": {
+          "playoff_pct_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Pct Before",
+            "description": "Today's odds, None when the idea is stale"
+          },
+          "playoff_pct_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Pct After"
+          },
+          "stale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stale",
+            "description": "Why the idea can't be rebuilt from today's rosters"
+          },
+          "verdicts": {
+            "items": {
+              "$ref": "#/components/schemas/CheckVerdict"
+            },
+            "type": "array",
+            "title": "Verdicts"
+          },
+          "read_as": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NoteRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the manager's note was read, when it was"
+          }
+        },
+        "type": "object",
+        "required": [
+          "verdicts"
+        ],
+        "title": "TradeCheck"
+      },
+      "TradeCheckRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          },
+          "idea": {
+            "$ref": "#/components/schemas/TradeIdea",
+            "description": "The idea as it was shown"
+          },
+          "reasons": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "fake_gain",
+                "wont_accept",
+                "bad_for_build",
+                "player_concern",
+                "already_tried",
+                "other"
+              ]
+            },
+            "type": "array",
+            "maxItems": 6,
+            "title": "Reasons",
+            "description": "Quick reasons: their checks run first"
+          },
+          "keep_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Keep Player Ids",
+            "description": "Players never suggested as drops"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id",
+          "idea"
+        ],
+        "title": "TradeCheckRequest"
+      },
+      "TradeFeedback": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "trades",
+              "edge",
+              "shop",
+              "trade_for",
+              "trade_of_day"
+            ],
+            "title": "Source"
+          },
+          "rating": {
+            "type": "string",
+            "enum": [
+              "bad",
+              "good"
+            ],
+            "title": "Rating"
+          },
+          "reasons": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "fake_gain",
+                "wont_accept",
+                "bad_for_build",
+                "player_concern",
+                "already_tried",
+                "other"
+              ]
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "idea": {
+            "$ref": "#/components/schemas/TradeIdea"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "description": "When it was given (or last changed), UTC"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "rating",
+          "reasons",
+          "text",
+          "idea",
+          "created_at"
+        ],
+        "title": "TradeFeedback"
+      },
+      "TradeFeedbackList": {
+        "properties": {
+          "feedback": {
+            "items": {
+              "$ref": "#/components/schemas/TradeFeedback"
+            },
+            "type": "array",
+            "title": "Feedback",
+            "description": "This manager's feedback in the league, newest first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "feedback"
+        ],
+        "title": "TradeFeedbackList"
+      },
+      "TradeFeedbackListRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id"
+        ],
+        "title": "TradeFeedbackListRequest"
+      },
+      "TradeFeedbackRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "trades",
+              "edge",
+              "shop",
+              "trade_for",
+              "trade_of_day"
+            ],
+            "title": "Source",
+            "description": "Which list the idea was shown in"
+          },
+          "rating": {
+            "type": "string",
+            "enum": [
+              "bad",
+              "good"
+            ],
+            "title": "Rating"
+          },
+          "reasons": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "fake_gain",
+                "wont_accept",
+                "bad_for_build",
+                "player_concern",
+                "already_tried",
+                "other"
+              ]
+            },
+            "type": "array",
+            "maxItems": 6,
+            "title": "Reasons",
+            "description": "Quick reasons, any order"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Text",
+            "description": "What the manager wrote, in their own words",
+            "default": ""
+          },
+          "idea": {
+            "$ref": "#/components/schemas/TradeIdea",
+            "description": "The idea exactly as it was shown"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id",
+          "source",
+          "rating",
+          "idea"
+        ],
+        "title": "TradeFeedbackRequest"
+      },
       "TradeIdea": {
         "properties": {
           "partner_team_id": {
@@ -5966,6 +7327,38 @@
           "playoff_pct_after": {
             "type": "number",
             "title": "Playoff Pct After"
+          },
+          "playoff_week_cats_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Week Cats Before",
+            "description": "My expected categories won per fantasy playoff week against an average team, before the deal"
+          },
+          "playoff_week_cats_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Week Cats After",
+            "description": "The same after the deal"
+          },
+          "vision": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Vision",
+            "description": "Vision trades: why the players you get are worth more later than their owner sees now"
           },
           "category_changes": {
             "additionalProperties": {
@@ -6122,6 +7515,199 @@
           "season"
         ],
         "title": "TradeOfTheDay"
+      },
+      "TradeRule": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "protect_category",
+              "skip_team",
+              "no_injury_prone"
+            ],
+            "title": "Kind"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "How the rule reads, e.g. 'Protect TO'"
+          },
+          "why": {
+            "type": "string",
+            "title": "Why"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "value",
+          "label",
+          "why",
+          "created_at"
+        ],
+        "title": "TradeRule"
+      },
+      "TradeRuleDeleteRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          },
+          "rule_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Rule Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id",
+          "rule_id"
+        ],
+        "title": "TradeRuleDeleteRequest"
+      },
+      "TradeRuleList": {
+        "properties": {
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/TradeRule"
+            },
+            "type": "array",
+            "title": "Rules"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rules"
+        ],
+        "title": "TradeRuleList"
+      },
+      "TradeRuleListRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id"
+        ],
+        "title": "TradeRuleListRequest"
+      },
+      "TradeRuleRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "protect_category",
+              "skip_team",
+              "no_injury_prone"
+            ],
+            "title": "Kind"
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 40,
+            "title": "Value",
+            "description": "Category name for protect_category, team id for skip_team, else empty",
+            "default": ""
+          },
+          "team_name": {
+            "type": "string",
+            "maxLength": 60,
+            "title": "Team Name",
+            "description": "For skip_team: the team's name, for the label",
+            "default": ""
+          },
+          "why": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Why",
+            "description": "Where the rule came from, in a sentence",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id",
+          "kind"
+        ],
+        "title": "TradeRuleRequest"
       },
       "TradeSide": {
         "properties": {
@@ -6401,6 +7987,32 @@
           "voter"
         ],
         "title": "VoteRequest"
+      },
+      "WeekGames": {
+        "properties": {
+          "today": {
+            "type": "integer",
+            "title": "Today",
+            "description": "Games today (US date) by rostered players outside IR, started or not"
+          },
+          "left": {
+            "type": "integer",
+            "title": "Left",
+            "description": "Games this week that have not tipped off yet"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Every game this week"
+          }
+        },
+        "type": "object",
+        "required": [
+          "today",
+          "left",
+          "total"
+        ],
+        "title": "WeekGames"
       }
     }
   }

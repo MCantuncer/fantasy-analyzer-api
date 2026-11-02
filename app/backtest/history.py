@@ -14,7 +14,8 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from app.espn.client import EspnClient, EspnCredentials, LeagueNotFound
+from app.analysis.durability import HISTORY_SEASONS, games_played, long_absences, one_off_candidates
+from app.espn.client import EspnClient, EspnCredentials, LeagueNotFound, LeaguePrivate
 
 # Box score stats the model reads: the scoring stats, makes/attempts, minutes, games played.
 BOX_STATS = {"0", "1", "2", "3", "6", "11", "13", "14", "15", "16", "17", "40", "42"}
@@ -104,7 +105,7 @@ async def fetch_history(
     pool = await client.player_pool(season, league_id, creds)
     try:
         prior_pool = await client.player_pool(season - 1, league_id, creds)
-    except LeagueNotFound:  # a league's first season: no prior from the same league
+    except (LeagueNotFound, LeaguePrivate):  # first season, or a past season ESPN serves only with cookies
         prior_pool = []
     last = int((league.get("status") or {}).get("finalScoringPeriod") or 0)
     days = range(1, last + 1)
@@ -147,3 +148,41 @@ async def load_history(league_id: int, season: int, cache_dir: Path, client: Esp
     h = await fetch_history(client or EspnClient(timeout=60.0), league_id, season)
     h.save(path)
     return h
+
+
+async def load_past_games(season: int, cache_dir: Path, client: EspnClient | None = None) -> list[dict[int, int]]:
+    """Games played in the seasons before ``season``, most recent first (see analysis/durability.py)."""
+    out = []
+    for past in range(season - 1, season - 1 - HISTORY_SEASONS, -1):
+        path = cache_dir / f"games-{past}.json"
+        if not path.exists():
+            client = client or EspnClient(timeout=60.0)
+            played = games_played(await client.season_totals(past), past)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(played))
+        out.append({int(k): int(v) for k, v in json.loads(path.read_text()).items()})
+    return out
+
+
+async def load_past_absences(
+    season: int, past: list[dict[int, int]], cache_dir: Path, client: EspnClient | None = None, batch: int = 40
+) -> list[dict[int, list[int]]]:
+    """Long absences in the seasons before ``season`` for every player who could have one set aside.
+
+    Same order as ``past`` (load_past_games). Only players who missed half a season in one of
+    those seasons are fetched (see analysis/durability.py).
+    """
+    wanted = sorted(one_off_candidates(past, {pid for gp in past for pid in gp}))
+    out = []
+    for k in range(len(past)):
+        year = season - 1 - k
+        path = cache_dir / f"absences-{season}-{year}.json"
+        if not path.exists():
+            client = client or EspnClient(timeout=60.0)
+            found: dict[int, list[int]] = {}
+            for i in range(0, len(wanted), batch):
+                found |= long_absences(await client.player_gamelogs(year, wanted[i : i + batch]), year)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(found))
+        out.append({int(k2): v for k2, v in json.loads(path.read_text()).items()})
+    return out

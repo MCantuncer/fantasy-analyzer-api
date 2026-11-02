@@ -87,6 +87,7 @@ class SeasonResult:
     mean_rank: np.ndarray
     win_pct: np.ndarray  # (T,) mean final winning percentage
     win_pct_sd: np.ndarray  # (T,) its spread across simulated seasons
+    made_playoffs: np.ndarray | None = None  # (n_sims, T) bool: each simulated season's playoff teams
 
 
 def simulate_season(
@@ -179,3 +180,160 @@ def simulate_season(
         win_pct=pct.mean(0),
         win_pct_sd=pct.std(0),
     )
+
+
+class SeasonSim:
+    """A season simulation that is drawn once and then re-scored for roster changes.
+
+    Screening trades and pickups asks the same question many times: "what are my playoff odds if
+    these one or two teams look different?". `simulate_season` answers by drawing every team's
+    weeks from scratch each time. This class draws the random part once (the same draws
+    `simulate_season` makes with the same seed) and, for a change, re-scores only the matchups
+    that involve a changed team. Everyone else's results are reused, so a what-if costs a small
+    fraction of a full run and every what-if shares the exact same luck as the baseline.
+
+    The draws are kept in float32 to halve memory on a small server; results agree with
+    `simulate_season` to well under a tenth of a percentage point.
+    """
+
+    def __init__(
+        self,
+        league: League,
+        dists: list[Dist],
+        reverse: np.ndarray,
+        n_sims: int = 4000,
+        seed: int = 7,
+        period_dists: dict[int, list[Dist]] | None = None,
+    ):
+        rng = np.random.default_rng(seed)
+        self.league = league
+        self.n_sims = n_sims
+        self.ids = [t.id for t in league.teams]
+        self.index = {tid: i for i, tid in enumerate(self.ids)}
+        n_teams = len(self.ids)
+        self.sign = np.where(reverse, -1.0, 1.0)
+        self.each_cat = league.scoring_type == EACH_CATEGORY
+        self.base_dists = list(dists)
+        self.base_periods = period_dists or {}
+        chol = np.linalg.cholesky(category_links([c.name for c in league.categories]))
+        drift = rng.normal(0.0, TEAM_DRIFT, size=(n_sims, n_teams, len(league.categories)))
+
+        self.periods: list[int] = []
+        self.games: dict[int, list[tuple[int, int]]] = {}
+        self.noise: dict[int, np.ndarray] = {}
+        self.banked: dict[int, dict[int, dict[int, float]]] = {}
+        undecided = sorted({m.period for m in league.schedule if m.winner == "UNDECIDED"})
+        for period in undecided:
+            games = [m for m in league.schedule if m.period == period and m.winner == "UNDECIDED"]
+            if not games:
+                continue
+            z = rng.standard_normal(size=(n_sims, n_teams, len(league.categories))) @ chol.T
+            self.noise[period] = (z + drift).astype(np.float32)
+            self.periods.append(period)
+            self.games[period] = [
+                (self.index[m.home], self.index[m.away]) for m in games if m.home in self.index and m.away in self.index
+            ]
+            if period == league.current_period and period in self.base_periods:
+                self.banked[period] = {
+                    self.index[tid]: banked
+                    for m in games
+                    for tid, banked in ((m.home, m.home_totals), (m.away, m.away_totals))
+                    if banked and tid in self.index
+                }
+        self.tiebreak = rng.uniform(0, 1e-6, size=(n_sims, n_teams))
+
+        self.wins = np.tile(np.array([t.wins for t in league.teams], float), (n_sims, 1))
+        self.losses = np.tile(np.array([t.losses for t in league.teams], float), (n_sims, 1))
+        self.ties = np.tile(np.array([t.ties for t in league.teams], float), (n_sims, 1))
+        for period in self.periods:
+            for h, a in self.games[period]:
+                hd = self._draws(period, h, self._base_dist(period, h))
+                ad = self._draws(period, a, self._base_dist(period, a))
+                self._score(self.wins, self.losses, self.ties, h, a, hd, ad, 1.0)
+        self.base = self._result(self.wins, self.losses, self.ties)
+
+    def _base_dist(self, period: int, i: int) -> Dist:
+        week = self.base_periods.get(period)
+        return week[i] if week is not None else self.base_dists[i]
+
+    @staticmethod
+    def _new_dist(period: int, i: int, dists: list[Dist], period_dists: dict[int, list[Dist]] | None) -> Dist:
+        week = (period_dists or {}).get(period)
+        return week[i] if week is not None else dists[i]
+
+    def _draws(self, period: int, i: int, d: Dist) -> np.ndarray:
+        """Team i's (n_sims, C) signed category totals for one matchup period."""
+        draws = d.mu + d.sd * self.noise[period][:, i, :].astype(float)
+        banked = self.banked.get(period, {}).get(i)
+        if banked:
+            wrapped = draws[:, None, :]
+            _add_banked(wrapped, 0, banked, self.league, d)
+            draws = wrapped[:, 0, :]
+        return draws * self.sign
+
+    def _score(self, wins, losses, ties, h: int, a: int, hd: np.ndarray, ad: np.ndarray, weight: float) -> None:
+        h_cats = (hd > ad).sum(1)
+        a_cats = (ad > hd).sum(1)
+        if self.each_cat:
+            wins[:, h] += weight * h_cats
+            losses[:, h] += weight * a_cats
+            wins[:, a] += weight * a_cats
+            losses[:, a] += weight * h_cats
+        else:
+            hw, aw, tie = h_cats > a_cats, a_cats > h_cats, h_cats == a_cats
+            wins[:, h] += weight * hw
+            losses[:, h] += weight * aw
+            wins[:, a] += weight * aw
+            losses[:, a] += weight * hw
+            ties[:, h] += weight * tie
+            ties[:, a] += weight * tie
+
+    def _result(self, wins: np.ndarray, losses: np.ndarray, ties: np.ndarray) -> SeasonResult:
+        n_teams = len(self.ids)
+        games_played = np.maximum(wins + losses + ties, 1.0)
+        pct = (wins + 0.5 * ties) / games_played
+        order = np.argsort(-(pct + self.tiebreak), axis=1)
+        rank = np.empty_like(order)
+        rank[np.arange(self.n_sims)[:, None], order] = np.arange(n_teams)[None, :]
+        playoff_teams = min(self.league.playoff_teams, n_teams)
+        return SeasonResult(
+            team_ids=self.ids,
+            wins=wins.mean(0),
+            losses=losses.mean(0),
+            ties=ties.mean(0),
+            playoff_pct=(rank < playoff_teams).mean(0),
+            made_playoffs=rank < playoff_teams,
+            first_seed_pct=(rank == 0).mean(0),
+            mean_rank=rank.mean(0) + 1,
+            win_pct=pct.mean(0),
+            win_pct_sd=pct.std(0),
+        )
+
+    def what_if(
+        self,
+        changed: set[int],
+        dists: list[Dist],
+        period_dists: dict[int, list[Dist]] | None = None,
+    ) -> SeasonResult:
+        """The season with teams in ``changed`` (indices) projected by ``dists``/``period_dists``.
+
+        ``period_dists`` only needs entries for the changed teams to be right; the others are
+        taken from the baseline.
+        """
+        if not changed:
+            return self.base
+        wins, losses, ties = self.wins.copy(), self.losses.copy(), self.ties.copy()
+        for period in self.periods:
+            for h, a in self.games[period]:
+                if h not in changed and a not in changed:
+                    continue
+                old_h = self._draws(period, h, self._base_dist(period, h))
+                old_a = self._draws(period, a, self._base_dist(period, a))
+                self._score(wins, losses, ties, h, a, old_h, old_a, -1.0)
+                new_h, new_a = old_h, old_a
+                if h in changed:
+                    new_h = self._draws(period, h, self._new_dist(period, h, dists, period_dists))
+                if a in changed:
+                    new_a = self._draws(period, a, self._new_dist(period, a, dists, period_dists))
+                self._score(wins, losses, ties, h, a, new_h, new_a, 1.0)
+        return self._result(wins, losses, ties)

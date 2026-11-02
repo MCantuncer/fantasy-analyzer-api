@@ -97,8 +97,12 @@ class PlayerInfo:
     team: int  # current NBA team
 
 
-def parse_gamelogs(players: list[dict]) -> tuple[list[GameLine], dict[int, PlayerInfo]]:
-    """Every game line in ESPN's per-game splits (``filterStatsForSplitTypeIds`` 5), and who each player is."""
+def parse_gamelogs(players: list[dict], season: int | None = None) -> tuple[list[GameLine], dict[int, PlayerInfo]]:
+    """Every game line in ESPN's per-game splits (``filterStatsForSplitTypeIds`` 5), and who each player is.
+
+    Early in a season ESPN also returns the previous season's games for the current season's
+    request; ``season`` keeps only that season's games, so the two are never mixed.
+    """
     lines: list[GameLine] = []
     info: dict[int, PlayerInfo] = {}
     for entry in players:
@@ -114,6 +118,8 @@ def parse_gamelogs(players: list[dict]) -> tuple[list[GameLine], dict[int, Playe
         )
         for st in p.get("stats") or []:
             if st.get("statSplitTypeId") != GAME_SPLIT or st.get("statSourceId") or not st.get("externalId"):
+                continue
+            if season is not None and st.get("seasonId") not in (None, season):
                 continue
             s = st.get("stats") or {}
             minutes = float(s.get(str(MIN), 0) or 0)
@@ -269,6 +275,13 @@ def analyze(
                 if ln.team == team and pid != absent:
                     totals[pid] += ln.minutes
         core = sorted(totals, key=totals.get, reverse=True)[:CORE]
+        # A regular counts as "also out" only while he was on the team (between his first and
+        # last game for it), not before he joined or after he left.
+        stint = {}
+        for c in core:
+            idx = [k for k, g in enumerate(games) if season.line(g, c, team)]
+            stint[c] = (idx[0], idx[-1] if i else len(games))
+        pos = {g: k for k, g in enumerate(games)}
         for age, g in enumerate(reversed(tenure)):
             without = g not in x_set
             # Recent games tell more about today's rotation.
@@ -281,7 +294,7 @@ def analyze(
                 if without:
                     sp.without_lines.append((weight, ln))
                     for c in core:
-                        if c != p.id and season.line(g, c, team) is None:
+                        if c != p.id and season.line(g, c, team) is None and stint[c][0] <= pos[g] <= stint[c][1]:
                             sp.also_out[c] = sp.also_out.get(c, 0.0) + weight
                 else:
                     sp.with_lines.append((weight, ln))
@@ -328,7 +341,7 @@ def analyze(
             confidence = "estimate"
         note = None
         total_wo = sum(w for w, _ in sp.without_lines)
-        if n_wo > 0 and sp.also_out:
+        if n_wo >= SOME_GAMES and sp.also_out:
             other, shared = max(sp.also_out.items(), key=lambda kv: kv[1])
             if shared / total_wo > 0.5 and other in names:
                 note = f"{names[other]} was also out in most of those games, so part of the gain may be his"

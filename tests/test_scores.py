@@ -90,10 +90,18 @@ class ScoresEspn(FakeEspn):
         return super().handler(request)
 
 
-def scores_client(recorded, schedule_raw, players, now: datetime):
+def no_scoreboard(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(503)
+
+
+def scores_client(recorded, schedule_raw, players, now: datetime, scoreboard=no_scoreboard):
     fake = ScoresEspn(recorded, schedule_raw, players)
     store = MemoryStore()
-    app = create_app(EspnClient(transport=httpx.MockTransport(fake.handler)), store=store)
+    app = create_app(
+        EspnClient(transport=httpx.MockTransport(fake.handler)),
+        store=store,
+        clock_transport=httpx.MockTransport(scoreboard),
+    )
     app.state.now = lambda: now
     return signed_in(app), fake, store
 
@@ -159,3 +167,55 @@ def test_scores_list_this_weeks_fixtures_with_my_players(recorded, schedule_raw,
     # Without a team, fixtures still come back, just without names.
     body = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()
     assert all(not g["my_players"] for d in body["week"] for g in d["games"])
+
+
+def test_live_games_get_the_quarter_and_clock(recorded, schedule_raw, day4_players):
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, FRIDAY_NIGHT)
+    live = next(
+        g
+        for g in client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()["games"]
+        if g["status"] == "live"
+    )
+    assert live["clock"] is None  # scoreboard down: no clock, status from the fantasy data
+
+    asked = []
+
+    def scoreboard(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.params["dates"])
+        event = {
+            "id": str(live["id"]),
+            "status": {"period": 4, "displayClock": "2:31", "type": {"state": "in", "shortDetail": "2:31 - 4th"}},
+            "competitions": [{"competitors": []}],
+        }
+        return httpx.Response(200, json={"events": [event]})
+
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, FRIDAY_NIGHT, scoreboard)
+    body = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()
+    game = next(g for g in body["games"] if g["id"] == live["id"])
+    assert game["status"] == "live" and game["clock"] == "Q4 2:31"
+    assert asked == [body["date"].replace("-", "")]
+
+
+def test_a_game_espn_calls_final_ends_right_away(recorded, schedule_raw, day4_players):
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, FRIDAY_NIGHT)
+    live = next(
+        g
+        for g in client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()["games"]
+        if g["status"] == "live"
+    )
+
+    def scoreboard(request: httpx.Request) -> httpx.Response:
+        # No id match: found by its two teams instead.
+        teams = [{"team": {"abbreviation": live[s]["abbrev"]}} for s in ("away", "home")]
+        event = {
+            "id": "1",
+            "status": {"period": 4, "displayClock": "0.0", "type": {"state": "post", "shortDetail": "Final"}},
+            "competitions": [{"competitors": teams}],
+        }
+        return httpx.Response(200, json={"events": [event]})
+
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, FRIDAY_NIGHT, scoreboard)
+    body = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()
+    game = next(g for g in body["games"] if g["id"] == live["id"])
+    assert game["status"] == "final" and game["clock"] is None
+    assert body["live"] is False

@@ -76,6 +76,24 @@ class PlayerRef(BaseModel):
     owner_premium: float = Field(
         default=0.0, description="What his owner wants on top of trade value, in auction dollars"
     )
+    games_share: float | None = Field(
+        default=None,
+        description="Expected share of his team's remaining games he plays once back from any current injury, "
+        "from his games-played record. A typical regular plays about 0.73.",
+    )
+    injury_prone: bool = Field(
+        default=False, description="He has missed many games in recent seasons: valued for fewer games"
+    )
+    games_out: float | None = Field(
+        default=None,
+        description="Listed out: expected team games he still misses, from how many he has missed in a row",
+    )
+    expected_back: str | None = Field(
+        default=None, description="Listed out: date of his expected first game back, YYYY-MM-DD"
+    )
+    out_report: str | None = Field(
+        default=None, description="Listed out: the news headline games_out rests on, when it reported a timeline"
+    )
 
 
 class CategoryOutlook(BaseModel):
@@ -124,6 +142,15 @@ class TradeIdea(BaseModel):
     reasons: list[str] = Field(description="Why it can work for both sides: sell high, buy low, their punts, timing")
     playoff_pct_before: float
     playoff_pct_after: float
+    playoff_week_cats_before: float | None = Field(
+        default=None,
+        description="My expected categories won per fantasy playoff week against an average team, before the deal",
+    )
+    playoff_week_cats_after: float | None = Field(default=None, description="The same after the deal")
+    vision: list[str] = Field(
+        default_factory=list,
+        description="Vision trades: why the players you get are worth more later than their owner sees now",
+    )
     category_changes: dict[str, float] = Field(description="Change in my weekly win % per category")
 
 
@@ -150,6 +177,10 @@ class SeasonRow(BaseModel):
     playoff_pct: float
     first_seed_pct: float
     mean_rank: float
+    playoff_week_cats: float | None = Field(
+        default=None,
+        description="Expected categories won per fantasy playoff week against an average team, on that week's games",
+    )
 
 
 class Assumptions(BaseModel):
@@ -181,6 +212,11 @@ class AnalysisReport(BaseModel):
     edge_trades: list[TradeIdea] = Field(
         description="Edge deals: they get at least equal trade value on paper, you gain clearly more on the court"
     )
+    vision_trades: list[TradeIdea] = Field(
+        default_factory=list,
+        description="Vision deals: players off to a slow start the projection expects to fade, worth more by the "
+        "playoff weeks; you send players who help their owner now",
+    )
     pickups: list[PickupIdea]
     season: list[SeasonRow]
     league_rosters: list[TeamRoster] = Field(description="Every other team's players, for picking a trade target")
@@ -198,6 +234,16 @@ class AnalysisReport(BaseModel):
 class ErrorBody(BaseModel):
     code: str
     message: str
+
+
+class AnalysisJob(BaseModel):
+    """A team's analysis running in the background. Poll with the same request until it is done."""
+
+    status: Literal["running", "done", "failed"]
+    progress: float = Field(ge=0, le=1, description="Rough share of the work done, 0 to 1")
+    stage: str = ""
+    report: AnalysisReport | None = None
+    error: ErrorBody | None = None
 
 
 class TradeSide(BaseModel):
@@ -409,6 +455,23 @@ class OverviewTeam(BaseModel):
     record: str
     has_manager: bool = Field(description="Some account has verified it")
     mine: bool = False
+    wins: int = 0
+    losses: int = 0
+    ties: int = 0
+    seed: int | None = Field(default=None, description="ESPN's current standings place, 1 = first")
+    games_back: float | None = Field(default=None, description="Category wins behind the leader")
+
+
+class CategoryScore(BaseModel):
+    stat: str = Field(description="Category code, e.g. PTS or FG%")
+    value: float = Field(description="Running total this week; a fraction for FG% and FT%")
+    result: str = Field(description="W, L or T for this side so far")
+
+
+class WeekGames(BaseModel):
+    today: int = Field(description="Games today (US date) by rostered players outside IR, started or not")
+    left: int = Field(description="Games this week that have not tipped off yet")
+    total: int = Field(description="Every game this week")
 
 
 class MatchupSide(BaseModel):
@@ -416,6 +479,8 @@ class MatchupSide(BaseModel):
     wins: int
     losses: int
     ties: int
+    categories: list[CategoryScore] = Field(default_factory=list, description="Empty when ESPN sent none")
+    games: WeekGames | None = Field(default=None, description="None when rosters or the NBA calendar are unavailable")
 
 
 class OverviewMatchup(BaseModel):
@@ -446,6 +511,9 @@ class LeagueOverview(BaseModel):
     season: int
     name: str
     matchup_period: int
+    week_start: str | None = Field(default=None, description="Monday of this matchup week, ISO date")
+    week_end: str | None = Field(default=None, description="Sunday of this matchup week, ISO date")
+    playoff_teams: int | None = None
     teams: list[OverviewTeam]
     matchups: list[OverviewMatchup]
     mvp: MvpCandidate | None = Field(default=None, description="The team with the best category record this week")
@@ -639,6 +707,7 @@ class Game(BaseModel):
     id: int
     start: str = Field(description="UTC start time, ISO 8601")
     status: Literal["scheduled", "live", "final"]
+    clock: str | None = Field(default=None, description='Live games only: "Q4 2:31", "Half", "End Q3", "OT 0:48"')
     away: GameSide
     home: GameSide
     lines: list[GameLine] = Field(description="Everyone who played, most minutes first")
@@ -756,3 +825,101 @@ class NewsPage(BaseModel):
     trending: list[TrendingPlayer]
     updated_at: str | None = Field(default=None, description="Last time every source was checked, UTC")
     refreshing: bool = Field(description="A check of every source is running; ask again in a minute")
+
+
+FeedbackRating = Literal["bad", "good"]
+FeedbackReason = Literal["fake_gain", "wont_accept", "bad_for_build", "player_concern", "already_tried", "other"]
+FeedbackSource = Literal["trades", "edge", "shop", "trade_for", "trade_of_day"]
+
+
+class TradeFeedbackRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+    source: FeedbackSource = Field(description="Which list the idea was shown in")
+    rating: FeedbackRating
+    reasons: list[FeedbackReason] = Field(default_factory=list, max_length=6, description="Quick reasons, any order")
+    text: str = Field(default="", max_length=500, description="What the manager wrote, in their own words")
+    idea: TradeIdea = Field(description="The idea exactly as it was shown")
+
+
+class TradeFeedback(BaseModel):
+    id: int
+    source: FeedbackSource
+    rating: FeedbackRating
+    reasons: list[FeedbackReason]
+    text: str
+    idea: TradeIdea
+    created_at: str = Field(description="When it was given (or last changed), UTC")
+
+
+class TradeFeedbackList(BaseModel):
+    feedback: list[TradeFeedback] = Field(description="This manager's feedback in the league, newest first")
+
+
+class TradeFeedbackListRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+
+
+class TradeCheckRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+    idea: TradeIdea = Field(description="The idea as it was shown")
+    reasons: list[FeedbackReason] = Field(
+        default_factory=list, max_length=6, description="Quick reasons: their checks run first"
+    )
+    keep_player_ids: list[int] = Field(default_factory=list, description="Players never suggested as drops")
+
+
+class CheckVerdict(BaseModel):
+    check: str = Field(description="free_pickup, noise, lateral_swap, build_conflict, small_sample, injury, ...")
+    title: str
+    status: Literal["confirmed", "not_supported", "cant_check"]
+    evidence: str = Field(description="What the data shows, in a sentence")
+
+
+class NoteRead(BaseModel):
+    kind: Literal["clear", "rant", "unclear"] = Field(
+        description="clear: maps onto our reasons and checks; rant: venting; unclear: a point no check covers"
+    )
+    summary: str = Field(description="What the note says, in one sentence")
+
+
+class TradeCheck(BaseModel):
+    playoff_pct_before: float | None = Field(default=None, description="Today's odds, None when the idea is stale")
+    playoff_pct_after: float | None = None
+    stale: str | None = Field(default=None, description="Why the idea can't be rebuilt from today's rosters")
+    verdicts: list[CheckVerdict]
+    read_as: NoteRead | None = Field(default=None, description="How the manager's note was read, when it was")
+
+
+TradeRuleKind = Literal["protect_category", "skip_team", "no_injury_prone"]
+
+
+class TradeRuleRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+    kind: TradeRuleKind
+    value: str = Field(
+        default="", max_length=40, description="Category name for protect_category, team id for skip_team, else empty"
+    )
+    team_name: str = Field(default="", max_length=60, description="For skip_team: the team's name, for the label")
+    why: str = Field(default="", max_length=200, description="Where the rule came from, in a sentence")
+
+
+class TradeRule(BaseModel):
+    id: int
+    kind: TradeRuleKind
+    value: str
+    label: str = Field(description="How the rule reads, e.g. 'Protect TO'")
+    why: str
+    created_at: str
+
+
+class TradeRuleList(BaseModel):
+    rules: list[TradeRule]
+
+
+class TradeRuleListRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+
+
+class TradeRuleDeleteRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+    rule_id: int = Field(gt=0)

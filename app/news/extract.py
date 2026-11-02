@@ -79,8 +79,8 @@ ROLE = _any(
     r"to the bench|benched|rotation|minutes restriction|minutes limit|bigger role|larger role|promoted)\b"
 )
 INJURY = _any(
-    r"\b(injur(y|ies|ed)|ruled out|out (for|indefinitely|tonight|again)|will miss|miss(es|ed)?|sidelined|"
-    r"sprain(ed)?|strain(ed)?|fracture[sd]?|broken|torn|tear|ruptured?|surgery|soreness|sore|tightness|"
+    r"\b(injur(y|ies|ed)|hurt|ruled out|out (for|indefinitely|tonight|again)|will miss|miss(es|ed)?|sidelined|"
+    r"sprains?|sprained|strains?|strained|fracture[sd]?|broken|torn|tear|ruptured?|surgery|soreness|sore|tightness|"
     r"contusion|bruise[sd]?|concussion|mri|x rays?|questionable|doubtful|probable|day to day|"
     r"week to week|game time decision|illness|dislocat\w+|separated|hyperextend\w*)\b"
 )
@@ -99,6 +99,34 @@ BODY_PARTS = (
     "shoulder elbow neck rib ribs abdominal oblique adductor hamstring shin eye nose face illness concussion"
 ).split()
 _BODY = re.compile(r"\b(" + "|".join(BODY_PARTS) + r")\b")
+
+# Is an item news at all? A headline must report something that happened in the NBA: a move, an
+# injury or return, a role change, or league business like a suspension. Game guides, betting,
+# recaps, rankings, opinion and other leagues are not. Tuned on a labelled sample of real feed
+# items (tests/data/news_sample.json, see test_news_filter_precision).
+OTHER_LEAGUE = _any(r"\b(wnba|ncaa|ncaab|college|wildcats|nfl|mlb|nhl|world series|euroleague)\b")
+NOT_NEWS = _any(
+    r"\b(how to watch|where to watch|to watch|live stream|tv channels?|start time|odds|picks|props|best bets|"
+    r"bets|promos?|sportsbooks?|parlays?|preview|discussion|game thread|"
+    r"post game thread|highlights?|player grades|grades|grading|observations|bell ringer|scenes from|"
+    r"power rankings|rankings|winners and losers|overreactions|destinations|things|takeaways|mailbag|"
+    r"podcast|newsletter|final score|nba news|injury updates|waiver wire|fantasy basketball)\b"
+)
+SCORELINE = _any(r"\b\d{2,3} \d{2,3}\b|\b\d{2,3} [a-z]+( [a-z]+)? \d{2,3}\b")
+LEAGUE_NEWS = _any(
+    r"\b(fire[sd]?|hire[sd]?|names? (\w+ )?(head )?coach|suspen(d|ds|ded|sion)|fined|arrest(ed)?|charged|"
+    r"plea|indict(ed|ment)?|lawsuit|investigation|banned|retire[sd]?|retirement|rest(s|ed|ing)?|absence|"
+    r"scratched|sit out|to sit|listed out|g league|shootaround|practices?|practiced)\b"
+)
+
+
+def newsworthy(title: str) -> bool:
+    """True when the headline reports NBA news (see the patterns above)."""
+    t = normalize(title)
+    if OTHER_LEAGUE.search(t) or NOT_NEWS.search(t) or SCORELINE.search(t):
+        return False
+    return kind_of(title) != "other" or bool(LEAGUE_NEWS.search(t))
+
 
 SEVERITY_LABEL = {0: "no injury", 1: "minor, day-to-day", 2: "out, short term", 3: "serious, weeks or more"}
 
@@ -138,6 +166,56 @@ def severity(text: str) -> int:
 def body_part(text: str) -> str | None:
     m = _BODY.search(normalize(text))
     return m.group(1) if m else None
+
+
+# A reported timeline: "out 4-6 weeks", "will miss two to three weeks", "re-evaluated in two
+# weeks", "will miss 3 games", "out for the season". Read from normalized text, where "4-6"
+# reads "4 6". Only the number and its unit are taken, never a guess from the injury's kind.
+NUMBERS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "twelve": 12,
+}  # fmt: skip
+_NUM = r"(\d{1,2}|" + "|".join(NUMBERS) + r")"
+UNIT_DAYS = {"day": 1.0, "week": 7.0, "month": 30.0}
+_SPAN = re.compile(rf"\b{_NUM}(?: to | ){_NUM} (day|week|month)s?\b|\b{_NUM} (day|week|month)s?\b")
+_GAMES = re.compile(
+    rf"\b(?:miss|missing|misses|sit out|sidelined for)(?: at least| the next)? {_NUM} (?:more )?games?\b"
+)
+_SEASON = re.compile(
+    r"\b(out for the (rest of the )?season|season ending|rest of the season|remainder of the season)\b"
+)
+SEASON = float("inf")
+
+
+@dataclass(frozen=True)
+class Timeline:
+    days: float = 0.0  # middle of the reported span, from the report; inf: out for the season
+    games: int = 0  # or a number of games, when that's what was reported
+
+
+def _number(word: str) -> int:
+    return int(word) if word.isdigit() else NUMBERS[word]
+
+
+def timeline(text: str) -> Timeline | None:
+    """The absence a news item reports, if it gives one."""
+    t = normalize(text)
+    if _SEASON.search(t):
+        return Timeline(days=SEASON)
+    m = _GAMES.search(t)
+    if m:
+        return Timeline(games=_number(m.group(1)))
+    m = _SPAN.search(t)
+    if not m:
+        return None
+    if m.group(1):
+        low, high, unit = _number(m.group(1)), _number(m.group(2)), m.group(3)
+    else:
+        low = high = _number(m.group(4))
+        unit = m.group(5)
+    if high < low:
+        return None
+    return Timeline(days=(low + high) / 2 * UNIT_DAYS[unit])
 
 
 @dataclass

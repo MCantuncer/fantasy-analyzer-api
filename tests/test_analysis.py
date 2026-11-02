@@ -3,7 +3,7 @@ import numpy as np
 import app.analysis.sim as sim
 from app.analysis.model import CategoryModel, norm_cdf
 from app.analysis.report import Analyzer
-from app.analysis.sim import category_links, simulate_season
+from app.analysis.sim import SeasonSim, category_links, simulate_season
 
 
 def test_norm_cdf_matches_known_values():
@@ -49,6 +49,25 @@ def test_season_sim_is_reproducible(league):
     a = simulate_season(league, dists, model.reverse, n_sims=300)
     b = simulate_season(league, dists, model.reverse, n_sims=300)
     assert np.array_equal(a.playoff_pct, b.playoff_pct)
+
+
+def test_what_if_matches_a_full_simulation(league):
+    model = CategoryModel(league)
+    dists = [model.dist(t.roster) for t in league.teams]
+    base = SeasonSim(league, dists, model.reverse, n_sims=400)
+    full = simulate_season(league, dists, model.reverse, n_sims=400)
+    assert np.allclose(base.base.playoff_pct, full.playoff_pct, atol=0.005)
+    # Swap the two teams' best players: only their matchups are re-scored.
+    a, b = league.teams[0], league.teams[1]
+    star_a, star_b = max(a.roster, key=model.value), max(b.roster, key=model.value)
+    changed = list(dists)
+    changed[0] = model.dist([p for p in a.roster if p is not star_a] + [star_b])
+    changed[1] = model.dist([p for p in b.roster if p is not star_b] + [star_a])
+    fast = base.what_if({0, 1}, changed)
+    slow = simulate_season(league, changed, model.reverse, n_sims=400)
+    assert np.allclose(fast.playoff_pct, slow.playoff_pct, atol=0.005)
+    assert np.allclose(fast.wins, slow.wins, atol=0.01)
+    assert base.what_if(set(), changed) is base.base
 
 
 def test_category_links_are_a_valid_correlation_matrix():
@@ -113,3 +132,23 @@ def test_banked_stats_count_in_the_week_being_played(league):
     flat = simulate_season(banked, a.dists, a.model.reverse, n_sims=1000)
     plain = simulate_season(league, a.dists, a.model.reverse, n_sims=1000)
     assert np.allclose(flat.wins, plain.wins)
+
+
+def test_playoff_weeks_count_a_player_back_by_then(league):
+    from dataclasses import replace as dc_replace
+
+    a = Analyzer(league, 3)
+    assert a.playoff_periods() and min(a.playoff_periods()) > league.regular_season_periods
+    me = a.teams[a.idx]
+    star = max(me.roster, key=a.model.value)
+    hurt = dc_replace(star, id=-star.id, injury_status="OUT", games_out=20.0)  # new id: models cache by id
+    roster = [hurt if p is star else p for p in me.roster]
+    b = Analyzer(league, 3)
+    season_drop = b.model.strength(b.idx, b.dists) - b.model.strength(
+        b.idx, [b.model.dist(roster) if i == b.idx else d for i, d in enumerate(b.dists)]
+    )
+    playoff_drop = b.playoff_strength(b.idx) - b.playoff_strength(b.idx, {b.idx: roster})
+    # Out for 20 games costs regular-season weeks, not the playoff weeks in March.
+    assert season_drop > 0.01
+    assert abs(playoff_drop) < 1e-9
+    assert all(r.playoff_week_cats is not None for r in a.season())

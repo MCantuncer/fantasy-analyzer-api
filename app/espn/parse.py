@@ -34,9 +34,13 @@ IR_SLOT = 13
 BENCH_SLOT = 12
 UTIL_SLOT = 11
 UNAVAILABLE = {"OUT", "INJURY_RESERVE", "SUSPENSION"}
+HEALTHY = {"ACTIVE", "NORMAL"}  # no injury tag at all, not even day-to-day
 
-# Weight on actual stats grows with games played; projections dominate early.
+# Weight on actual stats grows with games played: gp / (gp + games), projections dominate early.
+# Shooting percentages need more games to mean something; points, assists and threes fewer.
+# Fitted per category on 2023-24, checked on 2024-25 and 2025-26 (scripts/projection_backtest.py).
 ACTUAL_WEIGHT_GAMES = 20.0
+ACTUAL_WEIGHT_BY_STAT = {0: 10.0, 3: 10.0, 17: 10.0, 18: 10.0, 13: 30.0, 14: 30.0, 15: 45.0, 16: 45.0}
 MIN_PRIOR_GAMES = 10  # last season counts as a prior only with this many games
 
 
@@ -75,10 +79,19 @@ class Player:
     slots: tuple[int, ...] = ()  # lineup slot ids he can fill (PG..C, G, F, UTIL, ...)
     acquisition_type: str = ""  # DRAFT / ADD / TRADE, for rostered players
     acquired_ms: int | None = None  # when his current team got him, epoch milliseconds
+    durability: float | None = None  # expected share of his team's remaining games (analysis/durability.py)
+    games_out: float | None = None  # expected team games he still misses while listed out (analysis/absence.py)
+    out_report: str | None = None  # the news headline games_out rests on, when it reported a timeline
+    season_line: dict[int, float] = field(default_factory=dict)  # this season's actual per-game stats
 
     @property
     def available(self) -> bool:
         return self.injury_status not in UNAVAILABLE and self.lineup_slot != IR_SLOT
+
+    @property
+    def fully_healthy(self) -> bool:
+        """No injury tag at all. ESPN's day-to-day can lag a long absence, so pickups need this."""
+        return self.injury_status in HEALTHY and self.lineup_slot != IR_SLOT
 
 
 @dataclass
@@ -178,9 +191,20 @@ def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int, bool
         return actual, gp, False
     if gp <= 0:
         return prior, gp, True
-    w = gp / (gp + ACTUAL_WEIGHT_GAMES)
     keys = set(prior) | set(actual)
-    return {k: (1 - w) * prior.get(k, 0.0) + w * actual.get(k, prior.get(k, 0.0)) for k in keys}, gp, True
+    out = {}
+    for k in keys:
+        w = gp / (gp + ACTUAL_WEIGHT_BY_STAT.get(k, ACTUAL_WEIGHT_GAMES))
+        out[k] = (1 - w) * prior.get(k, 0.0) + w * actual.get(k, prior.get(k, 0.0))
+    return out, gp, True
+
+
+def _season_line(player: dict, season: int) -> dict[int, float]:
+    """This season's actual per-game stats (what owners see), empty before his first game."""
+    for s in player.get("stats", []):
+        if s.get("seasonId") == season and s.get("statSourceId") == 0 and s.get("statSplitTypeId") == 0:
+            return {int(k): float(v) for k, v in (s.get("averageStats") or {}).items()}
+    return {}
 
 
 def _draft_rank(p: dict) -> tuple[int | None, float]:
@@ -209,6 +233,7 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None, roste
         on_team_id=int(entry.get("onTeamId", 0) or 0),
         lineup_slot=lineup_slot,
         per_game=per_game,
+        season_line=_season_line(p, season),
         games_played=gp,
         has_prior=has_prior,
         status=entry.get("status", "ONTEAM"),

@@ -34,7 +34,12 @@ from app.accounts import (
     team_of,
     verify_google,
 )
+from app.analysis import absence
+from app.analysis.checks import REASON_CHECKS, IdeaChecker, StaleIdea, focus_order
+from app.analysis.checks import TITLES as CHECK_TITLES
 from app.analysis.daily import trade_of_the_day
+from app.analysis.durability import HISTORY_SEASONS, games_played, long_absences, one_off_candidates
+from app.analysis.durability import attach as attach_durability
 from app.analysis.injury import LAST_SEASON_WEIGHT, Season, parse_gamelogs
 from app.analysis.injury import analyze as analyze_absence
 from app.analysis.report import Analyzer, league_summary
@@ -44,12 +49,18 @@ from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
 from app.espn.parse import League, parse_league
 from app.feed import PlayerName, Transaction, parse_players, parse_transactions
+from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
+from app.gameclock import apply_clocks, fetch_clocks
+from app.news.extract import timeline
 from app.news.facts import PlayerState
-from app.news.service import NewsService
+from app.news.service import KEEP as NEWS_KEEP
+from app.news.service import NewsService, parse_iso
 from app.news.service import iso as news_iso
 from app.news.sources import BY_ID as NEWS_SOURCES
 from app.news.sources import SOURCES as NEWS_SOURCE_LIST
 from app.news.verify import FACT_SOURCE, describe_fact
+from app.reader import DEEP_BATCH_MAX, DeepReader, NoteReader, Reading, create_deep_reader, create_reader
+from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
 from app.scores import build_day, needs_stats, parse_schedule, settled, week_fixtures
 from app.social import (
     CHALLENGE_SECONDS,
@@ -64,6 +75,7 @@ from app.social import (
     valid_reaction,
 )
 from app.store import Store, TradeKey, create_store
+from app.week import category_scores, roster_pro_teams, week_bounds, week_games
 
 # httpx logs request lines at INFO; keep its logs quiet so nothing about a request leaks.
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -71,7 +83,9 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 LEAGUE_TTL = float(os.getenv("LEAGUE_CACHE_SECONDS", "600"))
 SCHEDULE_TTL = 6 * 3600.0  # the NBA calendar changes rarely (postponements, NBA Cup knockouts)
+PAST_GAMES_TTL = 7 * 24 * 3600.0  # finished seasons don't change
 ADP_TTL = 6 * 3600.0  # ESPN's ADP barely moves once the season's drafts are done
+DEEP_READ_MIN_SECONDS = 300.0  # the deep-read cron does nothing if it ran in the last five minutes
 STATUS_FOR_ERROR = {LeaguePrivate: 401, LeagueNotFound: 404}
 # How long a trade-of-the-day request waits for the scan before answering "pending".
 DAILY_WAIT = float(os.getenv("DAILY_TRADE_WAIT_SECONDS", "20"))
@@ -83,7 +97,9 @@ POSTS_PER_MINUTE = 10
 # A team's game logs: this season's change after every game night, last season's never.
 GAMELOG_TTL = 3 * 3600.0
 MIN_RELEVANT_MINUTES = 15.0
+MIN_MINUTES_GAIN = 1.0  # minutes per game; a smaller rise is not worth listing
 PAST_GAMELOG_TTL = 7 * 24 * 3600.0
+GAMELOG_BATCH = 40  # players per game-log request: every line of a season is ~30 KB a player
 IMPACT_METHOD = (
     "Each teammate's minutes and per-minute stats in games his team played without him, against games he "
     "played, this season and last (last season counts a quarter, recent games count more). With few such games "
@@ -97,9 +113,24 @@ IMPACT_TRACK_RECORD = (
 )
 # While a game is on, one ESPN call a minute serves every visitor.
 LIVE_SCORES_TTL = 60.0
+# How long a finished analysis job stays around for its last poll (the report itself is cached).
+ANALYSIS_JOB_KEEP = 120.0
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
 NOT_LINKED = {"code": "not_linked", "message": "Verify your team in this league first."}
 NOT_YOUR_TEAM = {"code": "not_your_team", "message": "Only this team's verified manager can see its analysis."}
+
+
+class AnalysisProgress:
+    """A background analysis: its task, and how far along it is (written from the worker thread)."""
+
+    def __init__(self) -> None:
+        self.task: asyncio.Task = None  # type: ignore[assignment]
+        self.progress = 0.0
+        self.stage = "Loading your league"
+
+    def update(self, stage: str, progress: float) -> None:
+        self.stage = stage
+        self.progress = max(self.progress, min(progress, 0.99))
 
 
 def current_season(now: datetime | None = None) -> int:
@@ -141,6 +172,11 @@ def create_app(
     social: SocialStore | None = None,
     accounts: AccountStore | None = None,
     google_transport=None,
+    feedback: FeedbackStore | None = None,
+    reader: NoteReader | None = None,
+    deep_reader: DeepReader | None = None,
+    rules: RuleStore | None = None,
+    clock_transport=None,
 ) -> FastAPI:
     app = FastAPI(title="Fantasy Analyzer API", version="0.1.0")
     app.state.espn = espn or EspnClient()
@@ -149,8 +185,15 @@ def create_app(
     app.state.store = store or create_store()
     app.state.daily = TTLCache(36 * 3600)
     app.state.daily_jobs = {}
+    app.state.analysis_jobs: dict[tuple, AnalysisProgress] = {}
     app.state.social = social or create_social_store()
     app.state.accounts = accounts or create_account_store()
+    app.state.feedback = feedback or create_feedback_store()
+    app.state.reader = reader or create_reader()
+    app.state.deep_reader = deep_reader or create_deep_reader()
+    app.state.rules = rules or create_rule_store()
+    app.state.deep_read_lock = asyncio.Lock()
+    app.state.deep_read_last = None
     app.state.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip() or None
     app.state.login_attempts = defaultdict(deque)
     app.state.basics = TTLCache(60)
@@ -161,7 +204,13 @@ def create_app(
     app.state.post_times = defaultdict(deque)
     app.state.schedules = TTLCache(SCHEDULE_TTL)
     app.state.market_adp = TTLCache(ADP_TTL)
+    app.state.past_games = TTLCache(PAST_GAMES_TTL)
+    # (season, player id) -> his long absences that season; finished seasons don't change.
+    app.state.past_absences = TTLCache(PAST_GAMES_TTL, max_items=20_000)
     app.state.score_days = TTLCache(LIVE_SCORES_TTL)
+    # Quarter and clock from ESPN's scoreboard, by date; refreshed as often as live scores.
+    app.state.clocks = TTLCache(LIVE_SCORES_TTL)
+    app.state.clock_transport = clock_transport
     app.state.settled_days = TTLCache(7 * 24 * 3600, max_items=512)
     app.state.score_locks = defaultdict(asyncio.Lock)
     app.state.now = lambda: datetime.now(UTC)
@@ -204,6 +253,92 @@ def create_app(
             app.state.market_adp.set(season, cached)
         return cached
 
+    async def past_games(season: int) -> list[dict[int, int]]:
+        """Games played in the seasons before ``season``, most recent first. Empty when ESPN won't say."""
+        out = []
+        for past in range(season - 1, season - 1 - HISTORY_SEASONS, -1):
+            played = app.state.past_games.get(past)
+            if played is None:
+                try:
+                    played = games_played(await app.state.espn.season_totals(past), past)
+                except EspnError:
+                    return []
+                app.state.past_games.set(past, played)
+            out.append(played)
+        return out
+
+    async def past_absences(league: League, past: list[dict[int, int]]) -> list[dict[int, list[int]]] | None:
+        """Long absences in the seasons before this one, for players who missed half a season in one of them.
+
+        Only those players can have a single major injury set aside (durability.py), so only
+        their game logs are fetched. None when ESPN won't say: every absence then counts.
+        """
+        ids = {p.id for t in league.teams for p in t.roster} | {p.id for p in league.free_agents}
+        wanted = sorted(one_off_candidates(past, ids))
+        out: list[dict[int, list[int]]] = []
+        for k in range(len(past)):
+            season = league.season - 1 - k
+            # Cached as a 1-tuple: (None,) means ESPN had no game lines for him that season.
+            cached = {pid: app.state.past_absences.get((season, pid)) for pid in wanted}
+            found = {pid: v[0] for pid, v in cached.items() if v is not None}
+            missing = [pid for pid, v in cached.items() if v is None]
+            for i in range(0, len(missing), GAMELOG_BATCH):
+                batch = missing[i : i + GAMELOG_BATCH]
+                try:
+                    got = long_absences(await app.state.espn.player_gamelogs(season, batch), season)
+                except EspnError:
+                    return None
+                for pid in batch:
+                    found[pid] = got.get(pid)
+                    app.state.past_absences.set((season, pid), (found[pid],))
+            out.append({pid: v for pid, v in found.items() if v is not None})
+        return out
+
+    async def attach_absences(league: League) -> None:
+        """Expected games still to miss for every player listed out, from his game lines."""
+        out = sorted({p.id for t in league.teams for p in t.roster if absence.is_out(p)})
+        out += sorted({p.id for p in league.free_agents if absence.is_out(p)} - set(out))
+        if not out:
+            return
+        season = league.season
+        try:
+            played = absence.played_days(await player_gamelogs(season, out, past=False), season)
+            idle = [pid for pid in out if not played.get(pid)]
+            last_run = (
+                absence.season_end_run(await player_gamelogs(season - 1, idle, past=True), season - 1) if idle else {}
+            )
+        except EspnError:
+            return  # the flat days-out guess stays
+        absence.attach(league, {pid: played.get(pid, set()) for pid in out}, last_run, reported_timelines(league, out))
+
+    def reported_timelines(league: League, ids: list[int]) -> dict[int, absence.Report]:
+        """The latest stored news item giving a timeline for each of these players."""
+        cal = league.calendar
+        if cal is None:
+            return {}
+        wanted, out = set(ids), {}
+        now = app.state.now()
+        items = sorted(app.state.store.news_items(news_iso(now - NEWS_KEEP)), key=lambda d: d["published"])
+        for d in items:
+            if d.get("kind") != "injury":
+                continue
+            found = timeline(f"{d.get('title', '')}. {d.get('summary', '')}")
+            if found is None:
+                continue
+            day = (parse_iso(d["published"]).date() - cal.opening).days + 1
+            for pid in wanted.intersection(d.get("player_ids") or []):
+                out[pid] = absence.Report(day, found, d.get("title", ""))
+        return out
+
+    async def player_gamelogs(season: int, ids: list[int], past: bool) -> list[dict]:
+        cache = app.state.past_gamelogs if past else app.state.gamelogs
+        key = ("players", season, tuple(ids))
+        raw = cache.get(key)
+        if raw is None:
+            raw = await app.state.espn.player_gamelogs(season, ids)
+            cache.set(key, raw)
+        return raw
+
     async def load_league(league_id: int, season: int, creds: EspnCredentials | None, with_fa: bool) -> League:
         key = (league_id, season, credentials_key(creds), with_fa)
         league = app.state.leagues.get(key)
@@ -214,6 +349,10 @@ def create_app(
             snake = ((raw.get("settings") or {}).get("draftSettings") or {}).get("type") != "AUCTION"
             adp = await market_adp(season) if with_fa and snake else None
             league = parse_league(raw, fas, schedule, adp)
+            if with_fa:
+                past = await past_games(season)
+                attach_durability(league, past, await past_absences(league, past) if past else None)
+                await attach_absences(league)
             app.state.leagues.set(key, league)
         return league
 
@@ -250,8 +389,9 @@ def create_app(
         team = int(found[0].get("proTeamId") or 0)
         if team == 0:
             raise HTTPException(404, detail={"code": "no_team", "message": "He isn't on an NBA team."})
-        lines, info = parse_gamelogs(await team_gamelogs(season, team, past=False))
-        last_lines, _ = parse_gamelogs(await team_gamelogs(season - 1, team, past=True))
+        lines, info = parse_gamelogs(await team_gamelogs(season, team, past=False), season)
+        last_lines, _ = parse_gamelogs(await team_gamelogs(season - 1, team, past=True), season - 1)
+        # Only his current teammates, by ESPN's current team for each player.
         roster = [p for p in info.values() if p.team == team]
         impact = await run_in_threadpool(
             analyze_absence, [Season(lines), Season(last_lines, LAST_SEASON_WEIGHT)], team, body.player_id, roster
@@ -266,8 +406,18 @@ def create_app(
             for t in ((raw or {}).get("settings") or {}).get("proTeams", [])
             if t.get("id")
         }
-        # Fantasy-relevant gains only: a real share of minutes, and better per-game value.
-        gainers = [b for b in impact.beneficiaries if b.value > 0 and b.minutes_after >= MIN_RELEVANT_MINUTES][:6]
+        on_team = {p.id for p in roster}
+        # Fantasy-relevant gains only: more minutes (when measured, by more than the error band, since
+        # a change inside the band is noise), a real share of minutes, and better per-game value.
+        gainers = [
+            b
+            for b in impact.beneficiaries
+            if b.player_id in on_team
+            and b.minutes_change >= MIN_MINUTES_GAIN
+            and (b.confidence == "estimate" or b.minutes_change > b.error)
+            and b.minutes_after >= MIN_RELEVANT_MINUTES
+            and b.value > 0
+        ][:6]
         return schemas.InjuryImpact(
             player_id=body.player_id,
             name=str(found[0].get("fullName", "")),
@@ -454,6 +604,69 @@ def create_app(
         lg = await load_league(body.league_id, body.season or current_season(), creds, with_fa=False)
         return league_summary(lg)
 
+    async def analysis_key(
+        body: schemas.AnalyzeRequest, authorization: str | None, creds: EspnCredentials | None
+    ) -> tuple:
+        """Check the caller may see this team's analysis and return its cache key."""
+        season = body.season or current_season()
+        # A team's analysis is for its verified manager only.
+        seat = await linked(authorization, body.league_id, season, required=True)
+        if seat.team_id != body.team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        return (
+            body.league_id,
+            season,
+            body.team_id,
+            tuple(sorted(body.keep_player_ids)),
+            tuple(sorted(body.not_for_sale_player_ids)),
+            credentials_key(creds),
+        )
+
+    async def build_report(
+        body: schemas.AnalyzeRequest, creds: EspnCredentials | None, key: tuple, job: AnalysisProgress
+    ) -> schemas.AnalysisReport:
+        season = key[1]
+        lg = await load_league(body.league_id, season, creds, with_fa=True)
+        if lg.team(body.team_id) is None:
+            raise HTTPException(
+                404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
+            )
+        summary = league_summary(lg)
+        if not summary.supported:
+            raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
+        job.update("Reading rosters", 0.02)
+        report = await run_in_threadpool(
+            lambda: Analyzer(
+                lg, body.team_id, body.keep_player_ids, body.not_for_sale_player_ids, progress=job.update
+            ).report()
+        )
+        app.state.reports.set(key, report)
+        return report
+
+    def analysis_job(
+        body: schemas.AnalyzeRequest, creds: EspnCredentials | None, key: tuple, retry_failed: bool = False
+    ) -> AnalysisProgress:
+        """One run per team and settings at a time, however many tabs or refreshes ask for it."""
+        job = app.state.analysis_jobs.get(key)
+        failed = job is not None and job.task.done() and (job.task.cancelled() or job.task.exception() is not None)
+        if job is None or (failed and retry_failed):
+            job = AnalysisProgress()
+            job.task = asyncio.create_task(build_report(body, creds, key, job))
+            app.state.analysis_jobs[key] = job
+
+            def forget() -> None:
+                if app.state.analysis_jobs.get(key) is job:
+                    del app.state.analysis_jobs[key]
+
+            def done(task: asyncio.Task) -> None:
+                if not task.cancelled():
+                    task.exception()  # read here so a failure nobody polls for isn't logged as lost
+                # Keep a finished job briefly so the next poll can pick up its result or error.
+                asyncio.get_running_loop().call_later(ANALYSIS_JOB_KEEP, forget)
+
+            job.task.add_done_callback(done)
+        return job
+
     @app.post(
         "/api/analyze",
         response_model=schemas.AnalysisReport,
@@ -465,36 +678,50 @@ def create_app(
         x_espn_s2: str | None = Header(default=None),
         x_espn_swid: str | None = Header(default=None),
     ) -> schemas.AnalysisReport:
+        """The whole analysis in one (slow) request. Prefer /api/analyze/job, which never blocks."""
         creds = read_credentials(x_espn_s2, x_espn_swid)
-        season = body.season or current_season()
-        # A team's analysis is for its verified manager only.
-        seat = await linked(authorization, body.league_id, season, required=True)
-        if seat.team_id != body.team_id:
-            raise HTTPException(403, detail=NOT_YOUR_TEAM)
-        key = (
-            body.league_id,
-            season,
-            body.team_id,
-            tuple(sorted(body.keep_player_ids)),
-            tuple(sorted(body.not_for_sale_player_ids)),
-            credentials_key(creds),
-        )
+        key = await analysis_key(body, authorization, creds)
         cached = app.state.reports.get(key)
         if cached is not None:
             return cached
-        lg = await load_league(body.league_id, season, creds, with_fa=True)
-        if lg.team(body.team_id) is None:
-            raise HTTPException(
-                404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
-            )
-        summary = league_summary(lg)
-        if not summary.supported:
-            raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
-        report = await run_in_threadpool(
-            lambda: Analyzer(lg, body.team_id, body.keep_player_ids, body.not_for_sale_player_ids).report()
-        )
-        app.state.reports.set(key, report)
-        return report
+        return await asyncio.shield(analysis_job(body, creds, key, retry_failed=True).task)
+
+    @app.post(
+        "/api/analyze/job",
+        response_model=schemas.AnalysisJob,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def analyze_job(
+        body: schemas.AnalyzeRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.AnalysisJob:
+        """Start the team's analysis in the background, or say how far along it is.
+
+        Answers at once. Call again with the same body (every couple of seconds) until
+        ``status`` is ``done`` (the report is included) or ``failed``.
+        """
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        key = await analysis_key(body, authorization, creds)
+        cached = app.state.reports.get(key)
+        if cached is not None:
+            return schemas.AnalysisJob(status="done", progress=1.0, stage="Done", report=cached)
+        job = analysis_job(body, creds, key)
+        if not job.task.done():
+            return schemas.AnalysisJob(status="running", progress=job.progress, stage=job.stage)
+        app.state.analysis_jobs.pop(key, None)  # a retry after a failure starts afresh
+        exc = job.task.exception()
+        if exc is None:
+            return schemas.AnalysisJob(status="done", progress=1.0, stage="Done", report=job.task.result())
+        if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
+            error = schemas.ErrorBody(**exc.detail)
+        elif isinstance(exc, EspnError):
+            error = schemas.ErrorBody(code=exc.code, message=str(exc))
+        else:
+            logging.getLogger(__name__).error("analysis failed", exc_info=exc)
+            error = schemas.ErrorBody(code="analysis_failed", message="The analysis failed. Try again.")
+        return schemas.AnalysisJob(status="failed", progress=job.progress, stage=job.stage, error=error)
 
     @app.post(
         "/api/shop",
@@ -937,6 +1164,28 @@ def create_app(
         out = schemas.Reactions(counts=rc.counts, mine=sorted(rc.mine)) if rc else schemas.Reactions()
         return schemas.ReactionsOut(target=body.target, reactions=out)
 
+    async def overview_games(
+        league_id: int, season: int, creds: EspnCredentials | None, now: datetime
+    ) -> dict[int, schemas.WeekGames]:
+        """Each team's games today and this week. Empty if rosters or the NBA calendar can't be had."""
+        raw_schedule = await pro_schedule(season)
+        if raw_schedule is None:
+            return {}
+        try:
+            lg = await load_league(league_id, season, creds, with_fa=False)
+        except EspnError:
+            return {}
+        try:
+            sched = parse_schedule(raw_schedule)
+        except (KeyError, TypeError, ValueError):
+            logging.getLogger(__name__).warning("NBA calendar has an unexpected shape; overview sent without games")
+            return {}
+        out = {}
+        for team in lg.teams:
+            g = week_games(roster_pro_teams(team.roster), sched, now)
+            out[team.id] = schemas.WeekGames(today=g.today, left=g.left, total=g.total)
+        return out
+
     @app.post(
         "/api/league-overview", response_model=schemas.LeagueOverview, responses={401: {"model": schemas.ErrorBody}}
     )
@@ -964,6 +1213,9 @@ def create_app(
             r = (t.get("record") or {}).get("overall") or {}
             return f"{r.get('wins', 0)}-{r.get('losses', 0)}" + (f"-{r['ties']}" if r.get("ties") else "")
 
+        def overall(t: dict) -> dict:
+            return (t.get("record") or {}).get("overall") or {}
+
         teams = [
             schemas.OverviewTeam(
                 id=int(t["id"]),
@@ -972,17 +1224,31 @@ def create_app(
                 record=record(t),
                 has_manager=int(t["id"]) in managers,
                 mine=seat is not None and seat.team_id == int(t["id"]),
+                wins=int(overall(t).get("wins") or 0),
+                losses=int(overall(t).get("losses") or 0),
+                ties=int(overall(t).get("ties") or 0),
+                seed=int(t["playoffSeed"]) if t.get("playoffSeed") else None,
+                games_back=overall(t).get("gamesBack"),
             )
             for t in raw.get("teams", [])
         ]
+        settings = raw.get("settings") or {}
+        stat_ids = [
+            int(i["statId"]) for i in (settings.get("scoringSettings") or {}).get("scoringItems", []) if "statId" in i
+        ]
+        now = app.state.now()
+        games = await overview_games(body.league_id, season, creds, now)
 
         def side(m: dict) -> schemas.MatchupSide:
             score = m.get("cumulativeScore") or {}
+            team_id = int(m["teamId"])
             return schemas.MatchupSide(
-                team_id=int(m["teamId"]),
+                team_id=team_id,
                 wins=int(score.get("wins", 0)),
                 losses=int(score.get("losses", 0)),
                 ties=int(score.get("ties", 0)),
+                categories=[schemas.CategoryScore(**c.__dict__) for c in category_scores(m, stat_ids)],
+                games=games.get(team_id),
             )
 
         matchups = [
@@ -1028,8 +1294,11 @@ def create_app(
         return schemas.LeagueOverview(
             league_id=body.league_id,
             season=season,
-            name=((raw.get("settings") or {}).get("name") or f"League {body.league_id}").strip(),
+            name=(settings.get("name") or f"League {body.league_id}").strip(),
             matchup_period=period,
+            week_start=week_bounds(now)[0].isoformat(),
+            week_end=week_bounds(now)[1].isoformat(),
+            playoff_teams=(settings.get("scheduleSettings") or {}).get("playoffTeamCount"),
             teams=teams,
             matchups=matchups,
             mvp=mvp,
@@ -1072,6 +1341,118 @@ def create_app(
         except TargetError as exc:
             raise HTTPException(400, detail={"code": exc.code, "message": str(exc)}) from exc
 
+    @app.post(
+        "/api/trade-check",
+        response_model=schemas.TradeCheck,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def trade_check(
+        body: schemas.TradeCheckRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.TradeCheck:
+        """Check a trade idea against today's league: what holds up, what doesn't, and the evidence.
+
+        Every check runs; the ones the quick reasons point at come first. When the manager has
+        given feedback on this deal, the verdicts are kept with it.
+        """
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        seat = await linked(authorization, body.league_id, season, required=True)
+        if seat.team_id != body.team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        lg = await load_league(body.league_id, season, creds, with_fa=True)
+        if lg.team(body.team_id) is None:
+            raise HTTPException(
+                404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
+            )
+        summary = league_summary(lg)
+        if not summary.supported:
+            raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
+        idea = body.idea
+        deal = deal_key(idea.partner_team_id, [p.id for p in idea.give], [p.id for p in idea.get])
+        reading = await note_reading(seat, deal)
+        if reading is None:
+            order = focus_order(body.reasons)
+        else:
+            # Ticked reasons first, then what the note points at, then what it implies.
+            implied = [c for r in reading.reasons for c in REASON_CHECKS.get(r, [])]
+            order = focus_order(body.reasons, extra=[*reading.checks, *implied])
+        read_as = schemas.NoteRead(kind=reading.kind, summary=reading.summary) if reading else None
+
+        def run() -> schemas.TradeCheck:
+            try:
+                checker = IdeaChecker(lg, body.team_id, body.idea, body.keep_player_ids)
+            except StaleIdea as exc:
+                stale = [
+                    schemas.CheckVerdict(check=c, title=CHECK_TITLES[c], status="cant_check", evidence=str(exc))
+                    for c in order
+                ]
+                return schemas.TradeCheck(stale=str(exc), verdicts=stale, read_as=read_as)
+            return schemas.TradeCheck(
+                playoff_pct_before=round(checker.before, 3),
+                playoff_pct_after=round(checker.after, 3),
+                verdicts=checker.run(order),
+                read_as=read_as,
+            )
+
+        result = await run_in_threadpool(run)
+        if result.stale is None:
+            verdicts = [v.model_dump() for v in result.verdicts]
+            await run_in_threadpool(
+                app.state.feedback.record_checks, seat.user_id, body.league_id, season, deal, verdicts
+            )
+        return result
+
+    async def note_reading(seat: Seat, deal: str) -> Reading | None:
+        """How the manager's note on this deal reads: read once, then kept with the feedback."""
+        entries = await run_in_threadpool(app.state.feedback.for_deal, seat.user_id, seat.league_id, seat.season, deal)
+        entry = next((f for f in entries if f.text), None)
+        if entry is None:
+            return None
+        if entry.deep_reading is not None:  # Opus's closer read, when an unclear note got one
+            return Reading.model_validate(entry.deep_reading)
+        if entry.reading is not None:
+            return Reading.model_validate(entry.reading)
+        if app.state.reader is None:
+            return None
+        idea = schemas.TradeIdea(**entry.idea)
+        reading = await run_in_threadpool(app.state.reader.read, entry.text, idea, entry.rating, entry.reasons)
+        if reading is not None:
+            await run_in_threadpool(app.state.feedback.record_reading, entry.id, reading.model_dump())
+        return reading
+
+    @app.get("/api/feedback/deep-read")
+    async def feedback_deep_read() -> dict:
+        """Collects finished closer reads of unclear notes and sends new ones, in batches. Called by a cron.
+
+        Safe to call often: each note is sent once, and nothing runs more than every few minutes.
+        """
+        reader = app.state.deep_reader
+        if reader is None:
+            return {"ok": True, "enabled": False}
+        async with app.state.deep_read_lock:
+            now = app.state.now()
+            last = app.state.deep_read_last
+            if last is not None and (now - last).total_seconds() < DEEP_READ_MIN_SECONDS:
+                return {"ok": True, "enabled": True, "skipped": True}
+            app.state.deep_read_last = now
+            store = app.state.feedback
+            collected = 0
+            for batch_id in await run_in_threadpool(store.deep_batches):
+                results = await run_in_threadpool(reader.collect, batch_id)
+                for feedback_id, deep in (results or {}).items():
+                    data = deep.model_dump() if deep is not None else None
+                    await run_in_threadpool(store.record_deep, feedback_id, batch_id, data)
+                    collected += deep is not None
+            pending = await run_in_threadpool(store.pending_deep, DEEP_BATCH_MAX)
+            notes = [(f.id, f.text, schemas.TradeIdea(**f.idea), f.rating, f.reasons) for f in pending]
+            batch_id = await run_in_threadpool(reader.submit, notes) if notes else None
+            if batch_id is not None:
+                await run_in_threadpool(store.mark_deep_batch, [f.id for f in pending], batch_id)
+            return {"ok": True, "enabled": True, "collected": collected, "sent": len(notes) if batch_id else 0}
+
     async def score_day(season: int, day: int, league_id: int, creds: EspnCredentials | None, sched) -> dict:
         """One day's games. Finished days come from the store; a day in progress is cached for a minute."""
         key = (season, day)
@@ -1098,6 +1479,16 @@ def create_app(
                 app.state.score_days.set(key, body)
             return body
 
+    async def with_clocks(data: dict, day_date) -> dict:
+        """Adds the quarter and clock to games in progress, and ends games ESPN has called final."""
+        if day_date is None or not any(g["status"] == "live" for g in data["games"]):
+            return data
+        clocks = app.state.clocks.get(day_date)
+        if clocks is None:
+            clocks = await fetch_clocks(day_date, app.state.clock_transport)
+            app.state.clocks.set(day_date, clocks or {})
+        return apply_clocks(data, clocks) if clocks else data
+
     @app.post("/api/scores", response_model=schemas.ScoreDay, responses={401: {"model": schemas.ErrorBody}})
     async def scores(
         body: schemas.ScoresRequest,
@@ -1121,6 +1512,7 @@ def create_app(
         if day not in sched.games:
             raise HTTPException(404, detail={"code": "no_games", "message": "No NBA games that day."})
         data = await score_day(season, day, body.league_id, creds, sched)
+        data = await with_clocks(data, sched.date_of(day))
         owners = {p.id: t.id for t in lg.teams for p in t.roster}
         games = [
             schemas.Game(
@@ -1243,7 +1635,8 @@ def create_app(
                 published_at=news_iso(s.published),
                 updated_at=news_iso(s.updated),
                 players=[player(pid) for pid in s.player_ids if pid in states],
-                sources=[link(i) for i in s.items],
+                # One link per source: its latest item on the story.
+                sources=[link(i) for i in {i.source_id: i for i in s.items}.values()],
                 severity=s.severity,
                 conflict=s.conflict,
             )
@@ -1279,6 +1672,144 @@ def create_app(
             updated_at=news_iso(last) if last else None,
             refreshing=refreshing,
         )
+
+    def feedback_out(f: Feedback) -> schemas.TradeFeedback:
+        return schemas.TradeFeedback(
+            id=f.id,
+            source=f.source,
+            rating=f.rating,
+            reasons=f.reasons,
+            text=f.text,
+            idea=schemas.TradeIdea(**f.idea),
+            created_at=iso(f.created_at),
+        )
+
+    @app.post(
+        "/api/trade-feedback",
+        response_model=schemas.TradeFeedback,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def trade_feedback(
+        body: schemas.TradeFeedbackRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.TradeFeedback:
+        """Save what a manager thought of a trade idea, with the idea as they saw it.
+
+        Giving feedback on the same deal again replaces the earlier entry.
+        """
+        season = body.season or current_season()
+        seat = await linked(authorization, body.league_id, season, required=True)
+        if seat.team_id != body.team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        idea = body.idea
+        entry = Feedback(
+            id=0,
+            user_id=seat.user_id,
+            league_id=body.league_id,
+            season=season,
+            team_id=body.team_id,
+            source=body.source,
+            idea_key=idea_key(body.source, idea.partner_team_id, [p.id for p in idea.give], [p.id for p in idea.get]),
+            rating=body.rating,
+            reasons=sorted(set(body.reasons)),
+            text=body.text.strip(),
+            idea=idea.model_dump(),
+            model_version=model_version(),
+            created_at=app.state.now(),
+        )
+        saved = await run_in_threadpool(app.state.feedback.save, entry)
+        return feedback_out(saved)
+
+    @app.post(
+        "/api/trade-feedback/mine",
+        response_model=schemas.TradeFeedbackList,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def my_trade_feedback(
+        body: schemas.TradeFeedbackListRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.TradeFeedbackList:
+        """The feedback this manager gave in the league, newest first."""
+        season = body.season or current_season()
+        seat = await linked(authorization, body.league_id, season, required=True)
+        if seat.team_id != body.team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        rows = await run_in_threadpool(app.state.feedback.mine, seat.user_id, body.league_id, season)
+        return schemas.TradeFeedbackList(feedback=[feedback_out(f) for f in rows])
+
+    def rule_out(r: Rule) -> schemas.TradeRule:
+        return schemas.TradeRule(
+            id=r.id, kind=r.kind, value=r.value, label=r.label, why=r.why, created_at=iso(r.created_at)
+        )
+
+    async def rule_seat(authorization: str | None, league_id: int, season: int | None, team_id: int) -> Seat:
+        seat = await linked(authorization, league_id, season or current_season(), required=True)
+        if seat.team_id != team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        return seat
+
+    @app.post(
+        "/api/trade-rules",
+        response_model=schemas.TradeRule,
+        responses={
+            400: {"model": schemas.ErrorBody},
+            401: {"model": schemas.ErrorBody},
+            403: {"model": schemas.ErrorBody},
+        },
+    )
+    async def add_trade_rule(
+        body: schemas.TradeRuleRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.TradeRule:
+        """Adds one of this manager's trade rules. Adding a rule they already have returns it unchanged."""
+        seat = await rule_seat(authorization, body.league_id, body.season, body.team_id)
+        value = body.value.strip()
+        bad = None
+        if body.kind == "protect_category" and not value:
+            bad = "Say which category to protect."
+        elif body.kind == "skip_team" and (not value.isdigit() or int(value) == seat.team_id):
+            bad = "Say which other team to skip, by its id."
+        elif body.kind == "no_injury_prone":
+            value = ""
+        if bad:
+            raise HTTPException(400, detail={"code": "bad_rule", "message": bad})
+        existing = await run_in_threadpool(app.state.rules.mine, seat.user_id, seat.league_id, seat.season)
+        if len(existing) >= MAX_RULES and not any((r.kind, r.value) == (body.kind, value) for r in existing):
+            raise HTTPException(
+                400, detail={"code": "too_many_rules", "message": f"You can keep up to {MAX_RULES} rules."}
+            )
+        label = {
+            "protect_category": f"Protect {value}",
+            "skip_team": f"Skip {body.team_name.strip() or 'team ' + value}",
+            "no_injury_prone": "No injury-prone players in",
+        }[body.kind]
+        why = body.why.strip()
+        rule = Rule(0, seat.user_id, seat.league_id, seat.season, body.kind, value, label, why, app.state.now())
+        return rule_out(await run_in_threadpool(app.state.rules.add, rule))
+
+    @app.post(
+        "/api/trade-rules/mine",
+        response_model=schemas.TradeRuleList,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def my_trade_rules(
+        body: schemas.TradeRuleListRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.TradeRuleList:
+        """This manager's trade rules in the league, oldest first."""
+        seat = await rule_seat(authorization, body.league_id, body.season, body.team_id)
+        rows = await run_in_threadpool(app.state.rules.mine, seat.user_id, seat.league_id, seat.season)
+        return schemas.TradeRuleList(rules=[rule_out(r) for r in rows])
+
+    @app.post(
+        "/api/trade-rules/delete",
+        response_model=schemas.TradeRuleList,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def delete_trade_rule(
+        body: schemas.TradeRuleDeleteRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.TradeRuleList:
+        """Removes one of this manager's rules and returns the ones left."""
+        seat = await rule_seat(authorization, body.league_id, body.season, body.team_id)
+        await run_in_threadpool(app.state.rules.remove, seat.user_id, body.rule_id)
+        rows = await run_in_threadpool(app.state.rules.mine, seat.user_id, seat.league_id, seat.season)
+        return schemas.TradeRuleList(rules=[rule_out(r) for r in rows])
 
     return app
 

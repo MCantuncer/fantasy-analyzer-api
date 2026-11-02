@@ -51,4 +51,16 @@ def test_open_roster_spot_is_filled_from_free_agency(league):
         league, CategoryModel(league), next(i for i, t in enumerate(league.teams) if t.id == MY_TEAM), []
     )
     assert finder.filler is not None
-    assert finder.filler.pro_team_id and finder.filler.available
+    assert finder.filler.pro_team_id and finder.filler.fully_healthy
+
+
+def test_day_to_day_free_agent_is_not_suggested_as_a_pickup(league):
+    # ESPN's day-to-day tag can lag a long absence, so the open spot goes to someone with no tag.
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == MY_TEAM)
+    best = TradeFinder(league, model, me, []).filler
+    hurt = replace(
+        league, free_agents=[replace(p, injury_status="DAY_TO_DAY") if p is best else p for p in league.free_agents]
+    )
+    filler = TradeFinder(hurt, CategoryModel(hurt), me, []).filler
+    assert filler is not None and filler.id != best.id and filler.fully_healthy

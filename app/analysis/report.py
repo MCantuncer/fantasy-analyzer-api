@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import numpy as np
 
 from app import schemas
 from app.analysis.badges import OwnerPremium, badge_refs
+from app.analysis.durability import injury_prone
 from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
-from app.analysis.sim import EACH_CATEGORY, simulate_season
+from app.analysis.sim import EACH_CATEGORY, SeasonSim, simulate_season
 from app.analysis.tiers import droppable, has_market, tier
 from app.analysis.trades import Deal, Mode, TradeFinder, acceptance_label
 from app.espn.parse import League, Player, Team
@@ -24,6 +26,25 @@ PICKUP_VIA_TRADE = 2  # at most this many "trade X to open a spot" ideas
 MIN_SAMPLE_GAMES = 5  # a free agent with no projection or last season needs this many games
 LOCKED, LOST = 0.70, 0.30
 SUPPORTED_SCORING = {"H2H_CATEGORY", "H2H_MOST_CATEGORIES"}
+# Share of a report's run time each step takes, measured on League A: (stage, start, end).
+FAIR_SPAN = ("Screening trades", 0.05, 0.50)
+EDGE_SPAN = ("Screening edge trades", 0.50, 0.65)
+VISION_SPAN = ("Screening vision trades", 0.65, 0.80)
+# A vision trade can cost a little now for a stronger playoff run: playoff odds may dip this much.
+VISION_ODDS_SLACK = 0.02
+PICKUP_SPAN = ("Screening pickups", 0.80, 0.94)
+
+Progress = Callable[[str, float], None]
+
+
+def _round(x: float | None, digits: int = 2) -> float | None:
+    return None if x is None else round(x, digits)
+
+
+def _playoff_payoff(t: schemas.TradeIdea) -> float:
+    """Change in playoff odds times expected categories won per playoff week."""
+    before = t.playoff_pct_before * (t.playoff_week_cats_before or 0.0)
+    return t.playoff_pct_after * (t.playoff_week_cats_after or 0.0) - before
 
 
 def record(t: Team) -> str:
@@ -50,6 +71,10 @@ def league_summary(league: League) -> schemas.LeagueSummary:
     )
 
 
+def same_dist(a: Dist, b: Dist) -> bool:
+    return a is b or (np.array_equal(a.mu, b.mu) and np.array_equal(a.sd, b.sd))
+
+
 class Analyzer:
     def __init__(
         self,
@@ -57,8 +82,10 @@ class Analyzer:
         team_id: int,
         keep_player_ids: list[int] | None = None,
         not_for_sale_player_ids: list[int] | None = None,
+        progress: Progress | None = None,
     ):
         self.league = league
+        self.progress = progress
         self.model = CategoryModel(league)
         self.teams = league.teams
         self.idx = next(i for i, t in enumerate(self.teams) if t.id == team_id)
@@ -70,6 +97,9 @@ class Analyzer:
         mine = {p.id for p in self.me.roster}
         not_for_sale = {pid for pid in not_for_sale_player_ids or [] if pid not in mine}
         self.premium = OwnerPremium(league, self.model, self.perceived, not_for_sale)
+        self._sim: SeasonSim | None = None  # drawn on the first what-if, shared by every later one
+        self._today: tuple[float, np.ndarray] | None = None
+        self._after_pickup: dict[tuple[int, int], tuple[float, np.ndarray]] = {}
 
     # ---- helpers -----------------------------------------------------------------------
 
@@ -85,7 +115,18 @@ class Analyzer:
             tier=tier(p, self.keep),
             badges=badge_refs(self.premium, p),
             owner_premium=round(self.premium.dollars(p), 1),
+            games_share=round(p.durability, 3) if p.durability is not None else None,
+            injury_prone=injury_prone(p),
+            games_out=round(p.games_out, 1) if p.games_out is not None else None,
+            expected_back=self.model.back_date(p),
+            out_report=p.out_report,
         )
+
+    def _tick(self, span: tuple[str, float, float] | None, done: int, total: int) -> None:
+        """Report how far through ``span`` the work is, for callers showing a progress bar."""
+        if self.progress is not None and span is not None:
+            stage, lo, hi = span
+            self.progress(stage, lo + (hi - lo) * (done / total if total else 1.0))
 
     def avg_cat_win(self, i: int, dists: list[Dist]) -> np.ndarray:
         """(C,) average weekly win probability per category against the rest of the league."""
@@ -99,13 +140,58 @@ class Analyzer:
         periods = sorted({m.period for m in self.league.schedule if m.winner == "UNDECIDED"})
         return {p: [self.model.dist(r, p) for r in rosters] for p in periods}
 
+    def playoff_periods(self) -> list[int]:
+        """The league's playoff matchup periods, from the NBA calendar."""
+        if not self.model.cal:
+            return []
+        return sorted(p for p in self.model.cal.period_days if p > self.league.regular_season_periods)
+
+    def playoff_strength(self, i: int, changed: dict[int, list[Player]] | None = None) -> float | None:
+        """Team ``i``'s expected categories won per playoff week against an average team.
+
+        Each playoff week is projected on its real games (who plays, who's back from injury),
+        so a player out until then counts fully and a team with few games that week counts less.
+        """
+        periods = self.playoff_periods()
+        if not periods:
+            return None
+        rosters = [(changed or {}).get(j, t.roster) for j, t in enumerate(self.teams)]
+        return float(np.mean([self.model.strength(i, [self.model.dist(r, p) for r in rosters]) for p in periods]))
+
     def playoff_pct(
         self, dists: list[Dist], changed: dict[int, list[Player]] | None = None, sims: int = WHAT_IF_SIMS
     ) -> float:
-        res = simulate_season(
-            self.league, dists, self.model.reverse, n_sims=sims, period_dists=self.period_dists(changed)
-        )
-        return float(res.playoff_pct[self.idx])
+        """My playoff odds with these projections. ``changed`` holds the rosters that differ from today's."""
+        if sims != WHAT_IF_SIMS:
+            res = simulate_season(
+                self.league, dists, self.model.reverse, n_sims=sims, period_dists=self.period_dists(changed)
+            )
+            return float(res.playoff_pct[self.idx])
+        if self._sim is None:
+            self._sim = SeasonSim(
+                self.league, self.dists, self.model.reverse, n_sims=WHAT_IF_SIMS, period_dists=self.period_dists()
+            )
+        moved = set(changed or {}) | {i for i, d in enumerate(dists) if not same_dist(d, self.dists[i])}
+        period_dists = self.period_dists(changed) if moved else None
+        return float(self._sim.what_if(moved, dists, period_dists).playoff_pct[self.idx])
+
+    def baseline(self, d: Deal) -> tuple[float, np.ndarray]:
+        """My playoff odds and category win rates that a deal is measured against.
+
+        Today's roster, or my roster after the free pickup when the deal's open spot uses it.
+        """
+        if d.vs_pickup is None:
+            if self._today is None:
+                self._today = (self.playoff_pct(self.dists), self.avg_cat_win(self.idx, self.dists))
+            return self._today
+        add, drop = d.vs_pickup
+        key = (add.id, drop.id)
+        if key not in self._after_pickup:
+            roster = [p for p in self.me.roster if p.id != drop.id] + [add]
+            dists = list(self.dists)
+            dists[self.idx] = self.model.dist(roster)
+            self._after_pickup[key] = (self.playoff_pct(dists, {self.idx: roster}), self.avg_cat_win(self.idx, dists))
+        return self._after_pickup[key]
 
     def trade_idea(
         self, finder: TradeFinder, d: Deal, before: float, after: float, base_cats: np.ndarray
@@ -132,7 +218,10 @@ class Analyzer:
             reasons=d.reasons,
             playoff_pct_before=round(before, 3),
             playoff_pct_after=round(after, 3),
+            playoff_week_cats_before=_round(self.playoff_strength(self.idx)),
+            playoff_week_cats_after=_round(self.playoff_strength(self.idx, d.rosters)),
             category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
+            vision=d.vision,
         )
 
     # ---- sections ----------------------------------------------------------------------
@@ -175,22 +264,29 @@ class Analyzer:
             )
         return out
 
-    def trades(self, mode: Mode = "fair") -> list[schemas.TradeIdea]:
+    def trades(self, mode: Mode = "fair", span: tuple[str, float, float] | None = None) -> list[schemas.TradeIdea]:
+        self._tick(span, 0, 1)
         finder = TradeFinder(self.league, self.model, self.idx, self.keep, mode, premium=self.premium)
-        base_cats = self.avg_cat_win(self.idx, self.dists)
-        before = self.playoff_pct(self.dists)
         ideas = []
-        for d in finder.shortlist():
+        shortlist = finder.shortlist()
+        for n, d in enumerate(shortlist):
+            self._tick(span, n, len(shortlist))
+            before, base_cats = self.baseline(d)
             after = self.playoff_pct(d.dists, d.rosters)
             # Small category gains can vanish in the full simulation; only keep moves that hold up there.
-            if after < before:
+            if after < before - (VISION_ODDS_SLACK if mode == "vision" else 0.0):
                 continue
             ideas.append(self.trade_idea(finder, d, before, after, base_cats))
-        # Expected payoff: playoff gain weighted by the chance the deal actually happens.
-        ideas.sort(key=lambda t: t.acceptance * (t.playoff_pct_after - t.playoff_pct_before), reverse=True)
+        if mode == "vision":
+            # Expected playoff payoff: the chance to be there times how strong I am once there.
+            ideas.sort(key=lambda t: t.acceptance * _playoff_payoff(t), reverse=True)
+        else:
+            # Expected payoff: playoff gain weighted by the chance the deal actually happens.
+            ideas.sort(key=lambda t: t.acceptance * (t.playoff_pct_after - t.playoff_pct_before), reverse=True)
         return ideas[:TRADE_RESULTS]
 
-    def pickups(self) -> list[schemas.PickupIdea]:
+    def pickups(self, span: tuple[str, float, float] | None = None) -> list[schemas.PickupIdea]:
+        self._tick(span, 0, 1)
         base = self.model.strength(self.idx, self.dists)
         base_cats = self.avg_cat_win(self.idx, self.dists)
         # Only players with no trade value are ever released. A swap that needs a
@@ -222,7 +318,9 @@ class Analyzer:
         traded = [c for c in traded if c[0] > top_release + 0.05][:PICKUP_VIA_TRADE]
         before = self.playoff_pct(self.dists)
         ideas = []
-        for gain, fa, drop, dists, via_trade, roster in released + traded:
+        to_sim = released + traded
+        for n, (gain, fa, drop, dists, via_trade, roster) in enumerate(to_sim):
+            self._tick(span, n, len(to_sim))
             cats = self.avg_cat_win(self.idx, dists) - base_cats
             ideas.append(
                 schemas.PickupIdea(
@@ -255,10 +353,16 @@ class Analyzer:
                 playoff_pct=round(float(res.playoff_pct[i]), 3),
                 first_seed_pct=round(float(res.first_seed_pct[i]), 3),
                 mean_rank=round(float(res.mean_rank[i]), 2),
+                playoff_week_cats=_round(self.playoff_strength(i)),
             )
             for i, t in enumerate(self.teams)
         ]
         return sorted(rows, key=lambda r: r.mean_rank)
+
+    def _season_step(self) -> list[schemas.SeasonRow]:
+        if self.progress is not None:
+            self.progress("Simulating the season", PICKUP_SPAN[2])
+        return self.season()
 
     def league_rosters(self) -> list[schemas.TeamRoster]:
         """Other teams' players with how much each would help you, for the trade-for picker."""
@@ -291,10 +395,11 @@ class Analyzer:
             roster=[self.ref(p) for p in roster],
             categories=self.categories(),
             builds=self.builds(),
-            trades=self.trades(),
-            edge_trades=self.trades("edge"),
-            pickups=self.pickups(),
-            season=self.season(),
+            trades=self.trades(span=FAIR_SPAN),
+            edge_trades=self.trades("edge", span=EDGE_SPAN),
+            vision_trades=self.trades("vision", span=VISION_SPAN),
+            pickups=self.pickups(span=PICKUP_SPAN),
+            season=self._season_step(),
             league_rosters=self.league_rosters(),
             faab_remaining=self.me.faab_remaining,
             waiver_priority=self.me.waiver_priority,

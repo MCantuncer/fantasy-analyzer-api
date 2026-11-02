@@ -4,11 +4,15 @@ import pytest
 
 from app.analysis.model import CategoryModel
 from app.analysis.perceived import PerceivedValue
-from app.analysis.report import league_summary
+from app.analysis.report import Analyzer, league_summary
+from app.analysis.tiers import droppable
 from app.analysis.trades import (
     MAX_VALUE_RATIO,
     MIN_THEIR_GAIN,
     MIN_VALUE_RATIO,
+    VISION_MIN_GAMES,
+    VISION_MIN_PLAYOFF_GAIN,
+    VISION_MIN_SEASON_GAIN,
     TradeFinder,
     acceptance_label,
     acceptance_odds,
@@ -182,3 +186,89 @@ def test_edge_deals_win_on_paper_for_them_and_on_the_court_for_me(league):
         assert d.their_gain >= EDGE_MIN_THEIR_GAIN
         assert d.edge >= EDGE_MIN_MARGIN - 1e-9
         assert len(finder.rivals) <= 4 and finder.me_idx not in finder.rivals
+
+
+def test_two_for_one_is_measured_against_the_free_pickup(league):
+    """The spot a 2-for-1 opens takes the best free agent, but that pickup needs no trade."""
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set())
+    assert finder.free_move is not None
+    add, drop = finder.free_move
+    assert add is finder.filler and drop in droppable(league.teams[me].roster)
+    assert finder.free_base > finder.base[me]
+    # Open thresholds: the point is how the gain is measured, not which deals pass.
+    j = (me + 1) % len(league.teams)
+    mine, theirs = league.teams[me].roster, league.teams[j].roster
+    loose = {"min_my_gain": float("-inf"), "min_their_gain": float("-inf"), "min_ratio": 0.0}
+    filled = [
+        d
+        for pair in zip(mine, mine[1:], strict=False)
+        for get in theirs
+        if (d := finder._evaluate(j, list(pair), [get], **loose)) is not None
+    ]
+    assert filled
+    deals = finder.candidates() + filled
+    for d in filled:
+        assert d.my_add is finder.filler
+        assert d.vs_pickup == finder.free_move
+        after = model.strength(me, d.dists)
+        assert d.my_gain == pytest.approx(after - finder.free_base)
+        assert any(add.name in r and "needs no trade" in r for r in d.reasons)
+    assert all(d.vs_pickup is None for d in deals if d.my_add is None)
+
+
+def test_trade_odds_start_from_the_free_pickup_when_the_deal_uses_it(league):
+    a = Analyzer(league, 3)
+    today = a.playoff_pct(a.dists)
+    ideas = a.trades("fair") + a.trades("edge")
+    assert ideas
+    for t in ideas:
+        if t.my_add is None:
+            assert t.playoff_pct_before == pytest.approx(today, abs=1e-3)
+        else:
+            assert t.playoff_pct_before > today
+        assert t.playoff_pct_after >= t.playoff_pct_before
+
+
+def _slow_starter(league, name="Walker Kessler"):
+    """A copy of the league where a rival's player has had a bad first 10 games, and owners see it."""
+    lg = copy.deepcopy(league)
+    model = CategoryModel(lg)
+    me = next(i for i, t in enumerate(lg.teams) if t.id == 3)
+    star = next(p for t in lg.teams for p in t.roster if p.name == name)
+    star.games_played = 10
+    star.season_line = {k: 0.6 * v for k, v in star.per_game.items()}
+    star.season_rank = star.recent_rank = 150
+    return lg, model, me, star
+
+
+def test_vision_signal_is_a_slow_start_the_projection_expects_to_fade(league):
+    lg, model, me, star = _slow_starter(league)
+    finder = TradeFinder(lg, model, me, keep=set(), mode="vision")
+    assert finder.vision_signals(star) and "Slow start" in finder.vision_signals(star)[0]
+    # Playing to his projection, too few games, or out: no signal.
+    steady = copy.copy(star)
+    steady.season_line = dict(star.per_game)
+    assert finder.vision_signals(steady) == []
+    early = copy.copy(star)
+    early.games_played = VISION_MIN_GAMES - 1
+    assert finder.vision_signals(early) == []
+    hurt = copy.copy(star)
+    hurt.injury_status = "OUT"
+    assert finder.vision_signals(hurt) == []
+
+
+def test_vision_deals_buy_the_target_and_pay_in_the_playoffs(league):
+    lg, model, me, star = _slow_starter(league)
+    finder = TradeFinder(lg, model, me, keep=set(), mode="vision")
+    deals = finder.candidates()
+    assert deals
+    for d in deals:
+        assert d.get == [star] and d.vision
+        assert all(p.available for p in d.give) and 1 <= len(d.give) <= 2
+        assert d.playoff_gain >= VISION_MIN_PLAYOFF_GAIN
+        assert d.my_gain >= VISION_MIN_SEASON_GAIN
+    ranked = finder.shortlist()
+    keys = [finder.rank_key(d) for d in ranked]
+    assert keys == sorted(keys, reverse=True)

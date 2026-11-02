@@ -1,6 +1,7 @@
 """Score the model on finished seasons of a public league, replayed week by week.
 
-Usage: uv run python -m scripts.backtest LEAGUE_ID SEASON [SEASON ...] [--json OUT.json]
+Usage: uv run python -m scripts.backtest LEAGUE_ID SEASON [SEASON ...] [--json OUT.json] [--flat-durability]
+       [--flat-absence] [--count-every-absence]
 The first run of a season downloads it from ESPN (a few hundred requests, a few minutes)
 into .cache/backtest/; later runs read the cache. Only public leagues: no cookies.
 
@@ -15,7 +16,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from app.backtest.history import load_history
+from app.backtest.history import load_history, load_past_absences, load_past_games
 from app.backtest.replay import Replay
 
 CACHE = Path(".cache/backtest")
@@ -27,12 +28,27 @@ def main() -> None:
     ap.add_argument("seasons", type=int, nargs="+")
     ap.add_argument("--json", type=Path, help="also write the full scores here")
     ap.add_argument("--sims", type=int, default=2000, help="season simulations per cut week")
+    ap.add_argument(
+        "--flat-durability", action="store_true", help="ignore games-played history (every player equally durable)"
+    )
+    ap.add_argument(
+        "--flat-absence", action="store_true", help="players out are back after a flat number of days, as before"
+    )
+    ap.add_argument(
+        "--count-every-absence",
+        action="store_true",
+        help="count a single major injury in the durability record like any other absence, as before",
+    )
     args = ap.parse_args()
 
     out = {}
     for season in args.seasons:
         h = asyncio.run(load_history(args.league_id, season, CACHE))
-        replay = Replay(h)
+        past = None if args.flat_durability else asyncio.run(load_past_games(season, CACHE))
+        long_absences = (
+            None if past is None or args.count_every_absence else asyncio.run(load_past_absences(season, past, CACHE))
+        )
+        replay = Replay(h, past, absences=not args.flat_absence, past_absences=long_absences)
         weekly, season_score = replay.weekly().summary(), replay.season(n_sims=args.sims).summary()
         out[season] = {"weekly": weekly, "season": season_score}
         print(f"\n{season}: weekly categories n={weekly['n']}")

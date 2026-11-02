@@ -47,6 +47,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | | Feature | Endpoint |
 | --- | --- | --- |
 | 🔁 | **Trade finder:** 1-for-1, 2-for-1 and 1-for-2 deals that help both builds and look fair to the other owner | `/api/analyze` |
+| 🔭 | **Vision trades:** buy players off to a slow start before they bounce back, for a stronger playoff run, checked on past seasons | `/api/analyze` |
 | 🎯 | **Trade for one player:** fit, his owner's needs and the best three offers | `/api/target` |
 | 🛒 | **Pickups:** every healthy free agent against every possible drop | `/api/analyze` |
 | 🎲 | **Season simulation:** 4,000 runs of the remaining schedule in the league's real format | `/api/analyze` |
@@ -54,6 +55,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🏀 | **Live scores:** NBA scores and box scores tagged with fantasy teams | `/api/scores` |
 | 📰 | **Checked NBA news:** stories confirmed across sources before they show | `/api/news` |
 | 🩹 | **Injury impact:** which teammates gain while a player is out | `/api/injury-impact` |
+| 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |
 | 💬 | **Moves feed and league chat:** transactions, posts, replies and reactions | `/api/feed`, `/api/posts` |
 | 🔐 | **Accounts and verified managers:** email or Google sign-in, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
 
@@ -78,6 +80,9 @@ app/
 ├── backtest/      Week-by-week replays of finished seasons
 ├── accounts.py    Sign-up, sessions and team verification
 ├── feed.py        Moves feed from ESPN transactions
+├── feedback.py    Feedback on trade ideas, with the idea as it was shown
+├── reader.py      Reads a manager's note on a trade idea to pick which checks run first (Haiku), and unclear ones again in batches (Opus)
+├── rules.py       A manager's own trade rules (protect a category, skip a team, no injury-prone players)
 ├── social.py      Posts, replies and reactions
 ├── scores.py      NBA scores and box scores
 └── store.py       Postgres persistence, with an in-memory fallback
@@ -113,6 +118,7 @@ All settings are optional for local development.
 | `DATABASE_URL` | none (in memory) | Postgres connection string for accounts, chat, the trade of the day, finished NBA days and news |
 | `SECRET_KEY` | random per start | Signs team verification challenges; set it so they survive a restart |
 | `GOOGLE_CLIENT_ID` | none | Google OAuth web client ID; Google sign-in stays off until it is set |
+| `ANTHROPIC_API_KEY` | none | Lets Claude Haiku read managers' notes on trade ideas so the checks start where the note points; notes are kept unread without it |
 | `LEAGUE_CACHE_SECONDS` | `600` | How long league data from ESPN is cached |
 | `DAILY_TRADE_WAIT_SECONDS` | `20` | How long a trade-of-the-day request waits before answering `pending` |
 | `DAILY_TRADE_RECHECK_SECONDS` | `10800` | How often the day's pick is checked again |
@@ -142,6 +148,13 @@ All settings are optional for local development.
 | POST | `/api/posts` | `{league_id, season?, body, target?}` | Posts to the chat, or replies when `target` is set |
 | POST | `/api/posts/delete` | `{league_id, season?, post_id}` | Deletes your own post |
 | POST | `/api/reactions` | `{league_id, season?, target, reaction, on?}` | Toggles `steal`, `smart`, `overpay`, `lol`, or a `won:<team id>` trade vote |
+| POST | `/api/trade-feedback` | `{league_id, team_id, season?, source, rating, reasons?, text?, idea}` | Saves what you thought of a trade idea (`bad` or `good`, quick reasons, your words) with the idea as shown; feedback on the same deal replaces the earlier entry |
+| POST | `/api/trade-feedback/mine` | `{league_id, team_id, season?}` | Your feedback in the league, newest first |
+| POST | `/api/trade-check` | `{league_id, team_id, season?, idea, reasons?, keep_player_ids?}` | Checks a trade idea against today's league: whether a free pickup carries the gain, simulation noise, a sideways talent swap, lost categories, thin samples, injuries; each with its evidence, the quick reasons' checks first, then the ones your note points at (read once by Claude Haiku, returned as `read_as`) |
+| GET | `/api/feedback/deep-read` | none | Called hourly by `.github/workflows/feedback.yml`: collects Claude Opus's closer reads of notes the first read marked unclear, and sends new ones as a half-price batch. Each note is sent once; a closer read says which check we'd need to add to verify the point |
+| POST | `/api/trade-rules` | `{league_id, team_id, season?, kind, value?, team_name?, why?}` | Adds one of your trade rules: `protect_category` (value: the category), `skip_team` (value: the team id) or `no_injury_prone`. A rule only hides ideas that break it; it never changes the model |
+| POST | `/api/trade-rules/mine` | `{league_id, team_id, season?}` | Your trade rules in the league |
+| POST | `/api/trade-rules/delete` | `{league_id, team_id, season?, rule_id}` | Removes a rule and returns the rest |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
 | POST | `/api/scores` | `{league_id, season?, day?, team_id?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
 | POST | `/api/injury-impact` | `{player_id, league_id?, season?}` | Teammates who gain while a player is out, from games his team played without him, each tagged with his fantasy team in `league_id` |
@@ -212,7 +225,7 @@ A day is the same in every league. While a game is on, the day is fetched at mos
 - **Outlets:** ESPN, RotoWire, CBS Sports, Yahoo Sports, RealGM, HoopsHype and The Stein Line. Outlets owned by the same company count once.
 - **Tips:** Reddit r/nba. Never enough on its own.
 
-Each item is tagged with the players its headline names in full (ESPN's own athlete tags for ESPN articles), never from a last name alone. Items that name no player (promos, roundups, a feed repeating its own title) never become stories. The kind (injury, return, trade, rumor, signing, release, role) and an injury's severity come from keyword rules. Items about the same player and kind of news within 48 hours become one story:
+Each item is tagged with the players its headline names in full (ESPN's own athlete tags for ESPN articles), never from a last name alone. Only NBA news becomes a story (`newsworthy` in `app/news/extract.py`): a move, an injury or return, a role change, or league business such as a suspension. Game guides, betting, previews, recaps, rankings, opinion, other leagues and a feed repeating its own title are dropped. On 155 hand-labelled headlines from four outlets (`tests/data/news_sample.json`) the filter keeps every news item and 91% of what it keeps is news. The kind (injury, return, trade, rumor, signing, release, role) and an injury's severity come from keyword rules. Items about the same player and kind of news within 48 hours become one story:
 
 | Status | When |
 | --- | --- |
@@ -270,6 +283,26 @@ uv run python -m scripts.backtest 744636428 2025 2026
 ```
 
 The first run of a season downloads it from ESPN into `.cache/backtest/` (a couple of minutes); later runs read the cache. Lower Brier and log loss are better; a spread of 1.0 means the model is exactly as unsure as it should be, above 1 it is overconfident. Keep a model change only if it helps every season.
+
+Add `--flat-durability` to replay without injury risk (every player equally durable), to compare.
+
+### Injury-risk backtest
+
+Checks the expected-games model (`app/analysis/durability.py`) on past seasons: fitted on 2023-24, tested on 2024-25 and 2025-26 against game logs, with calibration by fifths and the injury-prone players who start healthy:
+
+```sh
+uv run python -m scripts.durability_backtest        # add --fit to search the constants again
+```
+
+### Vision-trade backtest
+
+Checks that vision-trade targets are worth more later: at weeks 4 to 12 of past seasons, players off to a slow start (projection 1+ above their season so far) are scored against what they did the rest of the way, and so are players out for a while once they came back:
+
+```sh
+uv run python -m scripts.vision_backtest 744636428 2025 2026
+```
+
+On League A, slow starters played about as well as projected in both seasons (+0.20 projected, +0.16 actual; -0.14 and -0.30), far above their season so far (-1.67, -2.10). Good players back from an absence fell well short of their projection (+1.34 against +4.28; +2.67 against +4.42) and played fewer games than expected, so injured players aren't vision targets yet.
 
 ## Deployment
 

@@ -17,7 +17,7 @@ BASE_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/fba"
 # Light views for the league feed: names, owners, FAAB and the current scoring period.
 FEED_VIEWS = ["mTeam", "mSettings", "mStatus"]
 # The league-only overview adds this week's category scores.
-OVERVIEW_VIEWS = [*FEED_VIEWS, "mMatchupScore"]
+OVERVIEW_VIEWS = [*FEED_VIEWS, "mMatchupScore", "mScoreboard"]  # mScoreboard adds per-category scores
 
 LEAGUE_VIEWS = ["mSettings", "mTeam", "mRoster", "mStandings", "mMatchupScore", "mScoreboard", "mDraftDetail"]
 
@@ -217,6 +217,41 @@ class EspnClient:
             "filterStatsForSplitTypeIds": {"value": [5]},
             "limit": 60,
             "sortPercOwned": {"sortPriority": 1, "sortAsc": False},
+        }
+        data = await self._get(
+            f"{BASE_URL}/seasons/{season}/players",
+            [("view", "kona_player_info"), ("scoringPeriodId", "0")],
+            None,
+            headers={"X-Fantasy-Filter": json.dumps(flt)},
+            unwrap=False,
+        )
+        return data if isinstance(data, list) else []
+
+    async def player_gamelogs(self, season: int, player_ids: list[int]) -> list[dict]:
+        """Every game line of these players in one season, a line for each team game played or not. No league needed."""
+        flt = {
+            "filterIds": {"value": player_ids},
+            "filterStatsForSplitTypeIds": {"value": [5]},
+        }
+        data = await self._get(
+            f"{BASE_URL}/seasons/{season}/players",
+            [("view", "kona_player_info"), ("scoringPeriodId", "0")],
+            None,
+            headers={"X-Fantasy-Filter": json.dumps(flt)},
+            unwrap=False,
+        )
+        return data if isinstance(data, list) else []
+
+    async def season_totals(self, season: int, limit: int = 600) -> list[dict]:
+        """The most-owned players with that season's totals (games played among them). No league needed.
+
+        Only the season totals: without the stats filters ESPN adds every game line (~18 MB).
+        """
+        flt = {
+            "limit": limit,
+            "sortPercOwned": {"sortPriority": 1, "sortAsc": False},
+            "filterStatsForSplitTypeIds": {"value": [0]},
+            "filterStatsForSourceIds": {"value": [0]},
         }
         data = await self._get(
             f"{BASE_URL}/seasons/{season}/players",
