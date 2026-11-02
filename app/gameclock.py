@@ -14,7 +14,8 @@ from datetime import date
 import httpx
 
 SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
-USER_AGENT = "fantasy-analyzer/1.0 (+https://fantasy-analyzer-web.vercel.app)"
+# ESPN's site API refuses (403) a user agent that carries a link.
+USER_AGENT = "Mozilla/5.0 (compatible; fantasy-analyzer/1.0)"
 TIMEOUT = 5.0
 
 
