@@ -144,6 +144,27 @@ class EspnClient:
         )
         return data.get("players", [])
 
+    async def player_card(
+        self, season: int, league_id: int, player_id: int, creds: EspnCredentials | None, games: int = 12
+    ) -> dict | None:
+        """One player's latest game lines, season line and every move of him in this league.
+
+        None when ESPN has no such player.
+        """
+        flt = {
+            "players": {
+                "filterIds": {"value": [player_id]},
+                "filterStatsForTopScoringPeriodIds": {"value": games, "additionalValue": [f"00{season}"]},
+            }
+        }
+        data = await self._get(
+            self._league_url(season, league_id),
+            [("view", "kona_playercard")],
+            creds,
+            headers={"X-Fantasy-Filter": json.dumps(flt)},
+        )
+        return next((p for p in data.get("players", []) if int(p.get("id") or 0) == player_id), None)
+
     async def day_stats(
         self, season: int, league_id: int, day: int, creds: EspnCredentials | None, limit: int = 1000
     ) -> list[dict]:

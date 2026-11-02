@@ -827,6 +827,83 @@ class NewsPage(BaseModel):
     refreshing: bool = Field(description="A check of every source is running; ask again in a minute")
 
 
+class PlayerCardRequest(BaseModel):
+    league_id: int = Field(gt=0)
+    season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")
+    player_id: int = Field(gt=0)
+
+
+class GameStats(BaseModel):
+    minutes: float
+    pts: float
+    reb: float
+    ast: float
+    stl: float
+    blk: float
+    tpm: float
+    to: float
+    fgm: float
+    fga: float
+    ftm: float
+    fta: float
+
+
+class PlayerGame(BaseModel):
+    game_id: int
+    season: int
+    day: int = Field(description="Scoring period (day of the season)")
+    date: str | None = Field(default=None, description="Tip-off, UTC; none when the calendar lacks the game")
+    opponent: str = Field(description="Opponent's abbreviation; empty when unknown")
+    home: bool | None = None
+    stats: GameStats
+
+
+class PlayerSeasonLine(BaseModel):
+    season: int
+    games: int
+    per_game: GameStats
+    fg_pct: float | None = None
+    ft_pct: float | None = None
+
+
+class PlayerMove(BaseModel):
+    id: str
+    kind: Literal["draft", "add", "drop", "trade"]
+    via: Literal["draft", "waiver", "free_agent", "trade"]
+    at: str = Field(description="When ESPN processed it, UTC")
+    from_team_id: int = Field(description="0 = free agency")
+    to_team_id: int = Field(description="0 = free agency")
+    bid: int | None = Field(default=None, description="FAAB paid on a waiver claim; price in an auction draft")
+    pick: int | None = Field(default=None, description="Overall pick, on a draft")
+
+
+class PlayerNews(BaseModel):
+    id: str
+    kind: NewsKind
+    status: Literal["confirmed", "reported", "held", "didnt_happen"]
+    headline: str
+    published_at: str
+    updated_at: str
+    source: str = Field(description="The latest source's name")
+    url: str
+    severity: int = 0
+
+
+class PlayerCard(BaseModel):
+    player_id: int
+    name: str
+    position: str = Field(description="Main position, e.g. PG")
+    pro_team: str = Field(description="NBA team abbreviation; empty for a free agent")
+    injury_status: str = Field(description="ESPN's current status, e.g. ACTIVE, DAY_TO_DAY, OUT")
+    owner_team_id: int | None = Field(default=None, description="Fantasy team in this league; none = free agent")
+    on_waivers: bool = False
+    percent_owned: float
+    season_line: PlayerSeasonLine | None = None
+    games: list[PlayerGame] = Field(description="Latest games he played, newest first; last season's when none yet")
+    news: list[PlayerNews] = Field(description="Recent stories about him, newest first")
+    moves: list[PlayerMove] = Field(description="Every move of him in this league this season, newest first")
+
+
 FeedbackRating = Literal["bad", "good"]
 FeedbackReason = Literal["fake_gain", "wont_accept", "bad_for_build", "player_concern", "already_tried", "other"]
 FeedbackSource = Literal["trades", "edge", "shop", "trade_for", "trade_of_day"]
