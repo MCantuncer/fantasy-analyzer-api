@@ -188,7 +188,9 @@ def test_their_gain_ignores_their_punts(league):
     me = next(i for i, t in enumerate(league.teams) if t.id == 3)
     finder = TradeFinder(league, model, me, keep=set())
     for d in finder.candidates()[:50]:
-        change = finder._avg_win(d.partner_idx, d.dists) - finder.base_cats[d.partner_idx]
+        j = d.partner_idx
+        base = finder.their_free_cats(j) if len(d.get) > len(d.give) else finder.base_cats[j]
+        change = finder._avg_win(j, d.dists) - base
         assert d.their_gain == pytest.approx(change[~finder.punts[d.partner_idx]].sum())
         assert all(r.endswith(".") for r in d.reasons)
 
@@ -229,6 +231,19 @@ def test_edge_deals_win_on_paper_for_them_and_on_the_court_for_me(league):
         assert d.their_gain >= EDGE_MIN_THEIR_GAIN
         assert d.edge >= EDGE_MIN_MARGIN - 1e-9
         assert len(finder.rivals) <= 4 and finder.me_idx not in finder.rivals
+
+
+def test_their_side_of_a_one_for_two_is_measured_against_their_free_pickup(league):
+    """The spot a 1-for-2 opens on their roster takes the best free agent, which they could add today."""
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set(), mode="edge")
+    deals = [d for d in finder.candidates() if len(d.get) > len(d.give)]
+    assert deals
+    for d in deals:
+        free = finder.their_free_cats(d.partner_idx)
+        assert d.their_gain == pytest.approx(finder.fit_gain(d.partner_idx, d.dists, free))
+        assert d.their_gain <= finder.fit_gain(d.partner_idx, d.dists) + 1e-9
 
 
 def test_two_for_one_is_measured_against_the_free_pickup(league):

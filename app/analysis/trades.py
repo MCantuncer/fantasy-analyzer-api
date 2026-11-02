@@ -214,6 +214,7 @@ class TradeFinder:
             self.playoff_strength({self.me_idx: self.free_roster}) if mode == "vision" and self.free_roster else None
         )
         self.rivals = self._rivals()
+        self._their_free: dict[int, np.ndarray] = {}  # team index -> category win rates after its free pickup
         self._gains: dict[tuple[int, int, int], float] = {}  # (partner, mine, theirs) -> my gain from that 1-for-1
         # Our projection in dollars: a player's model-value rank priced on ESPN's rank curve.
         pool = [p for t in self.teams for p in t.roster] + list(league.free_agents)
@@ -286,10 +287,30 @@ class TradeFinder:
         pos = order.index(self.me_idx)
         return {i for k, i in enumerate(order) if i != self.me_idx and abs(k - pos) <= RIVAL_SPOTS}
 
-    def fit_gain(self, j: int, dists: list[Dist]) -> float:
+    def fit_gain(self, j: int, dists: list[Dist], baseline: np.ndarray | None = None) -> float:
         """Change in team j's expected categories won, ignoring the categories it punts."""
-        change = self._avg_win(j, dists) - self.base_cats[j]
+        change = self._avg_win(j, dists) - (self.base_cats[j] if baseline is None else baseline)
         return float(change[~self.punts[j]].sum())
+
+    def their_free_cats(self, j: int) -> np.ndarray:
+        """Team j's category win rates after the best pickup it can make without a trade.
+
+        The same free agent fills the spot a 1-for-2 opens on their roster, so a deal gets
+        credit only for what it adds on top of that pickup, as it does on my side.
+        """
+        if j not in self._their_free:
+            best = self.base_cats[j]
+            if self.filler is not None:
+                roster = self.teams[j].roster
+                top = self.base[j]
+                for drop in droppable(roster):
+                    dists = list(self.dists)
+                    dists[j] = self.model.dist([p for p in roster if p.id != drop.id] + [self.filler])
+                    strength = self.model.strength(j, dists)
+                    if strength > top:
+                        top, best = strength, self._avg_win(j, dists)
+            self._their_free[j] = best
+        return self._their_free[j]
 
     def _worst(self, roster: list[Player], protected: set[int]) -> Player | None:
         """The player an owner would cut to make room: the least valuable droppable one.
@@ -370,7 +391,8 @@ class TradeFinder:
             min_my_gain = VISION_MIN_SEASON_GAIN
         if my_gain < min_my_gain:
             return None
-        their_gain = self.fit_gain(j, dists)
+        # When the deal's open spot on their side takes the free agent, compare with just making that pickup.
+        their_gain = self.fit_gain(j, dists, self.their_free_cats(j) if len(get) > len(give) else None)
         edge = self.mode == "edge"
         if min_their_gain is None:
             min_their_gain = EDGE_MIN_THEIR_GAIN if edge else MIN_THEIR_GAIN
