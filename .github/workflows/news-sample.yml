@@ -1,6 +1,6 @@
 name: News feed sample
 
-# One-off (run 3): checks candidate news sources for reachability, size and freshness.
+# One-off (run 6): why ESPN and HoopsHype fail, using the app's own fetch.
 on:
   push:
     branches: [feature/news-feed-sample]
@@ -12,64 +12,23 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
       - run: |
-          python3 - <<'PY'
-          import json, re, urllib.request, urllib.parse, email.utils, datetime as dt
-          UA = {"User-Agent": "Mozilla/5.0 (fantasy-analyzer news probe)"}
-          def get(u):
-              try:
-                  r = urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=20)
-                  return r.status, r.headers.get("content-type",""), r.read().decode("utf-8","replace")
-              except Exception as e:
-                  return getattr(e, "code", "ERR"), repr(e)[:80], ""
-          now = dt.datetime.now(dt.timezone.utc)
-          FEEDS = {
-            "rotowire_rss": "https://www.rotowire.com/rss/news.php?sport=NBA",
-            "rotoworld_page": "https://www.nbcsports.com/fantasy/basketball/player-news",
-            "rotoballer_feed": "https://www.rotoballer.com/category/nba-fantasy-basketball-advice/feed",
-            "rotoballer_news": "https://www.rotoballer.com/player-news?sport=nba",
-            "fantasypros_rss": "https://www.fantasypros.com/nba/rss/news.xml",
-            "fantasypros_page": "https://www.fantasypros.com/nba/injury-news.php",
-            "rotogrinders_page": "https://rotogrinders.com/lineups/nba",
-            "fantasylabs_news": "https://www.fantasylabs.com/nba/news/",
-            "underdog_news": "https://underdognetwork.com/basketball/news",
-            "espn_news": "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/news?limit=50",
-            "nba_injury_page": "https://official.nba.com/nba-injury-report-2026-27-season/",
-            "reddit_fbb": "https://www.reddit.com/r/fantasybball/new/.rss?limit=50",
-            "reddit_nba": "https://www.reddit.com/r/nba/new/.rss?limit=50",
-            "hoopsrumors": "https://www.hoopsrumors.com/feed",
-            "stein": "https://marcstein.substack.com/feed",
-            "nitter": "https://nitter.net/UnderdogNBA/rss",
-            "x_profile": "https://x.com/UnderdogNBA",
-          }
-          def newest(body):
-              ds = []
-              for m in re.findall(r"<pubDate>([^<]+)</pubDate>|<updated>([^<]+)</updated>", body):
-                  s = m[0] or m[1]
+          uv run python - <<'PY'
+          import asyncio, httpx
+          from app.news.sources import BY_ID, fetch, USER_AGENT
+          async def main():
+              for sid in ["espn", "hoopshype", "rotowire"]:
+                  s = BY_ID[sid]
                   try:
-                      d = email.utils.parsedate_to_datetime(s) if m[0] else dt.datetime.fromisoformat(s.replace("Z","+00:00"))
-                      ds.append(d)
-                  except Exception: pass
-              for s in re.findall(r'"published":"([^"]+)"', body):
-                  try: ds.append(dt.datetime.fromisoformat(s.replace("Z","+00:00")))
-                  except Exception: pass
-              ds = [d if d.tzinfo else d.replace(tzinfo=dt.timezone.utc) for d in ds]
-              return (len(ds), str(now - max(ds)).split(".")[0]) if ds else (0, "-")
-          HANDLES = ["underdog-nba.bsky.social","underdognba.bsky.social","rotowirenba.bsky.social","rotoworld-hoops.bsky.social","shamscharania.bsky.social","shamscharaniaespn.bsky.social","shamsbot.bsky.social","thesteinline.bsky.social","jakelfischer.bsky.social","chrisbhaynes.bsky.social","keithsmithnba.bsky.social","hoopsrumors.bsky.social","nbarumorsbot.bsky.social","fantasylabs.bsky.social","fantasypros.bsky.social","espnnba.bsky.social","vincegoodwill.bsky.social","bengolliver.bsky.social"]
-          for h in HANDLES:
-              st, ct, body = get("https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?" + urllib.parse.urlencode({"actor": h, "limit": 100, "filter": "posts_no_replies"}))
-              try:
-                  f = [p for p in json.loads(body)["feed"] if "reason" not in p]
-                  ts = [dt.datetime.fromisoformat(p["post"]["record"]["createdAt"].replace("Z","+00:00")) for p in f]
-                  day = sum(now - t < dt.timedelta(days=1) for t in ts)
-                  week = sum(now - t < dt.timedelta(days=7) for t in ts)
-                  prof = json.loads(get("https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=" + h)[2] or "{}")
-                  print("BSKYFEED", h, "followers", prof.get("followersCount"), "posts24h", day, "posts7d", week, "newest", str(now - max(ts)).split(".")[0] if ts else "-")
-                  for p in f[:3]:
-                      print("   ", p["post"]["record"]["createdAt"][:16], p["post"]["record"].get("text","")[:140].replace("\n"," "))
-              except Exception as e: print("BSKYFEEDERR", h, st, repr(e)[:60])
-          st, ct, body = get("https://official.nba.com/nba-injury-report-2026-27-season/")
-          print("NBAREPORT", re.findall(r'https://ak-static[^"]+\.pdf', body)[-3:])
-          st, ct, body = get("https://www.nbcsports.com/fantasy/basketball/player-news")
-          print("ROTOWORLD", re.findall(r'"(?:datePublished|published_at|created|timestamp)"\s*:\s*"?([^",]+)', body)[:5], body.count("player-news__"), re.findall(r'api[^"\s]{0,80}player[-_]news[^"\s]{0,80}', body)[:3])
+                      items = await fetch(s)
+                      print("OK", sid, len(items))
+                  except Exception as e:
+                      print("ERR", sid, type(e).__name__, e)
+                  async with httpx.AsyncClient(follow_redirects=True, headers={"User-Agent": USER_AGENT}, timeout=12) as h:
+                      r = await h.get(s.url)
+                      print("   ", r.status_code, r.url, [str(x.url) for x in r.history], len(r.content), r.headers.get("content-type"))
+          asyncio.run(main())
           PY
