@@ -53,10 +53,12 @@ jobs:
               for s in re.findall(r'"published":"([^"]+)"', body):
                   try: ds.append(dt.datetime.fromisoformat(s.replace("Z","+00:00")))
                   except Exception: pass
+              ds = [d if d.tzinfo else d.replace(tzinfo=dt.timezone.utc) for d in ds]
               return (len(ds), str(now - max(ds)).split(".")[0]) if ds else (0, "-")
           for k, u in FEEDS.items():
               st, ct, body = get(u)
-              print("FEED", k, st, ct[:30], len(body), *newest(body))
+              try: print("FEED", k, st, ct[:30], len(body), *newest(body))
+              except Exception as e: print("FEED", k, st, "parse", repr(e)[:60])
           # Bluesky: who is there, and how fresh.
           for q in ["underdog nba", "shams charania", "rotowire", "hoops rumors", "fantasypros", "marc stein", "jake fischer", "chris haynes", "nba beat writer", "fantasy basketball", "brett siegel", "the athletic nba", "espn nba", "rotoworld", "fantasylabs", "keith smith"]:
               st, ct, body = get("https://public.api.bsky.app/xrpc/app.bsky.actor.searchActors?" + urllib.parse.urlencode({"q": q, "limit": 5}))
