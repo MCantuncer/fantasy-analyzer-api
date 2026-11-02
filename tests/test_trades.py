@@ -275,10 +275,10 @@ def test_vision_deals_buy_the_target_and_pay_in_the_playoffs(league):
     assert keys == sorted(keys, reverse=True)
 
 
-def test_no_shape_fills_more_than_half_the_list_while_others_are_left():
-    ranked = ["1-2a", "1-2b", "1-2c", "1-2d", "2-2a", "1-1a", "1-2e"]
-    shape = lambda s: s[:3]  # noqa: E731
-    assert mix_shapes(ranked, 4, shape) == ["1-2a", "1-2b", "2-2a", "1-1a"]
-    # Other shapes ran out: the best leftovers fill the spots, still in rank order.
-    assert mix_shapes(ranked, 6, shape) == ["1-2a", "1-2b", "1-2c", "1-2d", "2-2a", "1-1a"]
-    assert mix_shapes(["1-2a", "1-2b"], 4, shape) == ["1-2a", "1-2b"]
+def test_uneven_trades_are_a_small_part_of_the_list():
+    ranked = ["1-2a", "1-2b", "1-2c", "2-2a", "1-1a", "2-1a", "1-1b"]
+    uneven = lambda s: s[0] != s[2]  # noqa: E731
+    # 10 slots: at most 2 uneven, in rank order; no padding with more uneven ones.
+    assert mix_shapes(ranked, 10, uneven) == ["1-2a", "1-2b", "2-2a", "1-1a", "1-1b"]
+    assert mix_shapes(ranked, 3, uneven) == ["1-2a", "2-2a", "1-1a"]
+    assert mix_shapes(["2-2a", "1-1a", "1-1b"], 2, uneven) == ["2-2a", "1-1a"]

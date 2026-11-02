@@ -283,7 +283,7 @@ class Analyzer:
         else:
             # Expected payoff: playoff gain weighted by the chance the deal actually happens.
             ideas.sort(key=lambda t: t.acceptance * (t.playoff_pct_after - t.playoff_pct_before), reverse=True)
-        return mix_shapes(ideas, TRADE_RESULTS, lambda t: (len(t.give), len(t.get)))
+        return mix_shapes(ideas, TRADE_RESULTS, lambda t: len(t.give) != len(t.get))
 
     def pickups(self, span: tuple[str, float, float] | None = None) -> list[schemas.PickupIdea]:
         self._tick(span, 0, 1)
