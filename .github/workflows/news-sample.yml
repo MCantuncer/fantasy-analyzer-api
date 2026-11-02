@@ -20,15 +20,20 @@ jobs:
           import asyncio, httpx
           from app.news.sources import BY_ID, fetch, USER_AGENT
           async def main():
-              for sid in ["espn", "hoopshype", "rotowire"]:
-                  s = BY_ID[sid]
-                  try:
-                      items = await fetch(s)
-                      print("OK", sid, len(items))
-                  except Exception as e:
-                      print("ERR", sid, type(e).__name__, e)
-                  async with httpx.AsyncClient(follow_redirects=True, headers={"User-Agent": USER_AGENT}, timeout=12) as h:
-                      r = await h.get(s.url)
-                      print("   ", r.status_code, r.url, [str(x.url) for x in r.history], len(r.content), r.headers.get("content-type"))
+              uas = {"app": USER_AGENT, "mozilla_app": "Mozilla/5.0 (compatible; fantasy-analyzer/1.0; +https://fantasy-analyzer-web.vercel.app)", "probe": "Mozilla/5.0 (fantasy-analyzer news probe)", "none": "python-httpx"}
+              for name, ua in uas.items():
+                  async with httpx.AsyncClient(follow_redirects=True, headers={"User-Agent": ua}, timeout=12) as h:
+                      r = await h.get(BY_ID["espn"].url)
+                      print("ESPN", name, r.status_code, len(r.content))
+              ua = uas["mozilla_app"]
+              for u in ["https://hoopshype.com/feed/", "https://www.hoopshype.com/feed/", "https://hoopshype.com/rss/", "https://www.hoopshype.com/rss/", "https://hoopshype.com/rumors/feed/", "https://www.hoopshype.com/feed/rss/", "https://www.hoopshype.com/rss.xml", "https://www.hoopshype.com/feeds/all.xml", "https://www.hoopshype.com/sitemap.xml", "https://www.hoopshype.com/"]:
+                  async with httpx.AsyncClient(follow_redirects=True, headers={"User-Agent": ua}, timeout=12) as h:
+                      try:
+                          r = await h.get(u)
+                          import re
+                          alt = re.findall(r'<link[^>]+(?:rss|atom)\+xml[^>]*>', r.text)[:4]
+                          print("HH", u, r.status_code, r.url, r.headers.get("content-type"), len(r.content), alt)
+                      except Exception as e:
+                          print("HH", u, "ERR", e)
           asyncio.run(main())
           PY
