@@ -48,7 +48,7 @@ from app.analysis.target import TargetAnalyzer, TargetError
 from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
 from app.espn.parse import League, parse_league
-from app.feed import PlayerName, Transaction, parse_players, parse_transactions
+from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.gameclock import apply_clocks, fetch_clocks
 from app.news.extract import timeline
@@ -59,6 +59,7 @@ from app.news.service import iso as news_iso
 from app.news.sources import BY_ID as NEWS_SOURCES
 from app.news.sources import SOURCES as NEWS_SOURCE_LIST
 from app.news.verify import FACT_SOURCE, describe_fact
+from app.playercard import parse_card
 from app.reader import DEEP_BATCH_MAX, DeepReader, NoteReader, Reading, create_deep_reader, create_reader
 from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
 from app.scores import build_day, needs_stats, parse_schedule, settled, week_fixtures
@@ -113,6 +114,9 @@ IMPACT_TRACK_RECORD = (
 )
 # While a game is on, one ESPN call a minute serves every visitor.
 LIVE_SCORES_TTL = 60.0
+PLAYER_CARD_TTL = 120.0  # a card a few people open in a row is one ESPN call
+CARD_GAMES = 10
+CARD_NEWS = 5
 # How long a finished analysis job stays around for its last poll (the report itself is cached).
 ANALYSIS_JOB_KEEP = 120.0
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
@@ -216,6 +220,7 @@ def create_app(
     app.state.now = lambda: datetime.now(UTC)
     app.state.gamelogs = TTLCache(GAMELOG_TTL, max_items=64)
     app.state.past_gamelogs = TTLCache(PAST_GAMELOG_TTL, max_items=64)
+    app.state.cards = TTLCache(PLAYER_CARD_TTL, max_items=2048)
     app.state.news = NewsService(app.state.espn, app.state.store, transport=news_transport)
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
@@ -1671,6 +1676,118 @@ def create_app(
             trending=trending,
             updated_at=news_iso(last) if last else None,
             refreshing=refreshing,
+        )
+
+    @app.post(
+        "/api/player-card",
+        response_model=schemas.PlayerCard,
+        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+    )
+    async def player_card(
+        body: schemas.PlayerCardRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.PlayerCard:
+        """One player at a glance: his latest games, health, news and every move of him in this league."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        key = (body.league_id, season, credentials_key(creds), body.player_id)
+        entry = app.state.cards.get(key)
+        if entry is None:
+            entry = await app.state.espn.player_card(season, body.league_id, body.player_id, creds, games=CARD_GAMES)
+            if entry is None:
+                raise HTTPException(404, detail={"code": "no_player", "message": "No such NBA player."})
+            app.state.cards.set(key, entry)
+        schedules = {}
+        raw_schedule = await pro_schedule(season)
+        if raw_schedule:
+            schedules[season] = parse_schedule(raw_schedule)
+        played = {int(st.get("seasonId") or 0) for st in (entry.get("player") or {}).get("stats") or []}
+        if season - 1 in played:
+            last = await pro_schedule(season - 1)
+            if last:
+                schedules[season - 1] = parse_schedule(last)
+        card = parse_card(entry, season, schedules)
+        teams = {tid: abbrev for sched in schedules.values() for tid, (abbrev, _) in sched.teams.items()}
+
+        # This season's games; last season's only until he plays one.
+        games = [g for g in card.games if g.season == season] or [g for g in card.games if g.season == season - 1]
+        now = app.state.now()
+        service: NewsService = app.state.news
+        stories = await run_in_threadpool(service.stories, teams, now)
+        mine = [s for s in stories if body.player_id in s.player_ids and s.status != "held"]
+        mine.sort(key=lambda s: s.updated, reverse=True)
+
+        def news_row(s) -> schemas.PlayerNews:
+            item = s.items[-1]
+            src = NEWS_SOURCES.get(item.source_id)
+            fact = item.source_id == FACT_SOURCE
+            return schemas.PlayerNews(
+                id=s.id,
+                kind=s.kind,
+                status=s.status,
+                headline=s.headline,
+                published_at=news_iso(s.published),
+                updated_at=news_iso(s.updated),
+                source="ESPN" if fact else (src.name if src else item.source_id),
+                url=f"https://www.espn.com/nba/player/_/id/{body.player_id}" if fact else item.url,
+                severity=s.severity,
+            )
+
+        def ms(at: int) -> str:
+            return iso(datetime.fromtimestamp(at / 1000, UTC))
+
+        def stats(d: dict[str, float]) -> schemas.GameStats:
+            return schemas.GameStats(**{k: round(v, 1) for k, v in d.items()})
+
+        line = card.season_line
+        return schemas.PlayerCard(
+            player_id=card.id,
+            name=card.name,
+            position=DEFAULT_POSITIONS.get(card.position_id, ""),
+            pro_team=teams.get(card.pro_team_id, ""),
+            injury_status=card.injury_status,
+            owner_team_id=card.on_team_id or None,
+            on_waivers=card.status == "WAIVERS",
+            percent_owned=card.percent_owned,
+            season_line=schemas.PlayerSeasonLine(
+                season=line.season,
+                games=line.games,
+                per_game=stats(line.per_game),
+                fg_pct=round(line.fg_pct, 3) if line.fg_pct is not None else None,
+                ft_pct=round(line.ft_pct, 3) if line.ft_pct is not None else None,
+            )
+            if line
+            else None,
+            games=[
+                schemas.PlayerGame(
+                    game_id=g.game_id,
+                    season=g.season,
+                    day=g.day,
+                    date=ms(g.start_ms) if g.start_ms else None,
+                    opponent=teams.get(g.opponent_id, ""),
+                    home=g.home,
+                    stats=stats(g.stats),
+                )
+                for g in games[:CARD_GAMES]
+            ],
+            news=[news_row(s) for s in mine[:CARD_NEWS]],
+            moves=[
+                schemas.PlayerMove(
+                    id=m.id,
+                    kind=m.kind,
+                    via=m.via,
+                    at=ms(m.at_ms),
+                    from_team_id=m.from_team_id,
+                    to_team_id=m.to_team_id,
+                    bid=m.bid,
+                    pick=m.pick,
+                )
+                for m in card.moves
+                if m.at_ms
+            ],
         )
 
     def feedback_out(f: Feedback) -> schemas.TradeFeedback:

@@ -2430,6 +2430,115 @@
         }
       }
     },
+    "/api/player-card": {
+      "post": {
+        "summary": "Player Card",
+        "description": "One player at a glance: his latest games, health, news and every move of him in this league.",
+        "operationId": "player_card_api_player_card_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlayerCardRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayerCard"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/trade-feedback": {
       "post": {
         "summary": "Trade Feedback",
@@ -3838,6 +3947,18 @@
             ],
             "title": "Status"
           },
+          "clock": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clock",
+            "description": "Live games only: \"Q4 2:31\", \"Half\", \"End Q3\", \"OT 0:48\""
+          },
           "away": {
             "$ref": "#/components/schemas/GameSide"
           },
@@ -3993,6 +4114,74 @@
           "name"
         ],
         "title": "GameSide"
+      },
+      "GameStats": {
+        "properties": {
+          "minutes": {
+            "type": "number",
+            "title": "Minutes"
+          },
+          "pts": {
+            "type": "number",
+            "title": "Pts"
+          },
+          "reb": {
+            "type": "number",
+            "title": "Reb"
+          },
+          "ast": {
+            "type": "number",
+            "title": "Ast"
+          },
+          "stl": {
+            "type": "number",
+            "title": "Stl"
+          },
+          "blk": {
+            "type": "number",
+            "title": "Blk"
+          },
+          "tpm": {
+            "type": "number",
+            "title": "Tpm"
+          },
+          "to": {
+            "type": "number",
+            "title": "To"
+          },
+          "fgm": {
+            "type": "number",
+            "title": "Fgm"
+          },
+          "fga": {
+            "type": "number",
+            "title": "Fga"
+          },
+          "ftm": {
+            "type": "number",
+            "title": "Ftm"
+          },
+          "fta": {
+            "type": "number",
+            "title": "Fta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "minutes",
+          "pts",
+          "reb",
+          "ast",
+          "stl",
+          "blk",
+          "tpm",
+          "to",
+          "fgm",
+          "fga",
+          "ftm",
+          "fta"
+        ],
+        "title": "GameStats"
       },
       "GoogleSignIn": {
         "properties": {
@@ -5282,6 +5471,337 @@
         ],
         "title": "PlayerBadge"
       },
+      "PlayerCard": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "position": {
+            "type": "string",
+            "title": "Position",
+            "description": "Main position, e.g. PG"
+          },
+          "pro_team": {
+            "type": "string",
+            "title": "Pro Team",
+            "description": "NBA team abbreviation; empty for a free agent"
+          },
+          "injury_status": {
+            "type": "string",
+            "title": "Injury Status",
+            "description": "ESPN's current status, e.g. ACTIVE, DAY_TO_DAY, OUT"
+          },
+          "owner_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team Id",
+            "description": "Fantasy team in this league; none = free agent"
+          },
+          "on_waivers": {
+            "type": "boolean",
+            "title": "On Waivers",
+            "default": false
+          },
+          "percent_owned": {
+            "type": "number",
+            "title": "Percent Owned"
+          },
+          "season_line": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerSeasonLine"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerGame"
+            },
+            "type": "array",
+            "title": "Games",
+            "description": "Latest games he played, newest first; last season's when none yet"
+          },
+          "news": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerNews"
+            },
+            "type": "array",
+            "title": "News",
+            "description": "Recent stories about him, newest first"
+          },
+          "moves": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerMove"
+            },
+            "type": "array",
+            "title": "Moves",
+            "description": "Every move of him in this league this season, newest first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "position",
+          "pro_team",
+          "injury_status",
+          "percent_owned",
+          "games",
+          "news",
+          "moves"
+        ],
+        "title": "PlayerCard"
+      },
+      "PlayerCardRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "player_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Player Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "player_id"
+        ],
+        "title": "PlayerCardRequest"
+      },
+      "PlayerGame": {
+        "properties": {
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day",
+            "description": "Scoring period (day of the season)"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date",
+            "description": "Tip-off, UTC; none when the calendar lacks the game"
+          },
+          "opponent": {
+            "type": "string",
+            "title": "Opponent",
+            "description": "Opponent's abbreviation; empty when unknown"
+          },
+          "home": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Home"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/GameStats"
+          }
+        },
+        "type": "object",
+        "required": [
+          "game_id",
+          "season",
+          "day",
+          "opponent",
+          "stats"
+        ],
+        "title": "PlayerGame"
+      },
+      "PlayerMove": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "add",
+              "drop",
+              "trade"
+            ],
+            "title": "Kind"
+          },
+          "via": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "waiver",
+              "free_agent",
+              "trade"
+            ],
+            "title": "Via"
+          },
+          "at": {
+            "type": "string",
+            "title": "At",
+            "description": "When ESPN processed it, UTC"
+          },
+          "from_team_id": {
+            "type": "integer",
+            "title": "From Team Id",
+            "description": "0 = free agency"
+          },
+          "to_team_id": {
+            "type": "integer",
+            "title": "To Team Id",
+            "description": "0 = free agency"
+          },
+          "bid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bid",
+            "description": "FAAB paid on a waiver claim; price in an auction draft"
+          },
+          "pick": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pick",
+            "description": "Overall pick, on a draft"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "via",
+          "at",
+          "from_team_id",
+          "to_team_id"
+        ],
+        "title": "PlayerMove"
+      },
+      "PlayerNews": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "injury",
+              "return",
+              "trade",
+              "rumor",
+              "signing",
+              "waive",
+              "role",
+              "other"
+            ],
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "reported",
+              "held",
+              "didnt_happen"
+            ],
+            "title": "Status"
+          },
+          "headline": {
+            "type": "string",
+            "title": "Headline"
+          },
+          "published_at": {
+            "type": "string",
+            "title": "Published At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "The latest source's name"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "severity": {
+            "type": "integer",
+            "title": "Severity",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "headline",
+          "published_at",
+          "updated_at",
+          "source",
+          "url"
+        ],
+        "title": "PlayerNews"
+      },
       "PlayerRef": {
         "properties": {
           "id": {
@@ -5409,6 +5929,50 @@
           "tier"
         ],
         "title": "PlayerRef"
+      },
+      "PlayerSeasonLine": {
+        "properties": {
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games"
+          },
+          "per_game": {
+            "$ref": "#/components/schemas/GameStats"
+          },
+          "fg_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fg Pct"
+          },
+          "ft_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ft Pct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "season",
+          "games",
+          "per_game"
+        ],
+        "title": "PlayerSeasonLine"
       },
       "PollTally": {
         "properties": {
