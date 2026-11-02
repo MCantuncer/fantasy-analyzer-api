@@ -20,20 +20,12 @@ jobs:
           import asyncio, httpx
           from app.news.sources import BY_ID, fetch, USER_AGENT
           async def main():
-              uas = {"app": USER_AGENT, "mozilla_app": "Mozilla/5.0 (compatible; fantasy-analyzer/1.0; +https://fantasy-analyzer-web.vercel.app)", "probe": "Mozilla/5.0 (fantasy-analyzer news probe)", "none": "python-httpx"}
-              for name, ua in uas.items():
+              from app.news.sources import parse_rss
+              for name, ua in {"old": USER_AGENT, "new": "Mozilla/5.0 (compatible; fantasy-analyzer/1.0)"}.items():
                   async with httpx.AsyncClient(follow_redirects=True, headers={"User-Agent": ua}, timeout=12) as h:
-                      r = await h.get(BY_ID["espn"].url)
-                      print("ESPN", name, r.status_code, len(r.content))
-              ua = uas["mozilla_app"]
-              for u in ["https://hoopshype.com/feed/", "https://www.hoopshype.com/feed/", "https://hoopshype.com/rss/", "https://www.hoopshype.com/rss/", "https://hoopshype.com/rumors/feed/", "https://www.hoopshype.com/feed/rss/", "https://www.hoopshype.com/rss.xml", "https://www.hoopshype.com/feeds/all.xml", "https://www.hoopshype.com/sitemap.xml", "https://www.hoopshype.com/"]:
-                  async with httpx.AsyncClient(follow_redirects=True, headers={"User-Agent": ua}, timeout=12) as h:
-                      try:
+                      for u in [BY_ID["espn"].url, "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard", "https://www.hoopsrumors.com/feed", "https://www.cbssports.com/rss/headlines/nba/", "https://sports.yahoo.com/nba/rss.xml", "https://basketball.realgm.com/rss/wiretap/0/0.xml", "https://marcstein.substack.com/feed", "https://www.reddit.com/r/nba/new/.rss?limit=50", "https://www.rotowire.com/rss/news.php?sport=NBA"]:
                           r = await h.get(u)
-                          import re
-                          alt = re.findall(r'<link[^>]+(?:rss|atom)\+xml[^>]*>', r.text)[:4]
-                          print("HH", u, r.status_code, r.url, r.headers.get("content-type"), len(r.content), alt)
-                      except Exception as e:
-                          print("HH", u, "ERR", e)
+                          n = len(parse_rss("x", r.content)) if r.status_code == 200 and "xml" in (r.headers.get("content-type") or "") else "-"
+                          print(name, r.status_code, n, u)
           asyncio.run(main())
           PY
