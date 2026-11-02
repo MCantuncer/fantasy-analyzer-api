@@ -15,7 +15,7 @@ from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import EACH_CATEGORY, SeasonSim, simulate_season
 from app.analysis.tiers import droppable, has_market, tier
-from app.analysis.trades import Deal, Mode, TradeFinder, acceptance_label
+from app.analysis.trades import Deal, Mode, TradeFinder, acceptance_label, mix_shapes
 from app.espn.parse import League, Player, Team
 
 SEASON_SIMS = 4000
@@ -283,7 +283,7 @@ class Analyzer:
         else:
             # Expected payoff: playoff gain weighted by the chance the deal actually happens.
             ideas.sort(key=lambda t: t.acceptance * (t.playoff_pct_after - t.playoff_pct_before), reverse=True)
-        return ideas[:TRADE_RESULTS]
+        return mix_shapes(ideas, TRADE_RESULTS, lambda t: len(t.give) != len(t.get))
 
     def pickups(self, span: tuple[str, float, float] | None = None) -> list[schemas.PickupIdea]:
         self._tick(span, 0, 1)

@@ -30,7 +30,7 @@ pitching it. Deals are ranked by playoff-odds gain weighted by that estimate.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Literal
@@ -50,6 +50,11 @@ MAX_VALUE_RATIO = 1.4  # never overpay by more than this on paper
 SHORTLIST = 14
 MAX_PER_TARGET = 2
 MAX_PER_PARTNER = 4
+# Uneven trades (2-for-1, 1-for-2) are only a small part of any list: they look good on paper
+# but rarely get done. Even trades (1-for-1, 2-for-2) fill the rest. When there aren't enough
+# even ones the list is shorter, not padded with uneven ones. A display rule only: it never
+# changes a deal's odds or gains.
+MAX_UNEVEN_SHARE = 0.2
 
 PUNT_WIN = 0.3  # a category an owner wins less often than this is treated as punted
 MISPRICED = 5.0  # dollars between owner value and our projection that count as sell-high / buy-low
@@ -147,6 +152,22 @@ def acceptance_odds(ratio: float, their_gain: float, struggling: bool = False) -
     if struggling:
         p += STRUGGLING_BONUS
     return float(np.clip(p, 0.05, 0.9))
+
+
+def mix_shapes[T](ranked: list[T], n: int, uneven: Callable[[T], bool]) -> list[T]:
+    """The first ``n`` of ``ranked``, in rank order, with at most MAX_UNEVEN_SHARE of ``n`` uneven."""
+    cap = max(1, round(n * MAX_UNEVEN_SHARE))
+    out: list[T] = []
+    used = 0
+    for item in ranked:
+        if uneven(item):
+            if used == cap:
+                continue
+            used += 1
+        out.append(item)
+        if len(out) == n:
+            break
+    return out
 
 
 def shape_odds(p: float, n_give: int, n_get: int) -> float:
@@ -588,9 +609,7 @@ class TradeFinder:
             per_target[target] = per_target.get(target, 0) + 1
             per_partner[d.partner_idx] = per_partner.get(d.partner_idx, 0) + 1
             picked.append(d)
-            if len(picked) == SHORTLIST:
-                break
-        return picked
+        return mix_shapes(picked, SHORTLIST, lambda d: len(d.give) != len(d.get))
 
     def pitch(self, d: Deal) -> str:
         """One line on why the deal helps them, in the categories where they need it most."""

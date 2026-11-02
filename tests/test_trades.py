@@ -17,6 +17,7 @@ from app.analysis.trades import (
     TradeFinder,
     acceptance_label,
     acceptance_odds,
+    mix_shapes,
     shape_odds,
 )
 from app.espn.parse import parse_league
@@ -314,3 +315,12 @@ def test_vision_deals_buy_the_target_and_pay_in_the_playoffs(league):
     ranked = finder.shortlist()
     keys = [finder.rank_key(d) for d in ranked]
     assert keys == sorted(keys, reverse=True)
+
+
+def test_uneven_trades_are_a_small_part_of_the_list():
+    ranked = ["1-2a", "1-2b", "1-2c", "2-2a", "1-1a", "2-1a", "1-1b"]
+    uneven = lambda s: s[0] != s[2]  # noqa: E731
+    # 10 slots: at most 2 uneven, in rank order; no padding with more uneven ones.
+    assert mix_shapes(ranked, 10, uneven) == ["1-2a", "1-2b", "2-2a", "1-1a", "1-1b"]
+    assert mix_shapes(ranked, 3, uneven) == ["1-2a", "2-2a", "1-1a"]
+    assert mix_shapes(["2-2a", "1-1a", "1-1b"], 2, uneven) == ["2-2a", "1-1a"]
