@@ -5,7 +5,8 @@ from datetime import date
 import pytest
 
 from app import main
-from app.analysis.daily import KEEP_SHARE, DailyTrade, fully_healthy, spotlight_index, trade_of_the_day
+from app.analysis import daily as daily_module
+from app.analysis.daily import DailyTrade, fully_healthy, spotlight_index, trade_of_the_day
 from app.store import MemoryStore, PostgresStore
 from tests.conftest import LEAGUE_ID
 
@@ -50,6 +51,12 @@ def test_pick_is_a_win_win_between_two_teams(pick):
     assert pick.win_win_deals >= 1 and pick.team_pairs == 45
 
 
+def test_pick_is_an_even_trade(league, pick):
+    a, b = pick.sides
+    assert len(a.sends) == len(b.sends) and a.drop is None and b.drop is None
+    assert all(len(p.a.give) == len(p.a.get) for p in DailyTrade(league, DAY).pairs())
+
+
 def test_reasons_never_call_a_side_the_loser(pick):
     for s in pick.sides:
         assert not any(r.startswith(("Sell high", "Buy low")) for r in s.reasons)
@@ -73,11 +80,14 @@ def test_only_healthy_players_change_hands(league, pick):
     assert star.id not in {p.id for s in again.sides for p in s.sends}
 
 
-def test_recheck_keeps_the_pick_unless_something_clearly_beats_it(league, pick):
+def test_recheck_keeps_the_pick_unless_something_clearly_beats_it(league, pick, monkeypatch):
     assert trade_of_the_day(league, DAY, keep_id=pick.pick_id).pick_id == pick.pick_id
     daily = DailyTrade(league, DAY)
-    weak = next(p for p in daily.pairs() if p.score < KEEP_SHARE * pick.score - 1e-3)
-    assert daily.report(keep_id=weak.pick_id(daily.teams)).pick_id != weak.pick_id(daily.teams)
+    other = next(p for p in daily.pairs() if p.pick_id(daily.teams) != pick.pick_id)
+    # Only a few even deals in the fixture: make the bar strict enough that the other one is "clearly beaten".
+    monkeypatch.setattr(daily_module, "KEEP_SHARE", 1.02 * other.score / pick.score)
+    assert other.score < daily_module.KEEP_SHARE * pick.score
+    assert daily.report(keep_id=other.pick_id(daily.teams)).pick_id != other.pick_id(daily.teams)
 
 
 def test_every_team_gets_a_turn_in_the_spotlight(league):
@@ -163,6 +173,19 @@ def test_stale_pick_is_served_while_it_is_rechecked(client, fake_espn, monkeypat
     again = client.post("/api/trade-of-the-day", json={"league_id": LEAGUE_ID, "season": 2027}).json()
     assert again["pick_id"] == first["pick_id"]  # answered from the current pick, not a fresh wait
     assert again["checked_at"] is not None
+
+
+def test_a_saved_uneven_pick_is_replaced(client, monkeypatch):
+    monkeypatch.setattr(main, "today", lambda: DAY.isoformat())
+    good = client.post("/api/trade-of-the-day", json={"league_id": LEAGUE_ID, "season": 2027}).json()
+    key = (LEAGUE_ID, 2027, "public", DAY.isoformat())
+    old = main.schemas.TradeOfTheDay.model_validate(good)
+    old.sides[0].sends = old.sides[0].sends + old.sides[1].sends[:1]  # a 2-for-1 saved by an older version
+    old.pick_id = "older-2-for-1"
+    client.app.state.daily.set(key, old)
+    again = client.post("/api/trade-of-the-day", json={"league_id": LEAGUE_ID, "season": 2027}).json()
+    assert again["pick_id"] == good["pick_id"]
+    assert len(again["sides"][0]["sends"]) == len(again["sides"][1]["sends"])
 
 
 def test_slow_scan_answers_pending(client, monkeypatch):

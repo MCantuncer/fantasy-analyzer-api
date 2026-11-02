@@ -501,7 +501,10 @@ class TradeFinder:
             out.append("They're outside the playoff spots, so they have reason to shake things up.")
         return out
 
-    def candidates(self, partners: Iterable[int] | None = None, two_for_two: bool = True) -> list[Deal]:
+    def candidates(
+        self, partners: Iterable[int] | None = None, two_for_two: bool = True, uneven: bool = True
+    ) -> list[Deal]:
+        """Every deal that passes the checks. ``uneven=False`` leaves out 2-for-1s and 1-for-2s."""
         me = self.teams[self.me_idx]
         mine = [p for p in me.roster if p.id not in self.keep and not self.premium.not_for_sale(p)]
         deals: list[Deal] = []
@@ -516,18 +519,19 @@ class TradeFinder:
                     d = self._evaluate(j, [give], [get])
                     if d:
                         deals.append(d)
-            # 2-for-1: package two of mine for one of theirs.
-            for give_pair in combinations(mine, 2):
-                for get in theirs:
-                    d = self._evaluate(j, list(give_pair), [get])
-                    if d:
-                        deals.append(d)
-            # 1-for-2: one of mine for two of theirs.
-            for give in mine:
-                for get_pair in combinations(theirs, 2):
-                    d = self._evaluate(j, [give], list(get_pair))
-                    if d:
-                        deals.append(d)
+            if uneven:
+                # 2-for-1: package two of mine for one of theirs.
+                for give_pair in combinations(mine, 2):
+                    for get in theirs:
+                        d = self._evaluate(j, list(give_pair), [get])
+                        if d:
+                            deals.append(d)
+                # 1-for-2: one of mine for two of theirs.
+                for give in mine:
+                    for get_pair in combinations(theirs, 2):
+                        d = self._evaluate(j, [give], list(get_pair))
+                        if d:
+                            deals.append(d)
             if two_for_two:
                 deals += self._two_for_two(j, mine, theirs)
         return deals
