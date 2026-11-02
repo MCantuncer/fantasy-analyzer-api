@@ -154,6 +154,8 @@ def test_waiver_claim_carries_the_bid_and_a_drop_does_not():
     ]
     moves = parse_moves(raw, PID)
     assert [(m.kind, m.via, m.bid) for m in moves] == [("drop", "free_agent", None), ("add", "waiver", 7)]
+    assert moves[1].others == [(5, "drop", 0)], "the drop that made room"
+    assert moves[0].others == []
 
 
 def card_app(store=None, private: bool = False):
@@ -169,6 +171,8 @@ def card_app(store=None, private: bool = False):
         if view == "kona_playercard":
             wanted = request.headers["x-fantasy-filter"]
             return httpx.Response(200, json={"players": [entry()] if str(PID) in wanted else []})
+        if view == "kona_player_info":
+            return httpx.Response(200, json={"players": [{"id": 99, "player": {"id": 99, "fullName": "Other Guy"}}]})
         return httpx.Response(404, json={})
 
     app = create_app(
@@ -204,6 +208,7 @@ def test_player_card_endpoint():
     assert [g["game_id"] for g in d["games"]] == [14, 11], "only this season once he has played in it"
     assert d["games"][0]["opponent"] == "BOS" and d["games"][0]["home"] is False
     assert [m["kind"] for m in d["moves"]] == ["trade", "draft"]
+    assert d["moves"][0]["others"] == [{"player_id": 99, "name": "Other Guy", "kind": "trade", "to_team_id": 2}]
     assert d["moves"][0]["at"].endswith("Z")
     assert [n["headline"] for n in d["news"]] == ["Test Center (ankle) questionable Friday"]
 
