@@ -2430,6 +2430,115 @@
         }
       }
     },
+    "/api/player-card/extras": {
+      "post": {
+        "summary": "Player Card Extras",
+        "description": "The part of a player card that may take longer: his news, and the names of who moved with him.",
+        "operationId": "player_card_extras_api_player_card_extras_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlayerCardRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayerCardExtras"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/player-card": {
       "post": {
         "summary": "Player Card",
@@ -5566,6 +5675,33 @@
         ],
         "title": "PlayerCard"
       },
+      "PlayerCardExtras": {
+        "properties": {
+          "news": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerNews"
+            },
+            "type": "array",
+            "title": "News",
+            "description": "Recent stories about him, newest first"
+          },
+          "names": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Names",
+            "description": "Names of the other players in his moves, by player id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "news",
+          "names"
+        ],
+        "title": "PlayerCardExtras",
+        "description": "The slower part of a player card, loaded while the core shows."
+      },
       "PlayerCardRequest": {
         "properties": {
           "league_id": {
@@ -5589,6 +5725,12 @@
             "type": "integer",
             "exclusiveMinimum": 0.0,
             "title": "Player Id"
+          },
+          "core": {
+            "type": "boolean",
+            "title": "Core",
+            "description": "Only what the card shows first: no news, and names in moves only when already known. Fetch /api/player-card/extras alongside for the rest.",
+            "default": false
           }
         },
         "type": "object",

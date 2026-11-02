@@ -217,6 +217,45 @@ def test_player_card_endpoint():
     assert not [c for c in calls[n:] if c.url.params.get("view") == "kona_playercard"], "cached"
 
 
+def test_core_card_comes_first_and_extras_fill_in_the_rest():
+    store = MemoryStore()
+    app, calls = card_app(store)
+    store.save_news_items(
+        [
+            {
+                "id": "espn:1",
+                "source_id": "espn",
+                "title": "Test Center (ankle) questionable Friday",
+                "url": "https://example.com/1",
+                "published": iso(app.state.now()),
+                "summary": "",
+                "player_ids": [PID],
+                "kind": "injury",
+            }
+        ]
+    )
+    client = signed_in(app, team_id=None)
+    body = {"league_id": LEAGUE_ID, "season": 2027, "player_id": PID}
+
+    core = client.post("/api/player-card", json={**body, "core": True})
+    assert core.status_code == 200, core.text
+    d = core.json()
+    assert d["games"] and d["news"] == []
+    assert d["moves"][0]["others"][0]["name"] == "", "not looked up yet"
+    assert not [c for c in calls if c.url.params.get("view") == "kona_player_info"], "no wait on names"
+    assert "espn;dur=" in core.headers["server-timing"]
+
+    n = len(calls)
+    extras = client.post("/api/player-card/extras", json=body)
+    assert extras.status_code == 200, extras.text
+    assert [x["headline"] for x in extras.json()["news"]] == ["Test Center (ankle) questionable Friday"]
+    assert extras.json()["names"] == {"99": "Other Guy"}
+    assert not [c for c in calls[n:] if c.url.params.get("view") == "kona_playercard"], "shares the core's ESPN call"
+
+    again = client.post("/api/player-card", json={**body, "core": True}).json()
+    assert again["moves"][0]["others"][0]["name"] == "Other Guy", "known names come with the core"
+
+
 def test_player_card_unknown_player_and_sign_in():
     app, _ = card_app()
     body = {"league_id": LEAGUE_ID, "season": 2027, "player_id": 1}
