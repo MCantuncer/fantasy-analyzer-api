@@ -9,6 +9,9 @@ owner needs before letting the player go:
     stops winning it, so the owner holds on even if he isn't a star.
   * Fresh signing: just traded for or picked up. Owners rarely flip a player
     they just went and got.
+  * Hot: ESPN ranks him far higher over the last 15 days than it did before the
+    season. Owners rarely sell a player while he's hot, and they price him at his
+    current form even when the projection expects him to cool off.
   * On the block: the owner listed him on ESPN's trade block, so he's cheaper.
   * Not for sale: marked untouchable on ESPN, or by you. Never targeted.
 
@@ -33,7 +36,7 @@ if TYPE_CHECKING:
     from app.analysis.model import CategoryModel
     from app.analysis.perceived import PerceivedValue
 
-BadgeKind = Literal["jewel", "keystone", "fresh_signing", "not_for_sale", "on_the_block"]
+BadgeKind = Literal["jewel", "keystone", "fresh_signing", "hot", "not_for_sale", "on_the_block"]
 
 JEWEL_RANK = 12  # top of the league by trade value, about the first round in a 10-team league
 JEWEL_TOP_RANK = 5
@@ -53,6 +56,15 @@ KEYSTONE_MIN_DOLLARS = 3.0  # a cheap keystone still costs something to pry loos
 
 FRESH_DAYS = 21
 FRESH_PREMIUM = 0.10  # fades to zero over FRESH_DAYS
+
+# Hot: a breakout owners can see on ESPN. After a few games his last-15-days rank is inside
+# the league's rostered pool, at most half his preseason rank, and at least 40% of the
+# rostered pool higher (so a star moving from #8 to #2 isn't "hot", he's just a star). The
+# owner then wants at least his current-form trade value: the dollars that rank is worth.
+# Unranked before the season counts as twice the rostered pool.
+HOT_MIN_GAMES = 3
+HOT_RANK_RATIO = 0.5
+HOT_MIN_JUMP = 0.4  # share of the rostered pool
 
 ON_THE_BLOCK = -0.10
 MAX_PREMIUM = 0.35
@@ -108,6 +120,7 @@ class OwnerPremium:
         self.on_block = {pid for t in league.teams for pid, s in t.trade_block.items() if s == BLOCK}
         self._jewels = self._find_jewels()
         self._keystones = self._find_keystones()
+        self._hot = self._find_hot()
         self._badges: dict[int, list[Badge]] = {}
 
     # ---- detection ---------------------------------------------------------------------
@@ -146,6 +159,20 @@ class OwnerPremium:
                 if ok.any():
                     c = int(np.argmax(np.where(ok, drop, -1.0)))
                     out[p.id] = (m.cats[c].name, float(base[c]), float(base[c] - drop[c]))
+        return out
+
+    def _find_hot(self) -> dict[int, float]:
+        """Player id -> his current-form trade value, for rostered players on a hot streak."""
+        rostered = len(self.owner)
+        out = {}
+        for t in self.league.teams:
+            for p in t.roster:
+                now = p.recent_rank or p.season_rank
+                if p.games_played < HOT_MIN_GAMES or not now or now > rostered:
+                    continue
+                before = p.espn_rank or 2 * rostered
+                if now <= HOT_RANK_RATIO * before and before - now >= HOT_MIN_JUMP * rostered:
+                    out[p.id] = self.perceived.dollars_at_rank(now)
         return out
 
     def _fresh_days(self, p: Player) -> float | None:
@@ -192,6 +219,11 @@ class OwnerPremium:
             how = "traded for" if p.acquisition_type == "TRADE" else "picked up"
             when = "today" if days < 1 else f"{days:.0f} day{'s' if days >= 1.5 else ''} ago"
             out.append(Badge("fresh_signing", f"Just {how} ({when}). Owners rarely flip a player they just got."))
+        if p.id in self._hot:
+            now = p.recent_rank or p.season_rank
+            before = f"#{p.espn_rank} before the season" if p.espn_rank else "unranked before the season"
+            why = f"#{now} on ESPN over the last 15 days, {before}. Owners rarely sell a player while he's hot."
+            out.append(Badge("hot", why))
         if p.id in self.on_block:
             out.append(Badge("on_the_block", "On his owner's ESPN trade block: they want to move him."))
         self._badges[p.id] = out
@@ -245,7 +277,12 @@ class OwnerPremium:
             team = self.owner.get(p.id)
             factor = self.activity_factor(team.id) if team is not None else 1.0
             extra = max(extra, KEYSTONE_MIN_DOLLARS * factor)
+        if p.id in self._hot:
+            extra = max(extra, self._hot[p.id] - value)
         return max(extra, -value)
+
+    def is_hot(self, p: Player) -> bool:
+        return p.id in self._hot
 
     def price(self, p: Player) -> float:
         """Trade value plus the owner premium: what it takes to get him."""

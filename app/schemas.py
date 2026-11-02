@@ -49,9 +49,10 @@ class LeagueSummary(BaseModel):
 
 
 class PlayerBadge(BaseModel):
-    kind: Literal["jewel", "keystone", "fresh_signing", "not_for_sale", "on_the_block"] = Field(
+    kind: Literal["jewel", "keystone", "fresh_signing", "hot", "not_for_sale", "on_the_block"] = Field(
         description="jewel: star name. keystone: carries a category for his team. fresh_signing: just traded for "
-        "or picked up. not_for_sale: untouchable. on_the_block: on his owner's ESPN trade block."
+        "or picked up. hot: ESPN ranks him far higher over the last 15 days than before the season. "
+        "not_for_sale: untouchable. on_the_block: on his owner's ESPN trade block."
     )
     category: str | None = Field(default=None, description="The category a keystone carries")
     reason: str

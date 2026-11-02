@@ -143,3 +143,76 @@ def test_my_attached_players_need_a_spectacular_deal(league, model, premium):
         if any(premium.is_attached(p) for p in d.give):
             assert d.my_gain >= bar
             assert d.warnings
+
+
+def _swap(league, p, **changes):
+    """Replace player p on his team with a changed copy; returns the copy."""
+    for team in league.teams:
+        if p in team.roster:
+            q = dataclasses.replace(p, **changes)
+            team.roster[team.roster.index(p)] = q
+            return team, q
+    raise AssertionError(p.name)
+
+
+def _restore(team, q, p):
+    team.roster[team.roster.index(q)] = p
+
+
+def _cheap_other_player(league, pv):
+    other = next(t for t in league.teams if t.id != ME)
+    return min((p for p in other.roster if p.espn_rank and p.espn_rank > 120), key=pv.value)
+
+
+def test_a_breakout_is_hot_and_priced_at_current_form(league, model):
+    # Darius Acuff Jr. on 2 Nov 2026: #138 before the season, #68 on ESPN after six games.
+    pv = PerceivedValue(league, model)
+    p = _cheap_other_player(league, pv)
+    team, q = _swap(league, p, espn_rank=138, recent_rank=68, season_rank=68, games_played=6)
+    try:
+        premium = OwnerPremium(league, model, PerceivedValue(league, model))
+        assert premium.is_hot(q) and "hot" in kinds(premium, q)
+        reason = next(b.reason for b in premium.badges(q) if b.kind == "hot")
+        assert "#68" in reason and "#138 before the season" in reason
+        assert premium.price(q) == pytest.approx(premium.perceived.dollars_at_rank(68))
+        assert premium.price(q) > premium.perceived.value(q)
+    finally:
+        _restore(team, q, p)
+
+
+def test_not_hot_without_a_real_jump(league, model):
+    pv = PerceivedValue(league, model)
+    p = _cheap_other_player(league, pv)
+    cases = [
+        dict(espn_rank=8, recent_rank=2, season_rank=2, games_played=6),  # a star staying a star
+        dict(espn_rank=138, recent_rank=68, season_rank=68, games_played=2),  # two games
+        dict(espn_rank=138, recent_rank=100, season_rank=100, games_played=6),  # better, not a breakout
+        dict(espn_rank=None, recent_rank=400, season_rank=400, games_played=6),  # outside the rostered pool
+    ]
+    for changes in cases:
+        team, q = _swap(league, p, **changes)
+        try:
+            premium = OwnerPremium(league, model, PerceivedValue(league, model))
+            assert not premium.is_hot(q), changes
+        finally:
+            _restore(team, q, p)
+
+
+def test_their_hot_player_is_no_longer_a_throw_in(league, model):
+    me = next(i for i, t in enumerate(league.teams) if t.id == ME)
+    pv = PerceivedValue(league, model)
+    finder = TradeFinder(league, model, me, keep=set(), premium=OwnerPremium(league, model, pv))
+    every = finder.candidates()
+    deals = [d for d in every if len(d.get) == 2]
+    assert deals
+    throw_in = min(deals[0].get, key=pv.value)
+    team, q = _swap(league, throw_in, espn_rank=200, recent_rank=20, season_rank=20, games_played=6)
+    try:
+        pv2 = PerceivedValue(league, model)
+        finder = TradeFinder(league, model, me, keep=set(), premium=OwnerPremium(league, model, pv2))
+        after = [d for d in finder.candidates() if q.id in {p.id for p in d.get}]
+        before = [d for d in every if throw_in.id in {p.id for p in d.get}]
+        assert len(after) < len(before)
+        assert all(d.premium > 0 for d in after)
+    finally:
+        _restore(team, q, p=throw_in)
