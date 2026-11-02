@@ -866,6 +866,13 @@ class PlayerSeasonLine(BaseModel):
     ft_pct: float | None = None
 
 
+class PlayerMoveOther(BaseModel):
+    player_id: int
+    name: str
+    kind: Literal["add", "drop", "trade"]
+    to_team_id: int = Field(description="0 = free agency")
+
+
 class PlayerMove(BaseModel):
     id: str
     kind: Literal["draft", "add", "drop", "trade"]
@@ -875,6 +882,9 @@ class PlayerMove(BaseModel):
     to_team_id: int = Field(description="0 = free agency")
     bid: int | None = Field(default=None, description="FAAB paid on a waiver claim; price in an auction draft")
     pick: int | None = Field(default=None, description="Overall pick, on a draft")
+    others: list[PlayerMoveOther] = Field(
+        default_factory=list, description="Other players in the same move, e.g. the drop that made room"
+    )
 
 
 class PlayerNews(BaseModel):

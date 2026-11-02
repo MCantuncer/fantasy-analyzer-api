@@ -5719,6 +5719,14 @@
             ],
             "title": "Pick",
             "description": "Overall pick, on a draft"
+          },
+          "others": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerMoveOther"
+            },
+            "type": "array",
+            "title": "Others",
+            "description": "Other players in the same move, e.g. the drop that made room"
           }
         },
         "type": "object",
@@ -5731,6 +5739,40 @@
           "to_team_id"
         ],
         "title": "PlayerMove"
+      },
+      "PlayerMoveOther": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "add",
+              "drop",
+              "trade"
+            ],
+            "title": "Kind"
+          },
+          "to_team_id": {
+            "type": "integer",
+            "title": "To Team Id",
+            "description": "0 = free agency"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "kind",
+          "to_team_id"
+        ],
+        "title": "PlayerMoveOther"
       },
       "PlayerNews": {
         "properties": {

@@ -66,6 +66,8 @@ class CardMove:
     to_team_id: int
     bid: int | None = None  # FAAB on a waiver claim, price in an auction draft
     pick: int | None = None  # overall pick, for a draft
+    # The other players in the same move: (player id, add / drop / trade, team he went to).
+    others: list[tuple[int, str, int]] = field(default_factory=list)
 
 
 @dataclass
@@ -171,6 +173,17 @@ def _bid(kind: str, via: str, bid) -> int | None:
     return None
 
 
+def _others(t: dict, player_id: int) -> list[tuple[int, str, int]]:
+    """Who else moved in this transaction: the drop that made room, the rest of a trade."""
+    out = []
+    for item in t.get("items") or []:
+        pid = int(item.get("playerId") or 0)
+        kind = MOVE_KINDS.get(str(item.get("type") or ""))
+        if pid and pid != player_id and kind in ("add", "drop", "trade"):
+            out.append((pid, kind, int(item.get("toTeamId") or 0)))
+    return out
+
+
 def parse_moves(raw: list[dict], player_id: int) -> list[CardMove]:
     """Executed moves of this player in the league, newest first. Pending claims and lineup changes are left out."""
     out: list[CardMove] = []
@@ -200,6 +213,7 @@ def parse_moves(raw: list[dict], player_id: int) -> list[CardMove]:
                     to_team_id=int(item.get("toTeamId") or 0),
                     bid=_bid(kind, via, bid),
                     pick=int(item["overallPickNumber"]) if kind == "draft" and item.get("overallPickNumber") else None,
+                    others=_others(t, player_id) if kind != "draft" else [],
                 )
             )
     out.sort(key=lambda m: m.at_ms, reverse=True)

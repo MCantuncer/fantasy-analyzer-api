@@ -1742,6 +1742,12 @@ def create_app(
         def stats(d: dict[str, float]) -> schemas.GameStats:
             return schemas.GameStats(**{k: round(v, 1) for k, v in d.items()})
 
+        other_ids = {pid for m in card.moves for pid, _, _ in m.others}
+        try:
+            others = await player_names(body.league_id, season, other_ids, creds) if other_ids else {}
+        except EspnError:
+            others = {}  # the card still shows his own moves
+
         line = card.season_line
         return schemas.PlayerCard(
             player_id=card.id,
@@ -1784,6 +1790,12 @@ def create_app(
                     to_team_id=m.to_team_id,
                     bid=m.bid,
                     pick=m.pick,
+                    others=[
+                        schemas.PlayerMoveOther(
+                            player_id=pid, name=others[pid].name if pid in others else "", kind=kind, to_team_id=to
+                        )
+                        for pid, kind, to in m.others
+                    ],
                 )
                 for m in card.moves
                 if m.at_ms
