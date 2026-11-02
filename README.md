@@ -2,7 +2,7 @@
 
 # Fantasy Analyzer · API
 
-**The engine behind Fantasy Analyzer: trades, pickups and playoff odds for ESPN fantasy basketball.**
+**The engine behind Fantasy Analyzer: trades, FA targets and playoff odds for ESPN fantasy basketball.**
 
 [![CI](https://github.com/MCantuncer/fantasy-analyzer-api/actions/workflows/ci.yml/badge.svg)](https://github.com/MCantuncer/fantasy-analyzer-api/actions/workflows/ci.yml)
 [![News refresh](https://github.com/MCantuncer/fantasy-analyzer-api/actions/workflows/news.yml/badge.svg)](https://github.com/MCantuncer/fantasy-analyzer-api/actions/workflows/news.yml)
@@ -38,7 +38,7 @@
 
 ## Overview
 
-A FastAPI backend for ESPN **9-category head-to-head** fantasy basketball. Give it a league ID and team ID and it returns moves ranked by how much they change your playoff odds: trades the other owner should accept, free-agent pickups with the right drop, your category outlook, every team's build, and a full season simulation.
+A FastAPI backend for ESPN **9-category head-to-head** fantasy basketball. Give it a league ID and team ID and it returns moves ranked by how much they change your playoff odds: trades the other owner should accept, free agents paired with the right drop, your category outlook, every team's build, and a full season simulation.
 
 The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fantasy-analyzer-web) and runs at **https://fantasy-analyzer-web.vercel.app**.
 
@@ -49,7 +49,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🔁 | **Trade finder:** 1-for-1, 2-for-1 and 1-for-2 deals that help both builds and look fair to the other owner | `/api/analyze` |
 | 🔭 | **Vision trades:** buy players off to a slow start before they bounce back, for a stronger playoff run, checked on past seasons | `/api/analyze` |
 | 🎯 | **Trade for one player:** fit, his owner's needs and the best three offers | `/api/target` |
-| 🛒 | **Pickups:** every healthy free agent against every possible drop | `/api/analyze` |
+| 🛒 | **FA Targets:** every healthy free agent against every possible drop | `/api/analyze` |
 | 🎲 | **Season simulation:** 4,000 runs of the remaining schedule in the league's real format | `/api/analyze` |
 | ⭐ | **Trade of the day:** one league-wide win-win deal a day, with a poll | `/api/trade-of-the-day` |
 | 🏀 | **Live scores:** NBA scores and box scores tagged with fantasy teams | `/api/scores` |
@@ -184,7 +184,7 @@ uv run python -m scripts.export_openapi openapi.json
   Each deal gets rough acceptance odds and a one-line pitch on why it helps them. Deals are ranked by playoff-odds gain weighted by those odds.
 - **Trade of the day:** every pair of teams, scanned with the same finder from both sides (`app/analysis/daily.py`). A deal qualifies only if both owners see fair value and both teams gain in the categories they compete in; the top few must also keep both teams' playoff odds from dropping in the simulation. Deals are ranked by the smaller of the two gains, weighted by the chance both owners say yes. Teams take turns in the spotlight (one a day, fixed order per league), and the spotlight team's best deal wins when it's close to the overall best, so the pick moves around the league. Only fully healthy players change hands (no day-to-day, out or IR). A new pick is made each UTC day and re-checked every `DAILY_TRADE_RECHECK_SECONDS` (3 hours): it stays while it still qualifies and scores at least 85% of the best deal, and is replaced otherwise. Poll votes belong to the deal they were cast on. The scan takes a few seconds (longer on the free plan), so the endpoint answers `status: "pending"` after `DAILY_TRADE_WAIT_SECONDS` (default 20) and the client asks again.
 - **Trading for one player:** pick any rostered player and get his fit with your build (category changes and playoff odds if you added him), his owner's build, needs and which of your players help them, and up to three offers (`app/analysis/target.py`). Offers use the trade finder's rules, except any gain for you counts and the owner's build only has to stay about even. Packages are one or two of your players for him, or two or three for him plus one of their low-value players. The best offer maximises playoff gain weighted by acceptance; fallbacks are the likeliest to be accepted and the cheapest on paper. If nothing keeps the owner's build even, the best long shots are shown with a note.
-- **Pickups:** every healthy free agent against every possible drop, keeping the best drop.
+- **FA Targets:** every healthy free agent against every possible drop, keeping the best drop.
 - **Season:** 4,000 simulations of the remaining schedule with the league's real format: each category counts in "H2H each category" leagues, one result per matchup in "most categories" leagues (`app/analysis/sim.py`). Categories are drawn together, since counting stats rise and fall with games played, and each team carries a lasting shock for the whole simulated season, which stands in for injuries, trades and role changes.
 
 Only ESPN head-to-head category leagues are supported for now.
