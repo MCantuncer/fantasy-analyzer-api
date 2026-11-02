@@ -55,22 +55,21 @@ jobs:
                   except Exception: pass
               ds = [d if d.tzinfo else d.replace(tzinfo=dt.timezone.utc) for d in ds]
               return (len(ds), str(now - max(ds)).split(".")[0]) if ds else (0, "-")
-          for k, u in FEEDS.items():
-              st, ct, body = get(u)
-              try: print("FEED", k, st, ct[:30], len(body), *newest(body))
-              except Exception as e: print("FEED", k, st, "parse", repr(e)[:60])
-          # Bluesky: who is there, and how fresh.
-          for q in ["underdog nba", "shams charania", "rotowire", "hoops rumors", "fantasypros", "marc stein", "jake fischer", "chris haynes", "nba beat writer", "fantasy basketball", "brett siegel", "the athletic nba", "espn nba", "rotoworld", "fantasylabs", "keith smith"]:
-              st, ct, body = get("https://public.api.bsky.app/xrpc/app.bsky.actor.searchActors?" + urllib.parse.urlencode({"q": q, "limit": 5}))
+          HANDLES = ["underdog-nba.bsky.social","underdognba.bsky.social","rotowirenba.bsky.social","rotoworld-hoops.bsky.social","shamscharania.bsky.social","shamscharaniaespn.bsky.social","shamsbot.bsky.social","thesteinline.bsky.social","jakelfischer.bsky.social","chrisbhaynes.bsky.social","keithsmithnba.bsky.social","hoopsrumors.bsky.social","nbarumorsbot.bsky.social","fantasylabs.bsky.social","fantasypros.bsky.social","espnnba.bsky.social","vincegoodwill.bsky.social","bengolliver.bsky.social"]
+          for h in HANDLES:
+              st, ct, body = get("https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?" + urllib.parse.urlencode({"actor": h, "limit": 100, "filter": "posts_no_replies"}))
               try:
-                  for a in json.loads(body)["actors"]:
-                      print("BSKY", q, "|", a["handle"], "|", a.get("displayName"))
-              except Exception: print("BSKYERR", q, st)
-          for h in ["hoopsrumors.com", "marcstein.bsky.social", "rotowire.bsky.social", "underdognba.bsky.social", "fantasypros.com"]:
-              st, ct, body = get("https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?" + urllib.parse.urlencode({"actor": h, "limit": 20}))
-              try:
-                  f = json.loads(body)["feed"]
+                  f = [p for p in json.loads(body)["feed"] if "reason" not in p]
                   ts = [dt.datetime.fromisoformat(p["post"]["record"]["createdAt"].replace("Z","+00:00")) for p in f]
-                  print("BSKYFEED", h, len(f), str(now - max(ts)).split(".")[0] if ts else "-", (f[0]["post"]["record"].get("text","")[:90] if f else "").replace("\n"," "))
-              except Exception: print("BSKYFEEDERR", h, st, body[:80])
+                  day = sum(now - t < dt.timedelta(days=1) for t in ts)
+                  week = sum(now - t < dt.timedelta(days=7) for t in ts)
+                  prof = json.loads(get("https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=" + h)[2] or "{}")
+                  print("BSKYFEED", h, "followers", prof.get("followersCount"), "posts24h", day, "posts7d", week, "newest", str(now - max(ts)).split(".")[0] if ts else "-")
+                  for p in f[:3]:
+                      print("   ", p["post"]["record"]["createdAt"][:16], p["post"]["record"].get("text","")[:140].replace("\n"," "))
+              except Exception as e: print("BSKYFEEDERR", h, st, repr(e)[:60])
+          st, ct, body = get("https://official.nba.com/nba-injury-report-2026-27-season/")
+          print("NBAREPORT", re.findall(r'https://ak-static[^"]+\.pdf', body)[-3:])
+          st, ct, body = get("https://www.nbcsports.com/fantasy/basketball/player-news")
+          print("ROTOWORLD", re.findall(r'"(?:datePublished|published_at|created|timestamp)"\s*:\s*"?([^",]+)', body)[:5], body.count("player-news__"), re.findall(r'api[^"\s]{0,80}player[-_]news[^"\s]{0,80}', body)[:3])
           PY
