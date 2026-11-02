@@ -6,6 +6,7 @@ from app.analysis.model import CategoryModel
 from app.analysis.perceived import PerceivedValue
 from app.analysis.report import Analyzer, league_summary
 from app.analysis.tiers import droppable
+from app.analysis.tiers import droppable as no_trade_value
 from app.analysis.trades import (
     MAX_VALUE_RATIO,
     MIN_THEIR_GAIN,
@@ -16,6 +17,7 @@ from app.analysis.trades import (
     TradeFinder,
     acceptance_label,
     acceptance_odds,
+    shape_odds,
 )
 from app.espn.parse import parse_league
 
@@ -104,6 +106,46 @@ def test_acceptance_odds_follow_value_and_need():
     assert acceptance_odds(1.0, 0.2) > acceptance_odds(1.0, 0.03)
     assert acceptance_label(0.7) == "likely" and acceptance_label(0.45) == "possible"
     assert acceptance_label(0.2) == "long_shot"
+
+
+def test_shape_odds_follow_real_offers():
+    # At the same value: 1-for-1 and 1-for-2 as is, 2-for-2 a bit lower, and a 2-for-1 that makes
+    # the other owner cut someone the lowest (scripts/trade_shape_backtest.py).
+    p = 0.5
+    assert shape_odds(p, 1, 1) == shape_odds(p, 1, 2) == pytest.approx(p)
+    assert shape_odds(p, 2, 1) < shape_odds(p, 2, 2) < p
+    assert 0.05 <= shape_odds(0.05, 2, 1) and shape_odds(0.9, 2, 2) <= 0.9
+
+
+def test_two_for_one_odds_are_lower_than_the_same_deal_would_get_as_a_one_for_one(league):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set(), mode="edge")
+    deals = [d for d in finder.candidates() if len(d.give) == 2 and len(d.get) == 1]
+    assert deals
+    for d in deals:
+        assert any("cut a player to fit two of yours" in r for r in d.reasons)
+        assert d.acceptance <= shape_odds(0.9, 2, 1)
+
+
+def test_two_for_two_ideas_are_real_two_for_twos(league):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set(), mode="edge")
+    deals = finder.candidates()
+    pairs = [d for d in deals if len(d.give) == len(d.get) == 2]
+    assert pairs
+    mine = finder.teams[me].roster
+    for d in pairs:
+        assert d.my_drop is None and d.their_drop is None and d.my_add is None
+        theirs = finder.teams[d.partner_idx].roster
+        # No free-agent-level throw-ins: those deals are really 2-for-1s.
+        assert not set(map(id, d.give)) & set(map(id, no_trade_value(mine)))
+        assert not set(map(id, d.get)) & set(map(id, no_trade_value(theirs)))
+        # Each one does more for me than any 1-for-1 inside it.
+        inside = [finder._gains.get((d.partner_idx, g.id, t.id)) for g in d.give for t in d.get]
+        assert all(g is None or d.my_gain > g for g in inside)
+    assert not [d for d in finder.candidates(two_for_two=False) if len(d.give) == len(d.get) == 2]
 
 
 def test_every_candidate_is_fair_on_paper_and_helps_both(league):

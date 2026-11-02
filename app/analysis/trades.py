@@ -19,6 +19,11 @@ trade: you could cut your weakest player for him today. So such a deal is measur
 against your roster after that free pickup, not against today's roster, and the trade
 gets credit only for what it adds on top.
 
+Trade shapes: 1-for-1, 2-for-2, 2-for-1 and 1-for-2. Real offers show owners treat
+them differently at the same value (scripts/trade_shape_backtest.py): a 2-for-2 is a
+normal trade, while a 2-for-1 that makes the other owner cut someone to fit two players
+rarely gets accepted, however good it looks on paper.
+
 Each surviving deal gets an acceptance estimate and a list of reasons to use when
 pitching it. Deals are ranked by playoff-odds gain weighted by that estimate.
 """
@@ -81,6 +86,13 @@ VISION_SLOW_GAP = 1.0  # projected value above his season so far (z-scores summe
 VISION_MIN_PLAYOFF_GAIN = 0.10  # expected categories won per playoff week
 VISION_MIN_SEASON_GAIN = -0.15  # what the deal may cost before the playoffs, per week on average
 
+# Odds of acceptance against a 1-for-1 of the same value for the other owner, keyed by
+# (players I send, players I get). Fitted on 3,392 real offers in 15 category leagues
+# (scripts/trade_shape_backtest.py, every league weighted the same, 90% intervals from
+# resampling leagues): 2-for-2 x0.63 (0.47-0.84), 2-for-1 x0.40 (0.26-0.77). A 1-for-2 came
+# out at x1.26 (0.72-2.28): no clear difference from a 1-for-1, so it keeps the 1-for-1 odds.
+SHAPE_ODDS = {(2, 2): 0.63, (2, 1): 0.40}
+
 LIKELY, POSSIBLE = 0.6, 0.4
 
 Mode = Literal["fair", "edge", "vision"]
@@ -137,6 +149,12 @@ def acceptance_odds(ratio: float, their_gain: float, struggling: bool = False) -
     return float(np.clip(p, 0.05, 0.9))
 
 
+def shape_odds(p: float, n_give: int, n_get: int) -> float:
+    """Acceptance ``p`` adjusted for the trade's shape, on the odds scale."""
+    k = SHAPE_ODDS.get((n_give, n_get), 1.0)
+    return float(np.clip(p * k / (1 - p + p * k), 0.05, 0.9))
+
+
 def acceptance_label(p: float) -> str:
     return "likely" if p >= LIKELY else "possible" if p >= POSSIBLE else "long_shot"
 
@@ -175,6 +193,7 @@ class TradeFinder:
             self.playoff_strength({self.me_idx: self.free_roster}) if mode == "vision" and self.free_roster else None
         )
         self.rivals = self._rivals()
+        self._gains: dict[tuple[int, int, int], float] = {}  # (partner, mine, theirs) -> my gain from that 1-for-1
         # Our projection in dollars: a player's model-value rank priced on ESPN's rank curve.
         pool = [p for t in self.teams for p in t.roster] + list(league.free_agents)
         by_model = sorted(pool, key=model.value, reverse=True)
@@ -324,6 +343,8 @@ class TradeFinder:
         vs_pickup = self.free_move if my_add is not None and self.free_move is not None else None
         baseline = self.free_base if vs_pickup is not None else self.base[self.me_idx]
         my_gain = self.model.strength(self.me_idx, dists) - baseline
+        if len(give) == len(get) == 1:
+            self._gains[(j, give[0].id, get[0].id)] = my_gain  # what a 2-for-2 containing it must beat
         if vision and min_my_gain == MIN_MY_GAIN:
             min_my_gain = VISION_MIN_SEASON_GAIN
         if my_gain < min_my_gain:
@@ -348,7 +369,12 @@ class TradeFinder:
                 return None
         struggling = j in self.struggling
         reasons = self._reasons(j, give, get, dists, struggling)
-        acceptance = acceptance_odds(ratio, their_gain, struggling)
+        acceptance = shape_odds(acceptance_odds(ratio, their_gain, struggling), len(give), len(get))
+        if len(give) > len(get):
+            reasons.append(
+                "They have to cut a player to fit two of yours. Real offers like this get accepted "
+                "less than half as often as a 1-for-1 of the same value."
+            )
         lost = self._keystones_lost(j, get, dists)
         if lost:
             acceptance = max(acceptance - KEYSTONE_PENALTY, 0.05)
@@ -454,7 +480,7 @@ class TradeFinder:
             out.append("They're outside the playoff spots, so they have reason to shake things up.")
         return out
 
-    def candidates(self, partners: Iterable[int] | None = None) -> list[Deal]:
+    def candidates(self, partners: Iterable[int] | None = None, two_for_two: bool = True) -> list[Deal]:
         me = self.teams[self.me_idx]
         mine = [p for p in me.roster if p.id not in self.keep and not self.premium.not_for_sale(p)]
         deals: list[Deal] = []
@@ -481,7 +507,39 @@ class TradeFinder:
                     d = self._evaluate(j, [give], list(get_pair))
                     if d:
                         deals.append(d)
+            if two_for_two:
+                deals += self._two_for_two(j, mine, theirs)
         return deals
+
+    def _two_for_two(self, j: int, mine: list[Player], theirs: list[Player]) -> list[Deal]:
+        """Two of mine for two of theirs.
+
+        Pairs are matched on trade value first, which is cheap, so only packages that could
+        pass the value check get the full evaluation. A 2-for-2 is kept only when it does more
+        for me than the best 1-for-1 inside it: otherwise the extra players are filler.
+        """
+        pv = self.perceived
+        lo = EDGE_MIN_RATIO if self.mode == "edge" else MIN_VALUE_RATIO
+        # A player off the waiver wire is a throw-in, not half of a 2-for-2: that deal is a 2-for-1.
+        mine = [p for p in mine if p not in droppable(mine, self.keep)]
+        theirs = [p for p in theirs if p not in droppable(theirs)]
+        gives = [(pair, pv.package(list(pair))) for pair in combinations(mine, 2)]
+        gets = [(pair, pv.package(list(pair), self.premium.price)) for pair in combinations(theirs, 2)]
+        out = []
+        for give_pair, give_v in gives:
+            for get_pair, get_v in gets:
+                if get_v <= 0 or not lo <= give_v / get_v <= MAX_VALUE_RATIO:
+                    continue
+                d = self._evaluate(j, list(give_pair), list(get_pair))
+                if d is None:
+                    continue
+                inside = max(
+                    (self._gains.get((j, g.id, t.id), float("-inf")) for g in give_pair for t in get_pair),
+                    default=float("-inf"),
+                )
+                if d.my_gain > inside:
+                    out.append(d)
+        return out
 
     def _vision_candidates(self, mine: list[Player], partners: Iterable[int] | None) -> list[Deal]:
         """One target with a vision signal for one or two of my healthy players: they get production now."""

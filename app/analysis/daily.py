@@ -116,7 +116,8 @@ class DailyTrade:
         out = []
         n = len(self.teams)
         for i in range(n):
-            for a in self.finders[i].candidates(partners=range(i + 1, n)):
+            # Every pair of teams is scanned, so the much larger 2-for-2 search stays out for now.
+            for a in self.finders[i].candidates(partners=range(i + 1, n), two_for_two=False):
                 if not all(fully_healthy(p) for p in a.give + a.get):
                     continue
                 j = a.partner_idx
