@@ -831,6 +831,11 @@ class PlayerCardRequest(BaseModel):
     league_id: int = Field(gt=0)
     season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")
     player_id: int = Field(gt=0)
+    core: bool = Field(
+        default=False,
+        description="Only what the card shows first: no news, and names in moves only when already known. "
+        "Fetch /api/player-card/extras alongside for the rest.",
+    )
 
 
 class GameStats(BaseModel):
@@ -912,6 +917,13 @@ class PlayerCard(BaseModel):
     games: list[PlayerGame] = Field(description="Latest games he played, newest first; last season's when none yet")
     news: list[PlayerNews] = Field(description="Recent stories about him, newest first")
     moves: list[PlayerMove] = Field(description="Every move of him in this league this season, newest first")
+
+
+class PlayerCardExtras(BaseModel):
+    """The slower part of a player card, loaded while the core shows."""
+
+    news: list[PlayerNews] = Field(description="Recent stories about him, newest first")
+    names: dict[int, str] = Field(description="Names of the other players in his moves, by player id")
 
 
 FeedbackRating = Literal["bad", "good"]

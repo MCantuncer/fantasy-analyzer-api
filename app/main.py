@@ -14,7 +14,7 @@ import time
 from collections import defaultdict, deque
 from datetime import UTC, date, datetime, timedelta
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -59,6 +59,7 @@ from app.news.service import iso as news_iso
 from app.news.sources import BY_ID as NEWS_SOURCES
 from app.news.sources import SOURCES as NEWS_SOURCE_LIST
 from app.news.verify import FACT_SOURCE, describe_fact
+from app.playercard import Card as ParsedCard
 from app.playercard import parse_card
 from app.reader import DEEP_BATCH_MAX, DeepReader, NoteReader, Reading, create_deep_reader, create_reader
 from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
@@ -76,6 +77,7 @@ from app.social import (
     valid_reaction,
 )
 from app.store import Store, TradeKey, create_store
+from app.timing import Stopwatch
 from app.week import category_scores, roster_pro_teams, week_bounds, week_games
 
 # httpx logs request lines at INFO; keep its logs quiet so nothing about a request leaks.
@@ -114,7 +116,8 @@ IMPACT_TRACK_RECORD = (
 )
 # While a game is on, one ESPN call a minute serves every visitor.
 LIVE_SCORES_TTL = 60.0
-PLAYER_CARD_TTL = 120.0  # a card a few people open in a row is one ESPN call
+PLAYER_CARD_TTL = 300.0  # a card a few people open in a row is one ESPN call; box scores land after games
+CARD_NEWS_TTL = 60.0  # player cards share one build of the news stories
 CARD_GAMES = 10
 CARD_NEWS = 5
 # How long a finished analysis job stays around for its last poll (the report itself is cached).
@@ -221,6 +224,7 @@ def create_app(
     app.state.gamelogs = TTLCache(GAMELOG_TTL, max_items=64)
     app.state.past_gamelogs = TTLCache(PAST_GAMELOG_TTL, max_items=64)
     app.state.cards = TTLCache(PLAYER_CARD_TTL, max_items=2048)
+    app.state.card_stories = TTLCache(CARD_NEWS_TTL, max_items=4)
     app.state.news = NewsService(app.state.espn, app.state.store, transport=news_transport)
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
@@ -1678,49 +1682,56 @@ def create_app(
             refreshing=refreshing,
         )
 
-    @app.post(
-        "/api/player-card",
-        response_model=schemas.PlayerCard,
-        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
-    )
-    async def player_card(
-        body: schemas.PlayerCardRequest,
-        authorization: str | None = Header(default=None),
-        x_espn_s2: str | None = Header(default=None),
-        x_espn_swid: str | None = Header(default=None),
-    ) -> schemas.PlayerCard:
-        """One player at a glance: his latest games, health, news and every move of him in this league."""
-        await current_user(authorization)
-        creds = read_credentials(x_espn_s2, x_espn_swid)
-        season = body.season or current_season()
-        key = (body.league_id, season, credentials_key(creds), body.player_id)
-        entry = app.state.cards.get(key)
-        if entry is None:
-            entry = await app.state.espn.player_card(season, body.league_id, body.player_id, creds, games=CARD_GAMES)
-            if entry is None:
-                raise HTTPException(404, detail={"code": "no_player", "message": "No such NBA player."})
-            app.state.cards.set(key, entry)
-        schedules = {}
-        raw_schedule = await pro_schedule(season)
-        if raw_schedule:
-            schedules[season] = parse_schedule(raw_schedule)
-        played = {int(st.get("seasonId") or 0) for st in (entry.get("player") or {}).get("stats") or []}
-        if season - 1 in played:
-            last = await pro_schedule(season - 1)
-            if last:
-                schedules[season - 1] = parse_schedule(last)
-        card = parse_card(entry, season, schedules)
-        teams = {tid: abbrev for sched in schedules.values() for tid, (abbrev, _) in sched.teams.items()}
+    card_loads: dict[tuple, asyncio.Future] = {}
 
-        # This season's games; last season's only until he plays one.
-        games = [g for g in card.games if g.season == season] or [g for g in card.games if g.season == season - 1]
-        now = app.state.now()
-        service: NewsService = app.state.news
-        stories = await run_in_threadpool(service.stories, teams, now)
-        mine = [s for s in stories if body.player_id in s.player_ids and s.status != "held"]
+    async def card_entry(league_id: int, season: int, player_id: int, creds: EspnCredentials | None) -> dict:
+        """ESPN's card for him, cached; the core and the extras asking at once share one call."""
+        key = (league_id, season, credentials_key(creds), player_id)
+        entry = app.state.cards.get(key)
+        if entry is not None:
+            return entry
+        pending = card_loads.get(key)
+        if pending is None:
+            pending = asyncio.ensure_future(
+                app.state.espn.player_card(season, league_id, player_id, creds, games=CARD_GAMES)
+            )
+            card_loads[key] = pending
+            pending.add_done_callback(lambda _: card_loads.pop(key, None))
+        entry = await asyncio.shield(pending)
+        if entry is None:
+            raise HTTPException(404, detail={"code": "no_player", "message": "No such NBA player."})
+        app.state.cards.set(key, entry)
+        return entry
+
+    async def load_card(
+        league_id: int, season: int, player_id: int, creds: EspnCredentials | None
+    ) -> tuple[ParsedCard, dict[int, str]]:
+        """His card and the NBA teams' abbreviations by id."""
+        # The player and both calendars in parallel: each is its own ESPN call, and in a row
+        # they were most of the wait. Last season's calendar is for a player yet to play.
+        entry, raw_now, raw_last = await asyncio.gather(
+            card_entry(league_id, season, player_id, creds), pro_schedule(season), pro_schedule(season - 1)
+        )
+        schedules = {}
+        if raw_now:
+            schedules[season] = parse_schedule(raw_now)
+        played = {int(st.get("seasonId") or 0) for st in (entry.get("player") or {}).get("stats") or []}
+        if season - 1 in played and raw_last:
+            schedules[season - 1] = parse_schedule(raw_last)
+        teams = {tid: abbrev for sched in schedules.values() for tid, (abbrev, _) in sched.teams.items()}
+        return parse_card(entry, season, schedules), teams
+
+    async def card_news(season: int, player_id: int, teams: dict[int, str]) -> list[schemas.PlayerNews]:
+        # Every card reads the same news; build it once a minute, not once a card.
+        stories = app.state.card_stories.get((season,))
+        if stories is None:
+            service: NewsService = app.state.news
+            stories = await run_in_threadpool(service.stories, teams, app.state.now())
+            app.state.card_stories.set((season,), stories)
+        mine = [s for s in stories if player_id in s.player_ids and s.status != "held"]
         mine.sort(key=lambda s: s.updated, reverse=True)
 
-        def news_row(s) -> schemas.PlayerNews:
+        def row(s) -> schemas.PlayerNews:
             item = s.items[-1]
             src = NEWS_SOURCES.get(item.source_id)
             fact = item.source_id == FACT_SOURCE
@@ -1732,21 +1743,87 @@ def create_app(
                 published_at=news_iso(s.published),
                 updated_at=news_iso(s.updated),
                 source="ESPN" if fact else (src.name if src else item.source_id),
-                url=f"https://www.espn.com/nba/player/_/id/{body.player_id}" if fact else item.url,
+                url=f"https://www.espn.com/nba/player/_/id/{player_id}" if fact else item.url,
                 severity=s.severity,
             )
 
-        def ms(at: int) -> str:
-            return iso(datetime.fromtimestamp(at / 1000, UTC))
+        return [row(s) for s in mine[:CARD_NEWS]]
+
+    async def move_names(
+        league_id: int, season: int, ids: set[int], creds: EspnCredentials | None
+    ) -> dict[int, PlayerName]:
+        try:
+            return await player_names(league_id, season, ids, creds) if ids else {}
+        except EspnError:
+            return {}  # the card still shows his own moves
+
+    def card_ms(at: int) -> str:
+        return iso(datetime.fromtimestamp(at / 1000, UTC))
+
+    @app.post(
+        "/api/player-card/extras",
+        response_model=schemas.PlayerCardExtras,
+        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+    )
+    async def player_card_extras(
+        body: schemas.PlayerCardRequest,
+        response: Response,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.PlayerCardExtras:
+        """The part of a player card that may take longer: his news, and the names of who moved with him."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        timer = Stopwatch()
+        card, teams = await load_card(body.league_id, season, body.player_id, creds)
+        timer.mark("espn")
+        other_ids = {pid for m in card.moves for pid, _, _ in m.others}
+        news, names = await asyncio.gather(
+            card_news(season, body.player_id, teams), move_names(body.league_id, season, other_ids, creds)
+        )
+        timer.mark("rest")
+        response.headers["Server-Timing"] = timer.header()
+        return schemas.PlayerCardExtras(news=news, names={pid: p.name for pid, p in names.items()})
+
+    @app.post(
+        "/api/player-card",
+        response_model=schemas.PlayerCard,
+        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+    )
+    async def player_card(
+        body: schemas.PlayerCardRequest,
+        response: Response,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.PlayerCard:
+        """One player at a glance: his latest games, health, news and every move of him in this league."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        timer = Stopwatch()
+        card, teams = await load_card(body.league_id, season, body.player_id, creds)
+        timer.mark("espn")
+
+        # This season's games; last season's only until he plays one.
+        games = [g for g in card.games if g.season == season] or [g for g in card.games if g.season == season - 1]
+        other_ids = {pid for m in card.moves for pid, _, _ in m.others}
+        if body.core:
+            # The card shows now; news and any names not yet known come from /extras alongside.
+            others = {pid: p for pid in other_ids if (p := app.state.players.get((season, pid))) is not None}
+            mine: list = []
+        else:
+            mine, others = await asyncio.gather(
+                card_news(season, body.player_id, teams), move_names(body.league_id, season, other_ids, creds)
+            )
+        timer.mark("rest")
+        response.headers["Server-Timing"] = timer.header()
+        logging.getLogger(__name__).info("player card %s: %s", body.player_id, response.headers["Server-Timing"])
 
         def stats(d: dict[str, float]) -> schemas.GameStats:
             return schemas.GameStats(**{k: round(v, 1) for k, v in d.items()})
-
-        other_ids = {pid for m in card.moves for pid, _, _ in m.others}
-        try:
-            others = await player_names(body.league_id, season, other_ids, creds) if other_ids else {}
-        except EspnError:
-            others = {}  # the card still shows his own moves
 
         line = card.season_line
         return schemas.PlayerCard(
@@ -1772,20 +1849,20 @@ def create_app(
                     game_id=g.game_id,
                     season=g.season,
                     day=g.day,
-                    date=ms(g.start_ms) if g.start_ms else None,
+                    date=card_ms(g.start_ms) if g.start_ms else None,
                     opponent=teams.get(g.opponent_id, ""),
                     home=g.home,
                     stats=stats(g.stats),
                 )
                 for g in games[:CARD_GAMES]
             ],
-            news=[news_row(s) for s in mine[:CARD_NEWS]],
+            news=mine,
             moves=[
                 schemas.PlayerMove(
                     id=m.id,
                     kind=m.kind,
                     via=m.via,
-                    at=ms(m.at_ms),
+                    at=card_ms(m.at_ms),
                     from_team_id=m.from_team_id,
                     to_team_id=m.to_team_id,
                     bid=m.bid,
