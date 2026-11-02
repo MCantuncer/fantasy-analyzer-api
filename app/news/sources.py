@@ -29,6 +29,9 @@ import httpx
 
 SourceKind = Literal["fact", "outlet", "tip"]
 USER_AGENT = "fantasy-analyzer/1.0 (+https://fantasy-analyzer-web.vercel.app)"
+# ESPN's site API refuses (403) a user agent that carries a link, while Reddit rate-limits
+# browser-like ones, so ESPN gets its own.
+ESPN_USER_AGENT = "Mozilla/5.0 (compatible; fantasy-analyzer/1.0)"
 MAX_BYTES = 2_000_000  # a feed bigger than this is not a news feed
 SUMMARY_CHARS = 400
 ESPN_SITE = "https://site.api.espn.com"
@@ -51,7 +54,8 @@ SOURCES: tuple[Source, ...] = (
     Source("cbs", "CBS Sports", "outlet", "cbs", "https://www.cbssports.com/rss/headlines/nba/"),
     Source("yahoo", "Yahoo Sports", "outlet", "yahoo", "https://sports.yahoo.com/nba/rss.xml"),
     Source("realgm", "RealGM", "outlet", "realgm", "https://basketball.realgm.com/rss/wiretap/0/0.xml"),
-    Source("hoopshype", "HoopsHype", "outlet", "usatoday", "https://hoopshype.com/feed/"),
+    # HoopsHype now answers every request from a server with 402 (pay to read), so it was replaced.
+    Source("hoopsrumors", "Hoops Rumors", "outlet", "hoopsrumors", "https://www.hoopsrumors.com/feed"),
     Source("stein", "The Stein Line", "outlet", "stein", "https://marcstein.substack.com/feed"),
     Source("reddit", "Reddit r/nba", "tip", "reddit", "https://www.reddit.com/r/nba/new/.rss?limit=50"),
 )
@@ -199,7 +203,10 @@ async def fetch(
     source: Source, transport: httpx.AsyncBaseTransport | None = None, timeout: float = 12.0
 ) -> list[RawItem]:
     async with httpx.AsyncClient(
-        transport=transport, timeout=timeout, follow_redirects=True, headers={"User-Agent": USER_AGENT}
+        transport=transport,
+        timeout=timeout,
+        follow_redirects=True,
+        headers={"User-Agent": ESPN_USER_AGENT if source.format == "espn" else USER_AGENT},
     ) as http:
         try:
             resp = await http.get(source.url)
