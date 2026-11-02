@@ -42,6 +42,18 @@ HEALTHY = {"ACTIVE", "NORMAL"}  # no injury tag at all, not even day-to-day
 ACTUAL_WEIGHT_GAMES = 20.0
 ACTUAL_WEIGHT_BY_STAT = {0: 10.0, 3: 10.0, 17: 10.0, 18: 10.0, 13: 30.0, 14: 30.0, 15: 45.0, 16: 45.0}
 MIN_PRIOR_GAMES = 10  # last season counts as a prior only with this many games
+# Minutes drive a player's counting stats, and ESPN's projection gets them wrong in a set way:
+# it expects players to bounce back to an old role. Players it projected for 3+ more minutes
+# than they played the season before got 83-88% of those minutes. So the prior's minutes are
+# pulled a quarter of the way toward last season's, and minutes trust this season's games
+# twice as fast as the stats do (role changes show up at once, shooting luck doesn't). The
+# counting stats follow the minutes. Fitted on 2023-24, kept because it's no worse at any
+# point of 2024-25 and 2025-26 (scripts/minutes_backtest.py).
+MINUTES = 40
+LAST_MINUTES_WEIGHT = 0.25
+MINUTES_WEIGHT_GAMES = 10.0
+# Per-game totals that scale with minutes: everything a category is built from.
+COUNTING_STATS = frozenset({0, 1, 2, 3, 4, 5, 6, 11, 13, 14, 15, 16, 17, 18})
 
 
 @dataclass(frozen=True)
@@ -171,6 +183,10 @@ def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int, bool
     The prior is ESPN's season projection, or last season's per-game stats for players
     ESPN doesn't project (many free agents). Without either, a hot game or two would
     count at face value, so the third value says whether there was a prior at all.
+
+    Minutes are handled apart from the rest (see LAST_MINUTES_WEIGHT): ESPN's projected
+    minutes lean toward last season's, and this season's minutes count sooner, with the
+    counting stats scaled to match.
     """
     proj: dict[int, float] = {}
     last: dict[int, float] = {}
@@ -185,7 +201,11 @@ def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int, bool
             actual = avg
         elif s.get("seasonId") == season - 1 and s.get("statSourceId") == 0:
             last = avg
-    prior = proj or (last if last.get(GAMES_PLAYED, 0) >= MIN_PRIOR_GAMES else {})
+    has_last = last.get(GAMES_PLAYED, 0) >= MIN_PRIOR_GAMES
+    prior = proj or (last if has_last else {})
+    if proj and has_last and last.get(MINUTES):
+        minutes = (1 - LAST_MINUTES_WEIGHT) * proj.get(MINUTES, 0.0) + LAST_MINUTES_WEIGHT * last[MINUTES]
+        prior = _with_minutes(proj, minutes)
     gp = int(actual.get(GAMES_PLAYED, 0) or 0)
     if not prior:
         return actual, gp, False
@@ -196,7 +216,21 @@ def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int, bool
     for k in keys:
         w = gp / (gp + ACTUAL_WEIGHT_BY_STAT.get(k, ACTUAL_WEIGHT_GAMES))
         out[k] = (1 - w) * prior.get(k, 0.0) + w * actual.get(k, prior.get(k, 0.0))
+    if prior.get(MINUTES) and MINUTES in actual:
+        w = gp / (gp + MINUTES_WEIGHT_GAMES)
+        out = _with_minutes(out, (1 - w) * prior[MINUTES] + w * actual[MINUTES])
     return out, gp, True
+
+
+def _with_minutes(per_game: dict[int, float], minutes: float) -> dict[int, float]:
+    """The line with its minutes set to ``minutes`` and its counting stats scaled along."""
+    current = per_game.get(MINUTES, 0.0)
+    if current <= 0:
+        return per_game
+    scale = minutes / current
+    out = {k: v * scale if k in COUNTING_STATS else v for k, v in per_game.items()}
+    out[MINUTES] = minutes
+    return out
 
 
 def _season_line(player: dict, season: int) -> dict[int, float]:
