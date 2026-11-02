@@ -10,6 +10,10 @@ from both sides. A deal qualifies only if
 Deals are ranked by the smaller of the two gains, weighted by how likely both owners
 are to say yes, so the pick is good for both sides rather than great for one.
 
+Only even trades qualify, 1-for-1 or 2-for-2. A 2-for-1 or 1-for-2 can look good on paper
+for both sides, but real owners rarely make them (scripts/trade_shape_backtest.py), so one
+never headlines the league.
+
 Only fully healthy players change hands: a day-to-day, out or injured-reserve player
 makes a poor headline even when the projections allow for the games he'll miss.
 
@@ -116,8 +120,8 @@ class DailyTrade:
         out = []
         n = len(self.teams)
         for i in range(n):
-            # Every pair of teams is scanned, so the much larger 2-for-2 search stays out for now.
-            for a in self.finders[i].candidates(partners=range(i + 1, n), two_for_two=False):
+            # The headline deal is an even one: uneven trades look good on paper but rarely get done.
+            for a in self.finders[i].candidates(partners=range(i + 1, n), uneven=False):
                 if not all(fully_healthy(p) for p in a.give + a.get):
                     continue
                 j = a.partner_idx

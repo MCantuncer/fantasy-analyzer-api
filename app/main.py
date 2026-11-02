@@ -799,6 +799,10 @@ def create_app(
                 app.state.daily.set(key, pick)
         return pick
 
+    def uneven_pick(pick: schemas.TradeOfTheDay) -> bool:
+        """A 2-for-1 or 1-for-2 pick. Only even trades qualify now, so such a pick is out of date."""
+        return bool(pick.sides) and len({len(s.sends) for s in pick.sides}) > 1
+
     def checked_recently(pick: schemas.TradeOfTheDay) -> bool:
         if not pick.checked_at:
             return False
@@ -855,6 +859,8 @@ def create_app(
         season = body.season or current_season()
         key: TradeKey = (body.league_id, season, credentials_key(creds), today())
         current = await saved_pick(key)
+        if current is not None and uneven_pick(current):
+            current = None  # saved before picks had to be even trades: scan again
         if current is not None:
             # Serve the current pick right away; a stale one is re-checked in the background.
             if not checked_recently(current):
