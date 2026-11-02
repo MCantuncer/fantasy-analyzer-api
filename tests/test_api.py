@@ -152,3 +152,13 @@ def test_current_season():
     assert current_season(datetime(2026, 10, 22)) == 2027
     assert current_season(datetime(2027, 3, 1)) == 2027
     assert current_season(datetime(2027, 8, 1)) == 2028
+
+
+def test_matchup_projection_needs_a_verified_team(client, fake_espn):
+    res = client.post("/api/matchup-projection", json={"league_id": LEAGUE_ID})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["wins"] + body["losses"] == len(body["categories"])
+    assert {c["winner"] for c in body["categories"]} <= {"me", "them"}
+    unverified = signed_in(client.app, team_id=None)
+    assert unverified.post("/api/matchup-projection", json={"league_id": LEAGUE_ID}).status_code == 403

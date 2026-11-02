@@ -484,6 +484,35 @@ class MatchupSide(BaseModel):
     games: WeekGames | None = Field(default=None, description="None when rosters or the NBA calendar are unavailable")
 
 
+class ProjectedCategory(BaseModel):
+    stat: str
+    mine: float = Field(description="Your projected total by the last day of the week (percentages as fractions)")
+    theirs: float
+    winner: Literal["me", "them"] = Field(description="Who is projected to take the category")
+    close: bool = Field(description="Close to a coin flip: could go either way")
+
+
+class BenchedPlayer(BaseModel):
+    id: int
+    name: str
+
+
+class CrowdedDay(BaseModel):
+    date: str = Field(description="ISO date (US)")
+    playing: int = Field(description="Healthy players with a game that day")
+    slots: int = Field(description="Lineup slots")
+    sit: list[BenchedPlayer] = Field(description="Players with a game who don't make the best lineup")
+
+
+class MatchupProjection(BaseModel):
+    opponent_id: int
+    wins: int = Field(description="Categories you're projected to take")
+    losses: int
+    categories: list[ProjectedCategory]
+    my_crowded: list[CrowdedDay] = Field(description="Your days left with more players than slots")
+    their_crowded: list[CrowdedDay]
+
+
 class OverviewMatchup(BaseModel):
     home: MatchupSide
     away: MatchupSide
