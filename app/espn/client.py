@@ -16,8 +16,9 @@ BASE_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/fba"
 
 # Light views for the league feed: names, owners, FAAB and the current scoring period.
 FEED_VIEWS = ["mTeam", "mSettings", "mStatus"]
-# The league-only overview adds this week's category scores.
-OVERVIEW_VIEWS = [*FEED_VIEWS, "mMatchupScore", "mScoreboard"]  # mScoreboard adds per-category scores
+# The league-only overview adds this week's category scores. mScoreboard adds the per-category
+# scores; mLiveScoring adds ``cumulativeScoreLive``, which counts the days ESPN has not banked yet.
+OVERVIEW_VIEWS = [*FEED_VIEWS, "mMatchupScore", "mScoreboard", "mLiveScoring"]
 
 LEAGUE_VIEWS = ["mSettings", "mTeam", "mRoster", "mStandings", "mMatchupScore", "mScoreboard", "mDraftDetail"]
 

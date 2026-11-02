@@ -35,12 +35,26 @@ class CategoryScore:
     result: str  # W, L or T
 
 
+def live_score(side: dict) -> dict:
+    """One matchup side's score as ESPN's own matchup page shows it.
+
+    ``cumulativeScore`` only holds days ESPN has banked, which happens hours after the last game
+    of the day ends, so on a game morning it is a day behind. ``cumulativeScoreLive`` (from the
+    ``mLiveScoring`` view) also counts the days not banked yet. ESPN sends it for the current
+    matchup period only, so other periods fall back to the banked score.
+    """
+    live = side.get("cumulativeScoreLive") or {}
+    if live.get("scoreByStat"):
+        return live
+    return side.get("cumulativeScore") or {}
+
+
 def category_scores(side: dict, stat_ids: list[int]) -> list[CategoryScore]:
     """One matchup side's running total per scoring category, in the league's category order.
 
     Empty when ESPN sent no per-category scores (the ``mScoreboard`` view is needed for them).
     """
-    by_stat = ((side.get("cumulativeScore") or {}).get("scoreByStat")) or {}
+    by_stat = live_score(side).get("scoreByStat") or {}
     out = []
     for sid in stat_ids:
         item = by_stat.get(str(sid))

@@ -12,7 +12,7 @@ from app.espn.parse import IR_SLOT
 from app.main import create_app
 from app.scores import parse_schedule
 from app.store import MemoryStore
-from app.week import category_scores, roster_pro_teams, week_bounds, week_games
+from app.week import category_scores, live_score, roster_pro_teams, week_bounds, week_games
 from tests.conftest import LEAGUE_ID, MY_TEAM, FakeEspn, signed_in
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -85,6 +85,49 @@ def test_category_scores_follow_the_league_order():
     cats = category_scores(side, [19, 0, 11, 20, 6])
     assert [(c.stat, c.value, c.result) for c in cats] == [("FG%", 0.4977, "W"), ("PTS", 562.0, "L"), ("TO", 67.0, "T")]
     assert category_scores({"cumulativeScore": {}}, [0]) == []
+
+
+def test_live_scores_win_over_the_banked_ones():
+    # Real League A numbers on the morning of 2026-11-02: ESPN had not banked Sunday's games yet.
+    side = {
+        "cumulativeScore": {"wins": 1, "losses": 8, "scoreByStat": {"6": {"score": 224.0, "result": "LOSS"}}},
+        "cumulativeScoreLive": {"wins": 0, "losses": 9, "scoreByStat": {"6": {"score": 246.0, "result": "LOSS"}}},
+    }
+    assert live_score(side)["losses"] == 9
+    assert [c.value for c in category_scores(side, [6])] == [246.0]
+    # Past and future periods carry no live score, or an empty one: keep the banked score.
+    banked = {"cumulativeScore": side["cumulativeScore"], "cumulativeScoreLive": {"wins": 0, "scoreByStat": None}}
+    assert live_score(banked)["wins"] == 1
+    assert live_score({"cumulativeScore": side["cumulativeScore"]})["wins"] == 1
+    assert live_score({}) == {}
+
+
+def test_overview_shows_the_live_matchup_score(recorded, schedule_raw):
+    league = json.loads(json.dumps(recorded["league"]))
+    period = league["status"]["currentMatchupPeriod"]
+    m = next(x for x in league["schedule"] if x.get("matchupPeriodId") == period and "away" in x)
+    m["home"]["cumulativeScore"] = {"wins": 1, "losses": 8, "ties": 0, "scoreByStat": {"0": {"score": 525.0}}}
+    m["home"]["cumulativeScoreLive"] = {
+        "wins": 0,
+        "losses": 9,
+        "ties": 0,
+        "scoreByStat": {"0": {"score": 563.0, "result": "LOSS"}},
+    }
+    espn = FakeEspn({**recorded, "league": league}, schedule=schedule_raw)
+    app = create_app(
+        EspnClient(transport=httpx.MockTransport(espn.handler)), store=MemoryStore(), accounts=MemoryAccountStore()
+    )
+    app.state.now = lambda: FRIDAY_NIGHT
+    body = signed_in(app).post("/api/league-overview", json={"league_id": LEAGUE_ID, "season": 2027}).json()
+    home = next(mu["home"] for mu in body["matchups"] if mu["home"]["team_id"] == m["home"]["teamId"])
+    assert (home["wins"], home["losses"]) == (0, 9)
+    assert home["categories"] == [{"stat": "PTS", "value": 563.0, "result": "L"}]
+
+
+def test_overview_asks_espn_for_live_scores():
+    from app.espn.client import OVERVIEW_VIEWS
+
+    assert "mLiveScoring" in OVERVIEW_VIEWS
 
 
 def test_overview_sends_categories_games_and_standings(recorded, schedule_raw):

@@ -78,7 +78,7 @@ from app.social import (
 )
 from app.store import Store, TradeKey, create_store
 from app.timing import Stopwatch
-from app.week import category_scores, roster_pro_teams, week_bounds, week_games
+from app.week import category_scores, live_score, roster_pro_teams, week_bounds, week_games
 
 # httpx logs request lines at INFO; keep its logs quiet so nothing about a request leaks.
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -1249,7 +1249,7 @@ def create_app(
         games = await overview_games(body.league_id, season, creds, now)
 
         def side(m: dict) -> schemas.MatchupSide:
-            score = m.get("cumulativeScore") or {}
+            score = live_score(m)
             team_id = int(m["teamId"])
             return schemas.MatchupSide(
                 team_id=team_id,
