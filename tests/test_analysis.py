@@ -152,3 +152,20 @@ def test_playoff_weeks_count_a_player_back_by_then(league):
     assert season_drop > 0.01
     assert abs(playoff_drop) < 1e-9
     assert all(r.playoff_week_cats is not None for r in a.season())
+
+
+def test_lineup_caches_stay_bounded(league, monkeypatch):
+    """A league-wide trade scan tries huge numbers of rosters; the caches must not keep them all."""
+    import app.analysis.model as model_mod
+
+    rosters = [t.roster[:k] + t.roster[k + 1 :] for t in league.teams for k in range(len(t.roster))]
+    full = CategoryModel(league)
+    expected = [full.dist(r) for r in rosters]
+    assert len(full._fills) > 20 and len(full._dists) > 3  # so the caps below are hit
+    monkeypatch.setattr(model_mod, "FILL_CACHE_SIZE", 20)
+    monkeypatch.setattr(model_mod, "DIST_CACHE_SIZE", 3)
+    small = CategoryModel(league)
+    for r, want in zip(rosters, expected, strict=True):
+        got = small.dist(r)
+        assert np.allclose(got.mu, want.mu) and np.allclose(got.sd, want.sd)
+        assert len(small._fills) <= 20 and len(small._dists) <= 3
