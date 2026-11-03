@@ -49,9 +49,10 @@ class LeagueSummary(BaseModel):
 
 
 class PlayerBadge(BaseModel):
-    kind: Literal["jewel", "keystone", "fresh_signing", "not_for_sale", "on_the_block"] = Field(
+    kind: Literal["jewel", "keystone", "fresh_signing", "hot", "not_for_sale", "on_the_block"] = Field(
         description="jewel: star name. keystone: carries a category for his team. fresh_signing: just traded for "
-        "or picked up. not_for_sale: untouchable. on_the_block: on his owner's ESPN trade block."
+        "or picked up. hot: ESPN ranks him far higher over the last 15 days than before the season. "
+        "not_for_sale: untouchable. on_the_block: on his owner's ESPN trade block."
     )
     category: str | None = Field(default=None, description="The category a keystone carries")
     reason: str
@@ -113,6 +114,56 @@ class TeamBuild(BaseModel):
     expected_cats_won: float
 
 
+FactKind = Literal[
+    "sell_high",
+    "buy_low",
+    "punt_cost",
+    "players_out",
+    "consolidate",
+    "chasing",
+    "roster_squeeze",
+    "keystone_lost",
+    "vs_pickup",
+    "faab",
+    "paper_win",
+    "punt_mine",
+    "punt_theirs",
+    "not_rival",
+]
+
+
+class ReasonFact(BaseModel):
+    """One reason as data, so the page can draw it (bars, chips) instead of printing a sentence."""
+
+    kind: FactKind
+    tone: Literal["for", "against", "note"] = Field(
+        description="for: a reason they say yes; against: a reason they may not; note: context for you"
+    )
+    text: str = Field(description="The same point as a sentence, as in `reasons`")
+    player_id: int | None = None
+    player_name: str | None = None
+    categories: list[str] = Field(default_factory=list)
+    owners_value: float | None = Field(default=None, description="What owners pay for the player, in dollars")
+    our_value: float | None = Field(default=None, description="What he's worth in this league's categories, in dollars")
+    owners_label: str | None = Field(
+        default=None, description='owners_value as owners say it: "$38", "a 4th-round pick"'
+    )
+    our_label: str | None = None
+    count: int | None = None
+    rank: int | None = Field(default=None, description="chasing: their place in the standings")
+    teams: int | None = None
+    playoff_spots: int | None = None
+    ratio: float | None = Field(default=None, description="paper_win: trade value they get over what they send")
+
+
+class PitchNeed(BaseModel):
+    """A category the deal helps them in, as the pitch names it."""
+
+    category: str
+    league_rank: int = Field(description="Their rank in the category now, 1 is best")
+    per_game: float | None = Field(default=None, description="What the deal adds a game, counting stats only")
+
+
 class TradeIdea(BaseModel):
     partner_team_id: int
     partner_team_name: str
@@ -140,6 +191,8 @@ class TradeIdea(BaseModel):
     acceptance_label: Literal["likely", "possible", "long_shot"]
     pitch: str = Field(description="Why the deal helps them, to use when you propose it")
     reasons: list[str] = Field(description="Why it can work for both sides: sell high, buy low, their punts, timing")
+    facts: list[ReasonFact] = Field(default_factory=list, description="`reasons` as data, in the same order")
+    pitch_needs: list[PitchNeed] = Field(default_factory=list, description="`pitch` as data")
     playoff_pct_before: float
     playoff_pct_after: float
     playoff_week_cats_before: float | None = Field(
@@ -259,6 +312,8 @@ class TradeSide(BaseModel):
     acceptance_label: Literal["likely", "possible", "long_shot"]
     pitch: str = Field(description="Why the deal helps this team")
     reasons: list[str]
+    facts: list[ReasonFact] = Field(default_factory=list, description="`reasons` as data, in the same order")
+    pitch_needs: list[PitchNeed] = Field(default_factory=list, description="`pitch` as data")
     playoff_pct_before: float
     playoff_pct_after: float
 
@@ -481,6 +536,35 @@ class MatchupSide(BaseModel):
     ties: int
     categories: list[CategoryScore] = Field(default_factory=list, description="Empty when ESPN sent none")
     games: WeekGames | None = Field(default=None, description="None when rosters or the NBA calendar are unavailable")
+
+
+class ProjectedCategory(BaseModel):
+    stat: str
+    mine: float = Field(description="Your projected total by the last day of the week (percentages as fractions)")
+    theirs: float
+    winner: Literal["me", "them"] = Field(description="Who is projected to take the category")
+    close: bool = Field(description="Close to a coin flip: could go either way")
+
+
+class BenchedPlayer(BaseModel):
+    id: int
+    name: str
+
+
+class CrowdedDay(BaseModel):
+    date: str = Field(description="ISO date (US)")
+    playing: int = Field(description="Healthy players with a game that day")
+    slots: int = Field(description="Lineup slots")
+    sit: list[BenchedPlayer] = Field(description="Players with a game who don't make the best lineup")
+
+
+class MatchupProjection(BaseModel):
+    opponent_id: int
+    wins: int = Field(description="Categories you're projected to take")
+    losses: int
+    categories: list[ProjectedCategory]
+    my_crowded: list[CrowdedDay] = Field(description="Your days left with more players than slots")
+    their_crowded: list[CrowdedDay]
 
 
 class OverviewMatchup(BaseModel):
@@ -825,6 +909,105 @@ class NewsPage(BaseModel):
     trending: list[TrendingPlayer]
     updated_at: str | None = Field(default=None, description="Last time every source was checked, UTC")
     refreshing: bool = Field(description="A check of every source is running; ask again in a minute")
+
+
+class PlayerCardRequest(BaseModel):
+    league_id: int = Field(gt=0)
+    season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")
+    player_id: int = Field(gt=0)
+    core: bool = Field(
+        default=False,
+        description="Only what the card shows first: no news, and names in moves only when already known. "
+        "Fetch /api/player-card/extras alongside for the rest.",
+    )
+
+
+class GameStats(BaseModel):
+    minutes: float
+    pts: float
+    reb: float
+    ast: float
+    stl: float
+    blk: float
+    tpm: float
+    to: float
+    fgm: float
+    fga: float
+    ftm: float
+    fta: float
+
+
+class PlayerGame(BaseModel):
+    game_id: int
+    season: int
+    day: int = Field(description="Scoring period (day of the season)")
+    date: str | None = Field(default=None, description="Tip-off, UTC; none when the calendar lacks the game")
+    opponent: str = Field(description="Opponent's abbreviation; empty when unknown")
+    home: bool | None = None
+    stats: GameStats
+
+
+class PlayerSeasonLine(BaseModel):
+    season: int
+    games: int
+    per_game: GameStats
+    fg_pct: float | None = None
+    ft_pct: float | None = None
+
+
+class PlayerMoveOther(BaseModel):
+    player_id: int
+    name: str
+    kind: Literal["add", "drop", "trade"]
+    to_team_id: int = Field(description="0 = free agency")
+
+
+class PlayerMove(BaseModel):
+    id: str
+    kind: Literal["draft", "add", "drop", "trade"]
+    via: Literal["draft", "waiver", "free_agent", "trade"]
+    at: str = Field(description="When ESPN processed it, UTC")
+    from_team_id: int = Field(description="0 = free agency")
+    to_team_id: int = Field(description="0 = free agency")
+    bid: int | None = Field(default=None, description="FAAB paid on a waiver claim; price in an auction draft")
+    pick: int | None = Field(default=None, description="Overall pick, on a draft")
+    others: list[PlayerMoveOther] = Field(
+        default_factory=list, description="Other players in the same move, e.g. the drop that made room"
+    )
+
+
+class PlayerNews(BaseModel):
+    id: str
+    kind: NewsKind
+    status: Literal["confirmed", "reported", "held", "didnt_happen"]
+    headline: str
+    published_at: str
+    updated_at: str
+    source: str = Field(description="The latest source's name")
+    url: str
+    severity: int = 0
+
+
+class PlayerCard(BaseModel):
+    player_id: int
+    name: str
+    position: str = Field(description="Main position, e.g. PG")
+    pro_team: str = Field(description="NBA team abbreviation; empty for a free agent")
+    injury_status: str = Field(description="ESPN's current status, e.g. ACTIVE, DAY_TO_DAY, OUT")
+    owner_team_id: int | None = Field(default=None, description="Fantasy team in this league; none = free agent")
+    on_waivers: bool = False
+    percent_owned: float
+    season_line: PlayerSeasonLine | None = None
+    games: list[PlayerGame] = Field(description="Latest games he played, newest first; last season's when none yet")
+    news: list[PlayerNews] = Field(description="Recent stories about him, newest first")
+    moves: list[PlayerMove] = Field(description="Every move of him in this league this season, newest first")
+
+
+class PlayerCardExtras(BaseModel):
+    """The slower part of a player card, loaded while the core shows."""
+
+    news: list[PlayerNews] = Field(description="Recent stories about him, newest first")
+    names: dict[int, str] = Field(description="Names of the other players in his moves, by player id")
 
 
 FeedbackRating = Literal["bad", "good"]

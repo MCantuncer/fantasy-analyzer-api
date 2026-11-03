@@ -10,6 +10,10 @@ from both sides. A deal qualifies only if
 Deals are ranked by the smaller of the two gains, weighted by how likely both owners
 are to say yes, so the pick is good for both sides rather than great for one.
 
+Only even trades qualify, 1-for-1 or 2-for-2. A 2-for-1 or 1-for-2 can look good on paper
+for both sides, but real owners rarely make them (scripts/trade_shape_backtest.py), so one
+never headlines the league.
+
 Only fully healthy players change hands: a day-to-day, out or injured-reserve player
 makes a poor headline even when the projections allow for the games he'll miss.
 
@@ -116,7 +120,8 @@ class DailyTrade:
         out = []
         n = len(self.teams)
         for i in range(n):
-            for a in self.finders[i].candidates(partners=range(i + 1, n)):
+            # The headline deal is an even one: uneven trades look good on paper but rarely get done.
+            for a in self.finders[i].candidates(partners=range(i + 1, n), uneven=False):
                 if not all(fully_healthy(p) for p in a.give + a.get):
                     continue
                 j = a.partner_idx
@@ -183,7 +188,8 @@ class DailyTrade:
         gain: float,
         acceptance: float,
         pitch: str,
-        reasons: list[str],
+        facts: list[schemas.ReasonFact],
+        needs: list[schemas.PitchNeed],
         dists: list[Dist],
         before: np.ndarray,
         after: np.ndarray,
@@ -203,7 +209,9 @@ class DailyTrade:
             acceptance=round(acceptance, 2),
             acceptance_label=acceptance_label(acceptance),
             pitch=pitch,
-            reasons=reasons,
+            reasons=[f.text for f in facts],
+            facts=facts,
+            pitch_needs=needs,
             playoff_pct_before=round(float(before[idx]), 3),
             playoff_pct_after=round(float(after[idx]), 3),
         )
@@ -234,11 +242,11 @@ class DailyTrade:
         # A deal's pitch and reasons are written for its partner: ``a`` speaks to team j, ``b`` to team i.
         side_i = self.side(
             pair.i, a.give, a.my_drop, pair.gain_i, b.acceptance,
-            self.finders[pair.j].pitch(b), _story(b.reasons), a.dists, before, after,
+            self.finders[pair.j].pitch(b), _story(b.facts), self.finders[pair.j].pitch_needs(b), a.dists, before, after,
         )  # fmt: skip
         side_j = self.side(
             pair.j, a.get, a.their_drop, pair.gain_j, a.acceptance,
-            self.finders[pair.i].pitch(a), _story(a.reasons), a.dists, before, after,
+            self.finders[pair.i].pitch(a), _story(a.facts), self.finders[pair.i].pitch_needs(a), a.dists, before, after,
         )  # fmt: skip
         sides = [side_i, side_j]
         # Lead with the spotlight team so its owner sees their name first.
@@ -252,9 +260,9 @@ class DailyTrade:
         return base
 
 
-def _story(reasons: list[str]) -> list[str]:
+def _story(facts: list[schemas.ReasonFact]) -> list[schemas.ReasonFact]:
     """Reasons fit for the whole league to read: drop sell-high / buy-low notes that call one side a loser."""
-    return [r for r in reasons if not r.startswith(("Sell high", "Buy low"))]
+    return [f for f in facts if f.kind not in ("sell_high", "buy_low")]
 
 
 def trade_of_the_day(league: League, day: date | None = None, keep_id: str | None = None) -> schemas.TradeOfTheDay:

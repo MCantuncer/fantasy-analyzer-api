@@ -39,6 +39,11 @@ RATIO_OVERDISPERSION = 1.5
 # flat share is raised to keep league-wide totals where they were.
 AVAILABILITY = 0.95
 PHASE_STEP = 0.618034  # spreads players' missed games apart (golden ratio steps)
+# Lineup and roster caches start over once this big. A league-wide trade scan tries
+# hundreds of thousands of rosters, and an unbounded cache outgrew the free server's
+# 512MB. A cleared cache only costs recomputing what's still in use.
+FILL_CACHE_SIZE = 100_000
+DIST_CACHE_SIZE = 20_000
 
 
 def norm_cdf(x: np.ndarray) -> np.ndarray:
@@ -150,6 +155,8 @@ class CategoryModel:
         key = (tuple(sorted(p.id for p in roster)), horizon)
         cached = self._dists.get(key)
         if cached is None:
+            if len(self._dists) >= DIST_CACHE_SIZE:
+                self._dists.clear()
             cached = self._dists[key] = self._compute_dist(roster, horizon)
         return cached
 
@@ -295,6 +302,8 @@ class CategoryModel:
             if seat(i):
                 started.append(i)
         res = tuple(started)
+        if len(self._fills) >= FILL_CACHE_SIZE:
+            self._fills.clear()
         self._fills[masks] = res
         return res
 

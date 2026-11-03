@@ -1874,6 +1874,123 @@
         }
       }
     },
+    "/api/matchup-projection": {
+      "post": {
+        "summary": "Matchup Projection",
+        "description": "Your matchup projected to its last day: who takes each category, and who sits on crowded days.\n\nEach day the best healthy players with a game fill the lineup slots, for both teams.\nNull without the NBA calendar or a matchup this week.",
+        "operationId": "matchup_projection_api_matchup_projection_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeagueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/MatchupProjection"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Matchup Projection Api Matchup Projection Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/league-overview": {
       "post": {
         "summary": "League Overview",
@@ -2416,6 +2533,224 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/player-card/extras": {
+      "post": {
+        "summary": "Player Card Extras",
+        "description": "The part of a player card that may take longer: his news, and the names of who moved with him.",
+        "operationId": "player_card_extras_api_player_card_extras_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlayerCardRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayerCardExtras"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/player-card": {
+      "post": {
+        "summary": "Player Card",
+        "description": "One player at a glance: his latest games, health, news and every move of him in this league.",
+        "operationId": "player_card_api_player_card_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlayerCardRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayerCard"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "description": "Validation Error",
@@ -3130,6 +3465,24 @@
         ],
         "title": "AuthResult"
       },
+      "BenchedPlayer": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "BenchedPlayer"
+      },
       "Beneficiary": {
         "properties": {
           "player_id": {
@@ -3377,6 +3730,41 @@
           "evidence"
         ],
         "title": "CheckVerdict"
+      },
+      "CrowdedDay": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "description": "ISO date (US)"
+          },
+          "playing": {
+            "type": "integer",
+            "title": "Playing",
+            "description": "Healthy players with a game that day"
+          },
+          "slots": {
+            "type": "integer",
+            "title": "Slots",
+            "description": "Lineup slots"
+          },
+          "sit": {
+            "items": {
+              "$ref": "#/components/schemas/BenchedPlayer"
+            },
+            "type": "array",
+            "title": "Sit",
+            "description": "Players with a game who don't make the best lineup"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "playing",
+          "slots",
+          "sit"
+        ],
+        "title": "CrowdedDay"
       },
       "DeletePostRequest": {
         "properties": {
@@ -3838,6 +4226,18 @@
             ],
             "title": "Status"
           },
+          "clock": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clock",
+            "description": "Live games only: \"Q4 2:31\", \"Half\", \"End Q3\", \"OT 0:48\""
+          },
           "away": {
             "$ref": "#/components/schemas/GameSide"
           },
@@ -3993,6 +4393,74 @@
           "name"
         ],
         "title": "GameSide"
+      },
+      "GameStats": {
+        "properties": {
+          "minutes": {
+            "type": "number",
+            "title": "Minutes"
+          },
+          "pts": {
+            "type": "number",
+            "title": "Pts"
+          },
+          "reb": {
+            "type": "number",
+            "title": "Reb"
+          },
+          "ast": {
+            "type": "number",
+            "title": "Ast"
+          },
+          "stl": {
+            "type": "number",
+            "title": "Stl"
+          },
+          "blk": {
+            "type": "number",
+            "title": "Blk"
+          },
+          "tpm": {
+            "type": "number",
+            "title": "Tpm"
+          },
+          "to": {
+            "type": "number",
+            "title": "To"
+          },
+          "fgm": {
+            "type": "number",
+            "title": "Fgm"
+          },
+          "fga": {
+            "type": "number",
+            "title": "Fga"
+          },
+          "ftm": {
+            "type": "number",
+            "title": "Ftm"
+          },
+          "fta": {
+            "type": "number",
+            "title": "Fta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "minutes",
+          "pts",
+          "reb",
+          "ast",
+          "stl",
+          "blk",
+          "tpm",
+          "to",
+          "fgm",
+          "fga",
+          "ftm",
+          "fta"
+        ],
+        "title": "GameStats"
       },
       "GoogleSignIn": {
         "properties": {
@@ -4425,6 +4893,55 @@
           "team_name"
         ],
         "title": "LinkedTeam"
+      },
+      "MatchupProjection": {
+        "properties": {
+          "opponent_id": {
+            "type": "integer",
+            "title": "Opponent Id"
+          },
+          "wins": {
+            "type": "integer",
+            "title": "Wins",
+            "description": "Categories you're projected to take"
+          },
+          "losses": {
+            "type": "integer",
+            "title": "Losses"
+          },
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectedCategory"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "my_crowded": {
+            "items": {
+              "$ref": "#/components/schemas/CrowdedDay"
+            },
+            "type": "array",
+            "title": "My Crowded",
+            "description": "Your days left with more players than slots"
+          },
+          "their_crowded": {
+            "items": {
+              "$ref": "#/components/schemas/CrowdedDay"
+            },
+            "type": "array",
+            "title": "Their Crowded"
+          }
+        },
+        "type": "object",
+        "required": [
+          "opponent_id",
+          "wins",
+          "losses",
+          "categories",
+          "my_crowded",
+          "their_crowded"
+        ],
+        "title": "MatchupProjection"
       },
       "MatchupSide": {
         "properties": {
@@ -5244,6 +5761,38 @@
         ],
         "title": "PickupIdea"
       },
+      "PitchNeed": {
+        "properties": {
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "league_rank": {
+            "type": "integer",
+            "title": "League Rank",
+            "description": "Their rank in the category now, 1 is best"
+          },
+          "per_game": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Game",
+            "description": "What the deal adds a game, counting stats only"
+          }
+        },
+        "type": "object",
+        "required": [
+          "category",
+          "league_rank"
+        ],
+        "title": "PitchNeed",
+        "description": "A category the deal helps them in, as the pitch names it."
+      },
       "PlayerBadge": {
         "properties": {
           "kind": {
@@ -5252,11 +5801,12 @@
               "jewel",
               "keystone",
               "fresh_signing",
+              "hot",
               "not_for_sale",
               "on_the_block"
             ],
             "title": "Kind",
-            "description": "jewel: star name. keystone: carries a category for his team. fresh_signing: just traded for or picked up. not_for_sale: untouchable. on_the_block: on his owner's ESPN trade block."
+            "description": "jewel: star name. keystone: carries a category for his team. fresh_signing: just traded for or picked up. hot: ESPN ranks him far higher over the last 15 days than before the season. not_for_sale: untouchable. on_the_block: on his owner's ESPN trade block."
           },
           "category": {
             "anyOf": [
@@ -5281,6 +5831,412 @@
           "reason"
         ],
         "title": "PlayerBadge"
+      },
+      "PlayerCard": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "position": {
+            "type": "string",
+            "title": "Position",
+            "description": "Main position, e.g. PG"
+          },
+          "pro_team": {
+            "type": "string",
+            "title": "Pro Team",
+            "description": "NBA team abbreviation; empty for a free agent"
+          },
+          "injury_status": {
+            "type": "string",
+            "title": "Injury Status",
+            "description": "ESPN's current status, e.g. ACTIVE, DAY_TO_DAY, OUT"
+          },
+          "owner_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team Id",
+            "description": "Fantasy team in this league; none = free agent"
+          },
+          "on_waivers": {
+            "type": "boolean",
+            "title": "On Waivers",
+            "default": false
+          },
+          "percent_owned": {
+            "type": "number",
+            "title": "Percent Owned"
+          },
+          "season_line": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayerSeasonLine"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerGame"
+            },
+            "type": "array",
+            "title": "Games",
+            "description": "Latest games he played, newest first; last season's when none yet"
+          },
+          "news": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerNews"
+            },
+            "type": "array",
+            "title": "News",
+            "description": "Recent stories about him, newest first"
+          },
+          "moves": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerMove"
+            },
+            "type": "array",
+            "title": "Moves",
+            "description": "Every move of him in this league this season, newest first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "position",
+          "pro_team",
+          "injury_status",
+          "percent_owned",
+          "games",
+          "news",
+          "moves"
+        ],
+        "title": "PlayerCard"
+      },
+      "PlayerCardExtras": {
+        "properties": {
+          "news": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerNews"
+            },
+            "type": "array",
+            "title": "News",
+            "description": "Recent stories about him, newest first"
+          },
+          "names": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Names",
+            "description": "Names of the other players in his moves, by player id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "news",
+          "names"
+        ],
+        "title": "PlayerCardExtras",
+        "description": "The slower part of a player card, loaded while the core shows."
+      },
+      "PlayerCardRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "player_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Player Id"
+          },
+          "core": {
+            "type": "boolean",
+            "title": "Core",
+            "description": "Only what the card shows first: no news, and names in moves only when already known. Fetch /api/player-card/extras alongside for the rest.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "player_id"
+        ],
+        "title": "PlayerCardRequest"
+      },
+      "PlayerGame": {
+        "properties": {
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day",
+            "description": "Scoring period (day of the season)"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date",
+            "description": "Tip-off, UTC; none when the calendar lacks the game"
+          },
+          "opponent": {
+            "type": "string",
+            "title": "Opponent",
+            "description": "Opponent's abbreviation; empty when unknown"
+          },
+          "home": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Home"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/GameStats"
+          }
+        },
+        "type": "object",
+        "required": [
+          "game_id",
+          "season",
+          "day",
+          "opponent",
+          "stats"
+        ],
+        "title": "PlayerGame"
+      },
+      "PlayerMove": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "add",
+              "drop",
+              "trade"
+            ],
+            "title": "Kind"
+          },
+          "via": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "waiver",
+              "free_agent",
+              "trade"
+            ],
+            "title": "Via"
+          },
+          "at": {
+            "type": "string",
+            "title": "At",
+            "description": "When ESPN processed it, UTC"
+          },
+          "from_team_id": {
+            "type": "integer",
+            "title": "From Team Id",
+            "description": "0 = free agency"
+          },
+          "to_team_id": {
+            "type": "integer",
+            "title": "To Team Id",
+            "description": "0 = free agency"
+          },
+          "bid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bid",
+            "description": "FAAB paid on a waiver claim; price in an auction draft"
+          },
+          "pick": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pick",
+            "description": "Overall pick, on a draft"
+          },
+          "others": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerMoveOther"
+            },
+            "type": "array",
+            "title": "Others",
+            "description": "Other players in the same move, e.g. the drop that made room"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "via",
+          "at",
+          "from_team_id",
+          "to_team_id"
+        ],
+        "title": "PlayerMove"
+      },
+      "PlayerMoveOther": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "add",
+              "drop",
+              "trade"
+            ],
+            "title": "Kind"
+          },
+          "to_team_id": {
+            "type": "integer",
+            "title": "To Team Id",
+            "description": "0 = free agency"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "kind",
+          "to_team_id"
+        ],
+        "title": "PlayerMoveOther"
+      },
+      "PlayerNews": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "injury",
+              "return",
+              "trade",
+              "rumor",
+              "signing",
+              "waive",
+              "role",
+              "other"
+            ],
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "reported",
+              "held",
+              "didnt_happen"
+            ],
+            "title": "Status"
+          },
+          "headline": {
+            "type": "string",
+            "title": "Headline"
+          },
+          "published_at": {
+            "type": "string",
+            "title": "Published At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "The latest source's name"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "severity": {
+            "type": "integer",
+            "title": "Severity",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "headline",
+          "published_at",
+          "updated_at",
+          "source",
+          "url"
+        ],
+        "title": "PlayerNews"
       },
       "PlayerRef": {
         "properties": {
@@ -5410,6 +6366,50 @@
         ],
         "title": "PlayerRef"
       },
+      "PlayerSeasonLine": {
+        "properties": {
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games"
+          },
+          "per_game": {
+            "$ref": "#/components/schemas/GameStats"
+          },
+          "fg_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fg Pct"
+          },
+          "ft_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ft Pct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "season",
+          "games",
+          "per_game"
+        ],
+        "title": "PlayerSeasonLine"
+      },
       "PollTally": {
         "properties": {
           "yes": {
@@ -5471,6 +6471,46 @@
           "body"
         ],
         "title": "PostRequest"
+      },
+      "ProjectedCategory": {
+        "properties": {
+          "stat": {
+            "type": "string",
+            "title": "Stat"
+          },
+          "mine": {
+            "type": "number",
+            "title": "Mine",
+            "description": "Your projected total by the last day of the week (percentages as fractions)"
+          },
+          "theirs": {
+            "type": "number",
+            "title": "Theirs"
+          },
+          "winner": {
+            "type": "string",
+            "enum": [
+              "me",
+              "them"
+            ],
+            "title": "Winner",
+            "description": "Who is projected to take the category"
+          },
+          "close": {
+            "type": "boolean",
+            "title": "Close",
+            "description": "Close to a coin flip: could go either way"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stat",
+          "mine",
+          "theirs",
+          "winner",
+          "close"
+        ],
+        "title": "ProjectedCategory"
       },
       "ReactRequest": {
         "properties": {
@@ -5552,6 +6592,186 @@
           "reactions"
         ],
         "title": "ReactionsOut"
+      },
+      "ReasonFact": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sell_high",
+              "buy_low",
+              "punt_cost",
+              "players_out",
+              "consolidate",
+              "chasing",
+              "roster_squeeze",
+              "keystone_lost",
+              "vs_pickup",
+              "faab",
+              "paper_win",
+              "punt_mine",
+              "punt_theirs",
+              "not_rival"
+            ],
+            "title": "Kind"
+          },
+          "tone": {
+            "type": "string",
+            "enum": [
+              "for",
+              "against",
+              "note"
+            ],
+            "title": "Tone",
+            "description": "for: a reason they say yes; against: a reason they may not; note: context for you"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The same point as a sentence, as in `reasons`"
+          },
+          "player_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Id"
+          },
+          "player_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Name"
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "owners_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owners Value",
+            "description": "What owners pay for the player, in dollars"
+          },
+          "our_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Our Value",
+            "description": "What he's worth in this league's categories, in dollars"
+          },
+          "owners_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owners Label",
+            "description": "owners_value as owners say it: \"$38\", \"a 4th-round pick\""
+          },
+          "our_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Our Label"
+          },
+          "count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank",
+            "description": "chasing: their place in the standings"
+          },
+          "teams": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teams"
+          },
+          "playoff_spots": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Spots"
+          },
+          "ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio",
+            "description": "paper_win: trade value they get over what they send"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "tone",
+          "text"
+        ],
+        "title": "ReasonFact",
+        "description": "One reason as data, so the page can draw it (bars, chips) instead of printing a sentence."
       },
       "RepliesPage": {
         "properties": {
@@ -5947,6 +7167,22 @@
             "type": "array",
             "title": "Reasons",
             "description": "Why it can work for both sides: sell high, buy low, their punts, timing"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonFact"
+            },
+            "type": "array",
+            "title": "Facts",
+            "description": "`reasons` as data, in the same order"
+          },
+          "pitch_needs": {
+            "items": {
+              "$ref": "#/components/schemas/PitchNeed"
+            },
+            "type": "array",
+            "title": "Pitch Needs",
+            "description": "`pitch` as data"
           },
           "playoff_pct_before": {
             "type": "number",
@@ -6484,6 +7720,22 @@
             "type": "array",
             "title": "Reasons",
             "description": "Why it can work for both sides: sell high, buy low, their punts, timing"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonFact"
+            },
+            "type": "array",
+            "title": "Facts",
+            "description": "`reasons` as data, in the same order"
+          },
+          "pitch_needs": {
+            "items": {
+              "$ref": "#/components/schemas/PitchNeed"
+            },
+            "type": "array",
+            "title": "Pitch Needs",
+            "description": "`pitch` as data"
           },
           "playoff_pct_before": {
             "type": "number",
@@ -7320,6 +8572,22 @@
             "title": "Reasons",
             "description": "Why it can work for both sides: sell high, buy low, their punts, timing"
           },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonFact"
+            },
+            "type": "array",
+            "title": "Facts",
+            "description": "`reasons` as data, in the same order"
+          },
+          "pitch_needs": {
+            "items": {
+              "$ref": "#/components/schemas/PitchNeed"
+            },
+            "type": "array",
+            "title": "Pitch Needs",
+            "description": "`pitch` as data"
+          },
           "playoff_pct_before": {
             "type": "number",
             "title": "Playoff Pct Before"
@@ -7786,6 +9054,22 @@
             },
             "type": "array",
             "title": "Reasons"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonFact"
+            },
+            "type": "array",
+            "title": "Facts",
+            "description": "`reasons` as data, in the same order"
+          },
+          "pitch_needs": {
+            "items": {
+              "$ref": "#/components/schemas/PitchNeed"
+            },
+            "type": "array",
+            "title": "Pitch Needs",
+            "description": "`pitch` as data"
           },
           "playoff_pct_before": {
             "type": "number",

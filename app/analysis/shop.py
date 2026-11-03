@@ -215,10 +215,12 @@ class ShopAnalyzer(Analyzer):
                 continue
             idea = self.trade_idea(self.finder, d, before, after, base_cats)
             if d.faab:
-                idea.reasons.append(
+                text = (
                     f"You add ${d.faab} FAAB of your ${self.faab_left}. It never comes back, "
                     "so send it only with the trade itself."
                 )
+                idea.reasons.append(text)
+                idea.facts.append(schemas.ReasonFact(kind="faab", tone="note", text=text, count=d.faab))
             shown.append(
                 schemas.ShopDeal(
                     **idea.model_dump(),

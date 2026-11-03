@@ -14,7 +14,7 @@ import time
 from collections import defaultdict, deque
 from datetime import UTC, date, datetime, timedelta
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -42,13 +42,14 @@ from app.analysis.durability import HISTORY_SEASONS, games_played, long_absences
 from app.analysis.durability import attach as attach_durability
 from app.analysis.injury import LAST_SEASON_WEIGHT, Season, parse_gamelogs
 from app.analysis.injury import analyze as analyze_absence
+from app.analysis.projection import project_matchup
 from app.analysis.report import Analyzer, league_summary
 from app.analysis.shop import ShopAnalyzer, ShopError
 from app.analysis.target import TargetAnalyzer, TargetError
 from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
 from app.espn.parse import League, parse_league
-from app.feed import PlayerName, Transaction, parse_players, parse_transactions
+from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.gameclock import apply_clocks, fetch_clocks
 from app.news.extract import timeline
@@ -59,6 +60,8 @@ from app.news.service import iso as news_iso
 from app.news.sources import BY_ID as NEWS_SOURCES
 from app.news.sources import SOURCES as NEWS_SOURCE_LIST
 from app.news.verify import FACT_SOURCE, describe_fact
+from app.playercard import Card as ParsedCard
+from app.playercard import parse_card
 from app.reader import DEEP_BATCH_MAX, DeepReader, NoteReader, Reading, create_deep_reader, create_reader
 from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
 from app.scores import build_day, needs_stats, parse_schedule, settled, week_fixtures
@@ -75,7 +78,8 @@ from app.social import (
     valid_reaction,
 )
 from app.store import Store, TradeKey, create_store
-from app.week import category_scores, roster_pro_teams, week_bounds, week_games
+from app.timing import Stopwatch
+from app.week import category_scores, live_score, roster_pro_teams, week_bounds, week_games
 
 # httpx logs request lines at INFO; keep its logs quiet so nothing about a request leaks.
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -113,6 +117,10 @@ IMPACT_TRACK_RECORD = (
 )
 # While a game is on, one ESPN call a minute serves every visitor.
 LIVE_SCORES_TTL = 60.0
+PLAYER_CARD_TTL = 300.0  # a card a few people open in a row is one ESPN call; box scores land after games
+CARD_NEWS_TTL = 60.0  # player cards share one build of the news stories
+CARD_GAMES = 10
+CARD_NEWS = 5
 # How long a finished analysis job stays around for its last poll (the report itself is cached).
 ANALYSIS_JOB_KEEP = 120.0
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
@@ -216,6 +224,8 @@ def create_app(
     app.state.now = lambda: datetime.now(UTC)
     app.state.gamelogs = TTLCache(GAMELOG_TTL, max_items=64)
     app.state.past_gamelogs = TTLCache(PAST_GAMELOG_TTL, max_items=64)
+    app.state.cards = TTLCache(PLAYER_CARD_TTL, max_items=2048)
+    app.state.card_stories = TTLCache(CARD_NEWS_TTL, max_items=4)
     app.state.news = NewsService(app.state.espn, app.state.store, transport=news_transport)
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
@@ -339,17 +349,22 @@ def create_app(
             cache.set(key, raw)
         return raw
 
-    async def load_league(league_id: int, season: int, creds: EspnCredentials | None, with_fa: bool) -> League:
-        key = (league_id, season, credentials_key(creds), with_fa)
+    async def load_league(
+        league_id: int, season: int, creds: EspnCredentials | None, with_fa: bool, with_calendar: bool = False
+    ) -> League:
+        """The league, parsed. ``with_fa`` adds free agents and everything the analysis needs;
+        ``with_calendar`` only the NBA calendar, durability and absences, for projections."""
+        full = with_fa or with_calendar
+        key = (league_id, season, credentials_key(creds), with_fa, full)
         league = app.state.leagues.get(key)
         if league is None:
             raw = await app.state.espn.league(season, league_id, creds)
             fas = await app.state.espn.free_agents(season, league_id, creds) if with_fa else []
-            schedule = await pro_schedule(season) if with_fa else None
+            schedule = await pro_schedule(season) if full else None
             snake = ((raw.get("settings") or {}).get("draftSettings") or {}).get("type") != "AUCTION"
             adp = await market_adp(season) if with_fa and snake else None
             league = parse_league(raw, fas, schedule, adp)
-            if with_fa:
+            if full:
                 past = await past_games(season)
                 attach_durability(league, past, await past_absences(league, past) if past else None)
                 await attach_absences(league)
@@ -790,6 +805,10 @@ def create_app(
                 app.state.daily.set(key, pick)
         return pick
 
+    def uneven_pick(pick: schemas.TradeOfTheDay) -> bool:
+        """A 2-for-1 or 1-for-2 pick. Only even trades qualify now, so such a pick is out of date."""
+        return bool(pick.sides) and len({len(s.sends) for s in pick.sides}) > 1
+
     def checked_recently(pick: schemas.TradeOfTheDay) -> bool:
         if not pick.checked_at:
             return False
@@ -846,6 +865,8 @@ def create_app(
         season = body.season or current_season()
         key: TradeKey = (body.league_id, season, credentials_key(creds), today())
         current = await saved_pick(key)
+        if current is not None and uneven_pick(current):
+            current = None  # saved before picks had to be even trades: scan again
         if current is not None:
             # Serve the current pick right away; a stale one is re-checked in the background.
             if not checked_recently(current):
@@ -1187,6 +1208,53 @@ def create_app(
         return out
 
     @app.post(
+        "/api/matchup-projection",
+        response_model=schemas.MatchupProjection | None,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def matchup_projection(
+        body: schemas.LeagueRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.MatchupProjection | None:
+        """Your matchup projected to its last day: who takes each category, and who sits on crowded days.
+
+        Each day the best healthy players with a game fill the lineup slots, for both teams.
+        Null without the NBA calendar or a matchup this week.
+        """
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        seat = await linked(authorization, body.league_id, season, required=True)
+        league = await load_league(body.league_id, season, creds, with_fa=False, with_calendar=True)
+        proj = await run_in_threadpool(project_matchup, league, seat.team_id)
+        if proj is None:
+            return None
+
+        def days(rows: list) -> list[schemas.CrowdedDay]:
+            return [
+                schemas.CrowdedDay(
+                    date=d.date,
+                    playing=d.playing,
+                    slots=d.slots,
+                    sit=[schemas.BenchedPlayer(id=pid, name=name) for pid, name in d.sit],
+                )
+                for d in rows
+            ]
+
+        return schemas.MatchupProjection(
+            opponent_id=proj.opponent_id,
+            wins=proj.wins,
+            losses=proj.losses,
+            categories=[
+                schemas.ProjectedCategory(stat=c.stat, mine=c.mine, theirs=c.theirs, winner=c.winner, close=c.close)
+                for c in proj.categories
+            ],
+            my_crowded=days(proj.my_crowded),
+            their_crowded=days(proj.their_crowded),
+        )
+
+    @app.post(
         "/api/league-overview", response_model=schemas.LeagueOverview, responses={401: {"model": schemas.ErrorBody}}
     )
     async def league_overview(
@@ -1240,7 +1308,7 @@ def create_app(
         games = await overview_games(body.league_id, season, creds, now)
 
         def side(m: dict) -> schemas.MatchupSide:
-            score = m.get("cumulativeScore") or {}
+            score = live_score(m)
             team_id = int(m["teamId"])
             return schemas.MatchupSide(
                 team_id=team_id,
@@ -1671,6 +1739,203 @@ def create_app(
             trending=trending,
             updated_at=news_iso(last) if last else None,
             refreshing=refreshing,
+        )
+
+    card_loads: dict[tuple, asyncio.Future] = {}
+
+    async def card_entry(league_id: int, season: int, player_id: int, creds: EspnCredentials | None) -> dict:
+        """ESPN's card for him, cached; the core and the extras asking at once share one call."""
+        key = (league_id, season, credentials_key(creds), player_id)
+        entry = app.state.cards.get(key)
+        if entry is not None:
+            return entry
+        pending = card_loads.get(key)
+        if pending is None:
+            pending = asyncio.ensure_future(
+                app.state.espn.player_card(season, league_id, player_id, creds, games=CARD_GAMES)
+            )
+            card_loads[key] = pending
+            pending.add_done_callback(lambda _: card_loads.pop(key, None))
+        entry = await asyncio.shield(pending)
+        if entry is None:
+            raise HTTPException(404, detail={"code": "no_player", "message": "No such NBA player."})
+        app.state.cards.set(key, entry)
+        return entry
+
+    async def load_card(
+        league_id: int, season: int, player_id: int, creds: EspnCredentials | None
+    ) -> tuple[ParsedCard, dict[int, str]]:
+        """His card and the NBA teams' abbreviations by id."""
+        # The player and both calendars in parallel: each is its own ESPN call, and in a row
+        # they were most of the wait. Last season's calendar is for a player yet to play.
+        entry, raw_now, raw_last = await asyncio.gather(
+            card_entry(league_id, season, player_id, creds), pro_schedule(season), pro_schedule(season - 1)
+        )
+        schedules = {}
+        if raw_now:
+            schedules[season] = parse_schedule(raw_now)
+        played = {int(st.get("seasonId") or 0) for st in (entry.get("player") or {}).get("stats") or []}
+        if season - 1 in played and raw_last:
+            schedules[season - 1] = parse_schedule(raw_last)
+        teams = {tid: abbrev for sched in schedules.values() for tid, (abbrev, _) in sched.teams.items()}
+        return parse_card(entry, season, schedules), teams
+
+    async def card_news(season: int, player_id: int, teams: dict[int, str]) -> list[schemas.PlayerNews]:
+        # Every card reads the same news; build it once a minute, not once a card.
+        stories = app.state.card_stories.get((season,))
+        if stories is None:
+            service: NewsService = app.state.news
+            stories = await run_in_threadpool(service.stories, teams, app.state.now())
+            app.state.card_stories.set((season,), stories)
+        mine = [s for s in stories if player_id in s.player_ids and s.status != "held"]
+        mine.sort(key=lambda s: s.updated, reverse=True)
+
+        def row(s) -> schemas.PlayerNews:
+            item = s.items[-1]
+            src = NEWS_SOURCES.get(item.source_id)
+            fact = item.source_id == FACT_SOURCE
+            return schemas.PlayerNews(
+                id=s.id,
+                kind=s.kind,
+                status=s.status,
+                headline=s.headline,
+                published_at=news_iso(s.published),
+                updated_at=news_iso(s.updated),
+                source="ESPN" if fact else (src.name if src else item.source_id),
+                url=f"https://www.espn.com/nba/player/_/id/{player_id}" if fact else item.url,
+                severity=s.severity,
+            )
+
+        return [row(s) for s in mine[:CARD_NEWS]]
+
+    async def move_names(
+        league_id: int, season: int, ids: set[int], creds: EspnCredentials | None
+    ) -> dict[int, PlayerName]:
+        try:
+            return await player_names(league_id, season, ids, creds) if ids else {}
+        except EspnError:
+            return {}  # the card still shows his own moves
+
+    def card_ms(at: int) -> str:
+        return iso(datetime.fromtimestamp(at / 1000, UTC))
+
+    @app.post(
+        "/api/player-card/extras",
+        response_model=schemas.PlayerCardExtras,
+        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+    )
+    async def player_card_extras(
+        body: schemas.PlayerCardRequest,
+        response: Response,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.PlayerCardExtras:
+        """The part of a player card that may take longer: his news, and the names of who moved with him."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        timer = Stopwatch()
+        card, teams = await load_card(body.league_id, season, body.player_id, creds)
+        timer.mark("espn")
+        other_ids = {pid for m in card.moves for pid, _, _ in m.others}
+        news, names = await asyncio.gather(
+            card_news(season, body.player_id, teams), move_names(body.league_id, season, other_ids, creds)
+        )
+        timer.mark("rest")
+        response.headers["Server-Timing"] = timer.header()
+        return schemas.PlayerCardExtras(news=news, names={pid: p.name for pid, p in names.items()})
+
+    @app.post(
+        "/api/player-card",
+        response_model=schemas.PlayerCard,
+        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+    )
+    async def player_card(
+        body: schemas.PlayerCardRequest,
+        response: Response,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.PlayerCard:
+        """One player at a glance: his latest games, health, news and every move of him in this league."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        timer = Stopwatch()
+        card, teams = await load_card(body.league_id, season, body.player_id, creds)
+        timer.mark("espn")
+
+        # This season's games; last season's only until he plays one.
+        games = [g for g in card.games if g.season == season] or [g for g in card.games if g.season == season - 1]
+        other_ids = {pid for m in card.moves for pid, _, _ in m.others}
+        if body.core:
+            # The card shows now; news and any names not yet known come from /extras alongside.
+            others = {pid: p for pid in other_ids if (p := app.state.players.get((season, pid))) is not None}
+            mine: list = []
+        else:
+            mine, others = await asyncio.gather(
+                card_news(season, body.player_id, teams), move_names(body.league_id, season, other_ids, creds)
+            )
+        timer.mark("rest")
+        response.headers["Server-Timing"] = timer.header()
+        logging.getLogger(__name__).info("player card %s: %s", body.player_id, response.headers["Server-Timing"])
+
+        def stats(d: dict[str, float]) -> schemas.GameStats:
+            return schemas.GameStats(**{k: round(v, 1) for k, v in d.items()})
+
+        line = card.season_line
+        return schemas.PlayerCard(
+            player_id=card.id,
+            name=card.name,
+            position=DEFAULT_POSITIONS.get(card.position_id, ""),
+            pro_team=teams.get(card.pro_team_id, ""),
+            injury_status=card.injury_status,
+            owner_team_id=card.on_team_id or None,
+            on_waivers=card.status == "WAIVERS",
+            percent_owned=card.percent_owned,
+            season_line=schemas.PlayerSeasonLine(
+                season=line.season,
+                games=line.games,
+                per_game=stats(line.per_game),
+                fg_pct=round(line.fg_pct, 3) if line.fg_pct is not None else None,
+                ft_pct=round(line.ft_pct, 3) if line.ft_pct is not None else None,
+            )
+            if line
+            else None,
+            games=[
+                schemas.PlayerGame(
+                    game_id=g.game_id,
+                    season=g.season,
+                    day=g.day,
+                    date=card_ms(g.start_ms) if g.start_ms else None,
+                    opponent=teams.get(g.opponent_id, ""),
+                    home=g.home,
+                    stats=stats(g.stats),
+                )
+                for g in games[:CARD_GAMES]
+            ],
+            news=mine,
+            moves=[
+                schemas.PlayerMove(
+                    id=m.id,
+                    kind=m.kind,
+                    via=m.via,
+                    at=card_ms(m.at_ms),
+                    from_team_id=m.from_team_id,
+                    to_team_id=m.to_team_id,
+                    bid=m.bid,
+                    pick=m.pick,
+                    others=[
+                        schemas.PlayerMoveOther(
+                            player_id=pid, name=others[pid].name if pid in others else "", kind=kind, to_team_id=to
+                        )
+                        for pid, kind, to in m.others
+                    ],
+                )
+                for m in card.moves
+                if m.at_ms
+            ],
         )
 
     def feedback_out(f: Feedback) -> schemas.TradeFeedback:

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -8,7 +9,7 @@ from fastapi.testclient import TestClient
 from app.accounts import MemoryAccountStore
 from app.espn.client import EspnClient
 from app.main import create_app
-from app.news import facts
+from app.news import facts, sources
 from app.news.extract import NameIndex, body_part, kind_of, newsworthy, severity, tag
 from app.news.sources import parse_espn, parse_rss
 from app.news.verify import Item, build_stories
@@ -346,3 +347,15 @@ def test_refresh_ping_needs_no_sign_in_and_runs_at_most_every_15_minutes(recorde
     calls = fake_espn.calls
     client.get("/api/news/refresh")
     assert fake_espn.calls == calls
+
+
+def test_espn_gets_a_user_agent_without_a_link():
+    # ESPN's site API answers 403 to a user agent that carries a link.
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.url.host] = request.headers["user-agent"]
+        return httpx.Response(200, json={"articles": []})
+
+    asyncio.run(sources.fetch(sources.BY_ID["espn"], httpx.MockTransport(handler)))
+    assert "http" not in seen["site.api.espn.com"]

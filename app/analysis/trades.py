@@ -19,19 +19,25 @@ trade: you could cut your weakest player for him today. So such a deal is measur
 against your roster after that free pickup, not against today's roster, and the trade
 gets credit only for what it adds on top.
 
+Trade shapes: 1-for-1, 2-for-2, 2-for-1 and 1-for-2. Real offers show owners treat
+them differently at the same value (scripts/trade_shape_backtest.py): a 2-for-2 is a
+normal trade, while a 2-for-1 that makes the other owner cut someone to fit two players
+rarely gets accepted, however good it looks on paper.
+
 Each surviving deal gets an acceptance estimate and a list of reasons to use when
 pitching it. Deals are ranked by playoff-odds gain weighted by that estimate.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Literal
 
 import numpy as np
 
+from app import schemas
 from app.analysis.badges import OwnerPremium, best_pickup
 from app.analysis.model import CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
@@ -45,6 +51,11 @@ MAX_VALUE_RATIO = 1.4  # never overpay by more than this on paper
 SHORTLIST = 14
 MAX_PER_TARGET = 2
 MAX_PER_PARTNER = 4
+# Uneven trades (2-for-1, 1-for-2) are only a small part of any list: they look good on paper
+# but rarely get done. Even trades (1-for-1, 2-for-2) fill the rest. When there aren't enough
+# even ones the list is shorter, not padded with uneven ones. A display rule only: it never
+# changes a deal's odds or gains.
+MAX_UNEVEN_SHARE = 0.2
 
 PUNT_WIN = 0.3  # a category an owner wins less often than this is treated as punted
 MISPRICED = 5.0  # dollars between owner value and our projection that count as sell-high / buy-low
@@ -81,6 +92,13 @@ VISION_SLOW_GAP = 1.0  # projected value above his season so far (z-scores summe
 VISION_MIN_PLAYOFF_GAIN = 0.10  # expected categories won per playoff week
 VISION_MIN_SEASON_GAIN = -0.15  # what the deal may cost before the playoffs, per week on average
 
+# Odds of acceptance against a 1-for-1 of the same value for the other owner, keyed by
+# (players I send, players I get). Fitted on 3,392 real offers in 15 category leagues
+# (scripts/trade_shape_backtest.py, every league weighted the same, 90% intervals from
+# resampling leagues): 2-for-2 x0.63 (0.47-0.84), 2-for-1 x0.40 (0.26-0.77). A 1-for-2 came
+# out at x1.26 (0.72-2.28): no clear difference from a 1-for-1, so it keeps the 1-for-1 odds.
+SHAPE_ODDS = {(2, 2): 0.63, (2, 1): 0.40}
+
 LIKELY, POSSIBLE = 0.6, 0.4
 
 Mode = Literal["fair", "edge", "vision"]
@@ -101,6 +119,7 @@ class Deal:
     dists: list[Dist]
     reasons: list[str]
     rival: bool = False
+    facts: list[schemas.ReasonFact] = field(default_factory=list)  # ``reasons`` as data, same order
     rosters: dict[int, list[Player]] = field(default_factory=dict)  # team index -> roster after the deal
     my_add: Player | None = None  # free agent I pick up for the spot a 2-for-1 opens
     faab: int = 0  # FAAB dollars I send with the players
@@ -137,6 +156,28 @@ def acceptance_odds(ratio: float, their_gain: float, struggling: bool = False) -
     return float(np.clip(p, 0.05, 0.9))
 
 
+def mix_shapes[T](ranked: list[T], n: int, uneven: Callable[[T], bool]) -> list[T]:
+    """The first ``n`` of ``ranked``, in rank order, with at most MAX_UNEVEN_SHARE of ``n`` uneven."""
+    cap = max(1, round(n * MAX_UNEVEN_SHARE))
+    out: list[T] = []
+    used = 0
+    for item in ranked:
+        if uneven(item):
+            if used == cap:
+                continue
+            used += 1
+        out.append(item)
+        if len(out) == n:
+            break
+    return out
+
+
+def shape_odds(p: float, n_give: int, n_get: int) -> float:
+    """Acceptance ``p`` adjusted for the trade's shape, on the odds scale."""
+    k = SHAPE_ODDS.get((n_give, n_get), 1.0)
+    return float(np.clip(p * k / (1 - p + p * k), 0.05, 0.9))
+
+
 def acceptance_label(p: float) -> str:
     return "likely" if p >= LIKELY else "possible" if p >= POSSIBLE else "long_shot"
 
@@ -163,6 +204,7 @@ class TradeFinder:
         self.base = [model.strength(i, self.dists) for i in range(len(self.teams))]
         self.base_cats = [self._avg_win(i, self.dists) for i in range(len(self.teams))]
         self.punts = [cats < PUNT_WIN for cats in self.base_cats]
+        self.standing: dict[int, int] = {}  # team index -> place in the standings, once games are played
         self.struggling = self._outside_playoffs()
         self.filler = best_pickup(league, model)
         self.free_move, self.free_roster, self.free_base = self._free_move()
@@ -175,6 +217,8 @@ class TradeFinder:
             self.playoff_strength({self.me_idx: self.free_roster}) if mode == "vision" and self.free_roster else None
         )
         self.rivals = self._rivals()
+        self._their_free: dict[int, np.ndarray] = {}  # team index -> category win rates after its free pickup
+        self._gains: dict[tuple[int, int, int], float] = {}  # (partner, mine, theirs) -> my gain from that 1-for-1
         # Our projection in dollars: a player's model-value rank priced on ESPN's rank curve.
         pool = [p for t in self.teams for p in t.roster] + list(league.free_agents)
         by_model = sorted(pool, key=model.value, reverse=True)
@@ -229,6 +273,7 @@ class TradeFinder:
         if not any(t.wins + t.losses + t.ties for t in self.teams):
             return set()
         order = sorted(range(len(self.teams)), key=lambda i: pct(self.teams[i]), reverse=True)
+        self.standing = {i: r for r, i in enumerate(order, 1)}
         return set(order[self.league.playoff_teams :])
 
     def _rivals(self) -> set[int]:
@@ -246,10 +291,30 @@ class TradeFinder:
         pos = order.index(self.me_idx)
         return {i for k, i in enumerate(order) if i != self.me_idx and abs(k - pos) <= RIVAL_SPOTS}
 
-    def fit_gain(self, j: int, dists: list[Dist]) -> float:
+    def fit_gain(self, j: int, dists: list[Dist], baseline: np.ndarray | None = None) -> float:
         """Change in team j's expected categories won, ignoring the categories it punts."""
-        change = self._avg_win(j, dists) - self.base_cats[j]
+        change = self._avg_win(j, dists) - (self.base_cats[j] if baseline is None else baseline)
         return float(change[~self.punts[j]].sum())
+
+    def their_free_cats(self, j: int) -> np.ndarray:
+        """Team j's category win rates after the best pickup it can make without a trade.
+
+        The same free agent fills the spot a 1-for-2 opens on their roster, so a deal gets
+        credit only for what it adds on top of that pickup, as it does on my side.
+        """
+        if j not in self._their_free:
+            best = self.base_cats[j]
+            if self.filler is not None:
+                roster = self.teams[j].roster
+                top = self.base[j]
+                for drop in droppable(roster):
+                    dists = list(self.dists)
+                    dists[j] = self.model.dist([p for p in roster if p.id != drop.id] + [self.filler])
+                    strength = self.model.strength(j, dists)
+                    if strength > top:
+                        top, best = strength, self._avg_win(j, dists)
+            self._their_free[j] = best
+        return self._their_free[j]
 
     def _worst(self, roster: list[Player], protected: set[int]) -> Player | None:
         """The player an owner would cut to make room: the least valuable droppable one.
@@ -324,11 +389,14 @@ class TradeFinder:
         vs_pickup = self.free_move if my_add is not None and self.free_move is not None else None
         baseline = self.free_base if vs_pickup is not None else self.base[self.me_idx]
         my_gain = self.model.strength(self.me_idx, dists) - baseline
+        if len(give) == len(get) == 1:
+            self._gains[(j, give[0].id, get[0].id)] = my_gain  # what a 2-for-2 containing it must beat
         if vision and min_my_gain == MIN_MY_GAIN:
             min_my_gain = VISION_MIN_SEASON_GAIN
         if my_gain < min_my_gain:
             return None
-        their_gain = self.fit_gain(j, dists)
+        # When the deal's open spot on their side takes the free agent, compare with just making that pickup.
+        their_gain = self.fit_gain(j, dists, self.their_free_cats(j) if len(get) > len(give) else None)
         edge = self.mode == "edge"
         if min_their_gain is None:
             min_their_gain = EDGE_MIN_THEIR_GAIN if edge else MIN_THEIR_GAIN
@@ -347,21 +415,44 @@ class TradeFinder:
             if playoff_gain < VISION_MIN_PLAYOFF_GAIN:
                 return None
         struggling = j in self.struggling
-        reasons = self._reasons(j, give, get, dists, struggling)
-        acceptance = acceptance_odds(ratio, their_gain, struggling)
+        facts = self._reasons(j, give, get, dists, struggling)
+        acceptance = shape_odds(acceptance_odds(ratio, their_gain, struggling), len(give), len(get))
+        if len(give) > len(get):
+            facts.append(
+                _fact(
+                    "roster_squeeze",
+                    "against",
+                    "They have to cut a player to fit two of yours. Real offers like this get accepted "
+                    "less than half as often as a 1-for-1 of the same value.",
+                    count=len(give) - len(get),
+                )
+            )
         lost = self._keystones_lost(j, get, dists)
         if lost:
             acceptance = max(acceptance - KEYSTONE_PENALTY, 0.05)
-            reasons.append(f"It takes away their {', '.join(lost)} keystone without replacing it: a harder sell.")
+            facts.append(
+                _fact(
+                    "keystone_lost",
+                    "against",
+                    f"It takes away their {', '.join(lost)} keystone without replacing it: a harder sell.",
+                    categories=lost,
+                )
+            )
         rival = j in self.rivals
         if self.mode == "edge":
-            reasons = self._edge_reasons(j, give, get, ratio, rival) + reasons
+            facts = self._edge_reasons(j, give, get, ratio, rival) + facts
         if vs_pickup is not None:
             add, drop = vs_pickup
-            reasons.append(
-                f"Measured against just adding {add.name} for {drop.name}, which needs no trade: "
-                "the odds above count only what the trade adds."
+            facts.append(
+                _fact(
+                    "vs_pickup",
+                    "note",
+                    f"Measured against just adding {add.name} for {drop.name}, which needs no trade: "
+                    "the odds above count only what the trade adds.",
+                    player=add,
+                )
             )
+        reasons = [f.text for f in facts]
         return Deal(
             partner_idx=j,
             give=give,
@@ -375,6 +466,7 @@ class TradeFinder:
             acceptance=acceptance,
             dists=dists,
             reasons=reasons,
+            facts=facts,
             rival=rival,
             rosters={self.me_idx: my_roster, j: their_roster},
             my_add=my_add,
@@ -411,50 +503,88 @@ class TradeFinder:
             return []
         return [self.model.cats[c].name for c in np.flatnonzero(punts & (z > 0.25))]
 
-    def _edge_reasons(self, j: int, give: list[Player], get: list[Player], ratio: float, rival: bool) -> list[str]:
+    def _edge_reasons(
+        self, j: int, give: list[Player], get: list[Player], ratio: float, rival: bool
+    ) -> list[schemas.ReasonFact]:
         """Why the deal favors me even though it looks like a win for them."""
         out = []
         if ratio >= 1.05:
-            out.append(f"On paper they win: they get {ratio:.0%} of the trade value they send.")
+            out.append(
+                _fact(
+                    "paper_win",
+                    "for",
+                    f"On paper they win: they get {ratio:.0%} of the trade value they send.",
+                    ratio=round(ratio, 3),
+                )
+            )
         for p in give:
             cats = self._wasted(p, self.punts[self.me_idx])
             if cats:
-                out.append(f"{p.name}'s value is mostly {', '.join(cats)}, which you punt: it costs you little.")
+                text = f"{p.name}'s value is mostly {', '.join(cats)}, which you punt: it costs you little."
+                out.append(_fact("punt_mine", "note", text, player=p, categories=cats))
         for p in get:
             cats = self._wasted(p, self.punts[j])
             if cats:
-                out.append(f"{p.name}'s {', '.join(cats)} is wasted on them: they punt it.")
+                text = f"{p.name}'s {', '.join(cats)} is wasted on them: they punt it."
+                out.append(_fact("punt_theirs", "note", text, player=p, categories=cats))
         if not rival:
-            out.append("They aren't one of your direct playoff rivals.")
+            out.append(_fact("not_rival", "note", "They aren't one of your direct playoff rivals."))
         return out
 
-    def _reasons(self, j: int, give: list[Player], get: list[Player], dists: list[Dist], struggling: bool) -> list[str]:
+    def _reasons(
+        self, j: int, give: list[Player], get: list[Player], dists: list[Dist], struggling: bool
+    ) -> list[schemas.ReasonFact]:
         """Talking points for the pitch, and why the deal can work for both sides."""
         pv, out = self.perceived, []
         at = "at" if self.league.is_auction else "like"  # "at $12" / "like a 4th-round pick"
-        for p in give:
-            owners, ours = pv.value(p), self.model_dollars.get(p.id, 0.0)
-            if owners - ours >= MISPRICED and pv.describe(owners) != pv.describe(ours):
-                out.append(f"Sell high: owners value {p.name} {at} {pv.describe(owners)}, {_ours(pv, ours)}.")
-        for p in get:
-            owners, ours = pv.value(p), self.model_dollars.get(p.id, 0.0)
-            if ours - owners >= MISPRICED and pv.describe(owners) != pv.describe(ours):
-                out.append(f"Buy low: owners value {p.name} {at} {pv.describe(owners)}, {_ours(pv, ours)}.")
+        for kind, players in (("sell_high", give), ("buy_low", get)):
+            for p in players:
+                owners, ours = pv.value(p), self.model_dollars.get(p.id, 0.0)
+                gap = owners - ours if kind == "sell_high" else ours - owners
+                if gap >= MISPRICED and pv.describe(owners) != pv.describe(ours):
+                    word = "Sell high" if kind == "sell_high" else "Buy low"
+                    out.append(
+                        _fact(
+                            kind,
+                            "for",
+                            f"{word}: owners value {p.name} {at} {pv.describe(owners)}, {_ours(pv, ours)}.",
+                            player=p,
+                            owners_value=round(owners, 1),
+                            our_value=round(ours, 1),
+                            owners_label=pv.describe(owners),
+                            our_label=pv.describe(ours) if ours >= 1 else "replacement level",
+                        )
+                    )
         change = self._avg_win(j, dists) - self.base_cats[j]
         lost = [self.model.cats[c].name for c in np.flatnonzero(self.punts[j] & (change < -0.02))]
         if lost:
-            out.append(f"They punt {', '.join(lost)}, so what they give up there doesn't cost them.")
+            text = f"They punt {', '.join(lost)}, so what they give up there doesn't cost them."
+            out.append(_fact("punt_cost", "for", text, categories=lost))
         partner = self.teams[j]
         out_count = sum(not p.available for p in partner.roster)
         if len(give) > len(get) and out_count >= 2:
-            out.append(f"They have {out_count} players out, so an extra healthy body helps them now.")
+            text = f"They have {out_count} players out, so an extra healthy body helps them now."
+            out.append(_fact("players_out", "for", text, count=out_count))
         if len(get) > len(give):
-            out.append("They turn two roster spots into one better player and can grab someone off waivers.")
+            text = "They turn two roster spots into one better player and can grab someone off waivers."
+            out.append(_fact("consolidate", "for", text, count=len(get) - len(give)))
         if struggling:
-            out.append("They're outside the playoff spots, so they have reason to shake things up.")
+            out.append(
+                _fact(
+                    "chasing",
+                    "for",
+                    "They're outside the playoff spots, so they have reason to shake things up.",
+                    rank=self.standing.get(j),
+                    teams=len(self.teams),
+                    playoff_spots=self.league.playoff_teams,
+                )
+            )
         return out
 
-    def candidates(self, partners: Iterable[int] | None = None) -> list[Deal]:
+    def candidates(
+        self, partners: Iterable[int] | None = None, two_for_two: bool = True, uneven: bool = True
+    ) -> list[Deal]:
+        """Every deal that passes the checks. ``uneven=False`` leaves out 2-for-1s and 1-for-2s."""
         me = self.teams[self.me_idx]
         mine = [p for p in me.roster if p.id not in self.keep and not self.premium.not_for_sale(p)]
         deals: list[Deal] = []
@@ -469,19 +599,52 @@ class TradeFinder:
                     d = self._evaluate(j, [give], [get])
                     if d:
                         deals.append(d)
-            # 2-for-1: package two of mine for one of theirs.
-            for give_pair in combinations(mine, 2):
-                for get in theirs:
-                    d = self._evaluate(j, list(give_pair), [get])
-                    if d:
-                        deals.append(d)
-            # 1-for-2: one of mine for two of theirs.
-            for give in mine:
-                for get_pair in combinations(theirs, 2):
-                    d = self._evaluate(j, [give], list(get_pair))
-                    if d:
-                        deals.append(d)
+            if uneven:
+                # 2-for-1: package two of mine for one of theirs.
+                for give_pair in combinations(mine, 2):
+                    for get in theirs:
+                        d = self._evaluate(j, list(give_pair), [get])
+                        if d:
+                            deals.append(d)
+                # 1-for-2: one of mine for two of theirs.
+                for give in mine:
+                    for get_pair in combinations(theirs, 2):
+                        d = self._evaluate(j, [give], list(get_pair))
+                        if d:
+                            deals.append(d)
+            if two_for_two:
+                deals += self._two_for_two(j, mine, theirs)
         return deals
+
+    def _two_for_two(self, j: int, mine: list[Player], theirs: list[Player]) -> list[Deal]:
+        """Two of mine for two of theirs.
+
+        Pairs are matched on trade value first, which is cheap, so only packages that could
+        pass the value check get the full evaluation. A 2-for-2 is kept only when it does more
+        for me than the best 1-for-1 inside it: otherwise the extra players are filler.
+        """
+        pv = self.perceived
+        lo = EDGE_MIN_RATIO if self.mode == "edge" else MIN_VALUE_RATIO
+        # A player off the waiver wire is a throw-in, not half of a 2-for-2: that deal is a 2-for-1.
+        mine = [p for p in mine if p not in droppable(mine, self.keep)]
+        theirs = [p for p in theirs if p not in droppable(theirs)]
+        gives = [(pair, pv.package(list(pair))) for pair in combinations(mine, 2)]
+        gets = [(pair, pv.package(list(pair), self.premium.price)) for pair in combinations(theirs, 2)]
+        out = []
+        for give_pair, give_v in gives:
+            for get_pair, get_v in gets:
+                if get_v <= 0 or not lo <= give_v / get_v <= MAX_VALUE_RATIO:
+                    continue
+                d = self._evaluate(j, list(give_pair), list(get_pair))
+                if d is None:
+                    continue
+                inside = max(
+                    (self._gains.get((j, g.id, t.id), float("-inf")) for g in give_pair for t in get_pair),
+                    default=float("-inf"),
+                )
+                if d.my_gain > inside:
+                    out.append(d)
+        return out
 
     def _vision_candidates(self, mine: list[Player], partners: Iterable[int] | None) -> list[Deal]:
         """One target with a vision signal for one or two of my healthy players: they get production now."""
@@ -530,12 +693,10 @@ class TradeFinder:
             per_target[target] = per_target.get(target, 0) + 1
             per_partner[d.partner_idx] = per_partner.get(d.partner_idx, 0) + 1
             picked.append(d)
-            if len(picked) == SHORTLIST:
-                break
-        return picked
+        return mix_shapes(picked, SHORTLIST, lambda d: len(d.give) != len(d.get))
 
-    def pitch(self, d: Deal) -> str:
-        """One line on why the deal helps them, in the categories where they need it most."""
+    def pitch_needs(self, d: Deal) -> list[schemas.PitchNeed]:
+        """The categories where the deal helps them most, with their rank and what it adds a game."""
         j = d.partner_idx
         before = self._avg_win(j, self.dists)
         after = self._avg_win(j, d.dists)
@@ -544,12 +705,10 @@ class TradeFinder:
         signed = np.where(self.model.reverse, -mus, mus)
         ranks = (signed > signed[j]).sum(0) + 1
         order = [c for c in np.argsort(-change) if change[c] >= 0.03][:2]
-        if not order:
-            return "Balances their roster without costing them a category."
-        parts = []
+        out = []
         for c in order:
             cat = self.model.cats[c]
-            line = f"{cat.name} ({_ordinal(int(ranks[c]))} in the league)"
+            per_game = None
             if not cat.ratio:
                 delta = sum(p.per_game.get(cat.stat_id, 0.0) for p in d.give) - sum(
                     p.per_game.get(cat.stat_id, 0.0) for p in d.get
@@ -557,12 +716,31 @@ class TradeFinder:
                 if cat.reverse:
                     delta = -delta
                 if delta >= 0.5:
-                    line += f", +{delta:.1f} a game"
+                    per_game = round(delta, 1)
+            out.append(schemas.PitchNeed(category=cat.name, league_rank=int(ranks[c]), per_game=per_game))
+        return out
+
+    def pitch(self, d: Deal) -> str:
+        """One line on why the deal helps them, in the categories where they need it most."""
+        needs = self.pitch_needs(d)
+        if not needs:
+            return "Balances their roster without costing them a category."
+        parts = []
+        for n in needs:
+            line = f"{n.category} ({_ordinal(n.league_rank)} in the league)"
+            if n.per_game is not None:
+                line += f", +{n.per_game:.1f} a game"
             parts.append(line)
         return "Helps their " + " and ".join(parts) + "."
 
     def _avg_win(self, i: int, dists: list[Dist]) -> np.ndarray:
         return self.model.avg_cat_win(i, dists)
+
+
+def _fact(kind: schemas.FactKind, tone: str, text: str, player: Player | None = None, **data) -> schemas.ReasonFact:
+    if player is not None:
+        data.update(player_id=player.id, player_name=player.name)
+    return schemas.ReasonFact(kind=kind, tone=tone, text=text, **data)
 
 
 def _ours(pv: PerceivedValue, dollars: float) -> str:

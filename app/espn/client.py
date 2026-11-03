@@ -16,8 +16,9 @@ BASE_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/fba"
 
 # Light views for the league feed: names, owners, FAAB and the current scoring period.
 FEED_VIEWS = ["mTeam", "mSettings", "mStatus"]
-# The league-only overview adds this week's category scores.
-OVERVIEW_VIEWS = [*FEED_VIEWS, "mMatchupScore", "mScoreboard"]  # mScoreboard adds per-category scores
+# The league-only overview adds this week's category scores. mScoreboard adds the per-category
+# scores; mLiveScoring adds ``cumulativeScoreLive``, which counts the days ESPN has not banked yet.
+OVERVIEW_VIEWS = [*FEED_VIEWS, "mMatchupScore", "mScoreboard", "mLiveScoring"]
 
 LEAGUE_VIEWS = ["mSettings", "mTeam", "mRoster", "mStandings", "mMatchupScore", "mScoreboard", "mDraftDetail"]
 
@@ -143,6 +144,27 @@ class EspnClient:
             headers={"X-Fantasy-Filter": json.dumps(flt)},
         )
         return data.get("players", [])
+
+    async def player_card(
+        self, season: int, league_id: int, player_id: int, creds: EspnCredentials | None, games: int = 12
+    ) -> dict | None:
+        """One player's latest game lines, season line and every move of him in this league.
+
+        None when ESPN has no such player.
+        """
+        flt = {
+            "players": {
+                "filterIds": {"value": [player_id]},
+                "filterStatsForTopScoringPeriodIds": {"value": games, "additionalValue": [f"00{season}"]},
+            }
+        }
+        data = await self._get(
+            self._league_url(season, league_id),
+            [("view", "kona_playercard")],
+            creds,
+            headers={"X-Fantasy-Filter": json.dumps(flt)},
+        )
+        return next((p for p in data.get("players", []) if int(p.get("id") or 0) == player_id), None)
 
     async def day_stats(
         self, season: int, league_id: int, day: int, creds: EspnCredentials | None, limit: int = 1000

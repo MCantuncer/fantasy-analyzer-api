@@ -6,6 +6,7 @@ from app.analysis.model import CategoryModel
 from app.analysis.perceived import PerceivedValue
 from app.analysis.report import Analyzer, league_summary
 from app.analysis.tiers import droppable
+from app.analysis.tiers import droppable as no_trade_value
 from app.analysis.trades import (
     MAX_VALUE_RATIO,
     MIN_THEIR_GAIN,
@@ -16,6 +17,8 @@ from app.analysis.trades import (
     TradeFinder,
     acceptance_label,
     acceptance_odds,
+    mix_shapes,
+    shape_odds,
 )
 from app.espn.parse import parse_league
 
@@ -106,6 +109,46 @@ def test_acceptance_odds_follow_value_and_need():
     assert acceptance_label(0.2) == "long_shot"
 
 
+def test_shape_odds_follow_real_offers():
+    # At the same value: 1-for-1 and 1-for-2 as is, 2-for-2 a bit lower, and a 2-for-1 that makes
+    # the other owner cut someone the lowest (scripts/trade_shape_backtest.py).
+    p = 0.5
+    assert shape_odds(p, 1, 1) == shape_odds(p, 1, 2) == pytest.approx(p)
+    assert shape_odds(p, 2, 1) < shape_odds(p, 2, 2) < p
+    assert 0.05 <= shape_odds(0.05, 2, 1) and shape_odds(0.9, 2, 2) <= 0.9
+
+
+def test_two_for_one_odds_are_lower_than_the_same_deal_would_get_as_a_one_for_one(league):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set(), mode="edge")
+    deals = [d for d in finder.candidates() if len(d.give) == 2 and len(d.get) == 1]
+    assert deals
+    for d in deals:
+        assert any("cut a player to fit two of yours" in r for r in d.reasons)
+        assert d.acceptance <= shape_odds(0.9, 2, 1)
+
+
+def test_two_for_two_ideas_are_real_two_for_twos(league):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set(), mode="edge")
+    deals = finder.candidates()
+    pairs = [d for d in deals if len(d.give) == len(d.get) == 2]
+    assert pairs
+    mine = finder.teams[me].roster
+    for d in pairs:
+        assert d.my_drop is None and d.their_drop is None and d.my_add is None
+        theirs = finder.teams[d.partner_idx].roster
+        # No free-agent-level throw-ins: those deals are really 2-for-1s.
+        assert not set(map(id, d.give)) & set(map(id, no_trade_value(mine)))
+        assert not set(map(id, d.get)) & set(map(id, no_trade_value(theirs)))
+        # Each one does more for me than any 1-for-1 inside it.
+        inside = [finder._gains.get((d.partner_idx, g.id, t.id)) for g in d.give for t in d.get]
+        assert all(g is None or d.my_gain > g for g in inside)
+    assert not [d for d in finder.candidates(two_for_two=False) if len(d.give) == len(d.get) == 2]
+
+
 def test_every_candidate_is_fair_on_paper_and_helps_both(league):
     model = CategoryModel(league)
     me = next(i for i, t in enumerate(league.teams) if t.id == 3)
@@ -145,7 +188,9 @@ def test_their_gain_ignores_their_punts(league):
     me = next(i for i, t in enumerate(league.teams) if t.id == 3)
     finder = TradeFinder(league, model, me, keep=set())
     for d in finder.candidates()[:50]:
-        change = finder._avg_win(d.partner_idx, d.dists) - finder.base_cats[d.partner_idx]
+        j = d.partner_idx
+        base = finder.their_free_cats(j) if len(d.get) > len(d.give) else finder.base_cats[j]
+        change = finder._avg_win(j, d.dists) - base
         assert d.their_gain == pytest.approx(change[~finder.punts[d.partner_idx]].sum())
         assert all(r.endswith(".") for r in d.reasons)
 
@@ -186,6 +231,19 @@ def test_edge_deals_win_on_paper_for_them_and_on_the_court_for_me(league):
         assert d.their_gain >= EDGE_MIN_THEIR_GAIN
         assert d.edge >= EDGE_MIN_MARGIN - 1e-9
         assert len(finder.rivals) <= 4 and finder.me_idx not in finder.rivals
+
+
+def test_their_side_of_a_one_for_two_is_measured_against_their_free_pickup(league):
+    """The spot a 1-for-2 opens on their roster takes the best free agent, which they could add today."""
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set(), mode="edge")
+    deals = [d for d in finder.candidates() if len(d.get) > len(d.give)]
+    assert deals
+    for d in deals:
+        free = finder.their_free_cats(d.partner_idx)
+        assert d.their_gain == pytest.approx(finder.fit_gain(d.partner_idx, d.dists, free))
+        assert d.their_gain <= finder.fit_gain(d.partner_idx, d.dists) + 1e-9
 
 
 def test_two_for_one_is_measured_against_the_free_pickup(league):
@@ -272,3 +330,38 @@ def test_vision_deals_buy_the_target_and_pay_in_the_playoffs(league):
     ranked = finder.shortlist()
     keys = [finder.rank_key(d) for d in ranked]
     assert keys == sorted(keys, reverse=True)
+
+
+def test_uneven_trades_are_a_small_part_of_the_list():
+    ranked = ["1-2a", "1-2b", "1-2c", "2-2a", "1-1a", "2-1a", "1-1b"]
+    uneven = lambda s: s[0] != s[2]  # noqa: E731
+    # 10 slots: at most 2 uneven, in rank order; no padding with more uneven ones.
+    assert mix_shapes(ranked, 10, uneven) == ["1-2a", "1-2b", "2-2a", "1-1a", "1-1b"]
+    assert mix_shapes(ranked, 3, uneven) == ["1-2a", "2-2a", "1-1a"]
+    assert mix_shapes(["2-2a", "1-1a", "1-1b"], 2, uneven) == ["2-2a", "1-1a"]
+
+
+def test_facts_match_reasons_and_carry_their_numbers(league):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    deals = TradeFinder(league, model, me, keep=set()).candidates()
+    assert deals
+    for d in deals:
+        assert [f.text for f in d.facts] == d.reasons
+        for f in d.facts:
+            if f.kind in ("sell_high", "buy_low"):
+                assert f.player_id is not None and f.owners_value is not None and f.our_value is not None
+                assert (f.owners_value > f.our_value) == (f.kind == "sell_high")
+            if f.kind == "roster_squeeze":
+                assert f.tone == "against" and len(d.give) > len(d.get)
+
+
+def test_pitch_needs_spell_out_the_pitch(league):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set())
+    for d in finder.candidates()[:20]:
+        needs, pitch = finder.pitch_needs(d), finder.pitch(d)
+        assert len(needs) <= 2
+        for n in needs:
+            assert n.category in pitch and 1 <= n.league_rank <= len(league.teams)
