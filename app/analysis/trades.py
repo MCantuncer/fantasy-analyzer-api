@@ -37,6 +37,7 @@ from typing import Literal
 
 import numpy as np
 
+from app import schemas
 from app.analysis.badges import OwnerPremium, best_pickup
 from app.analysis.model import CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
@@ -118,6 +119,7 @@ class Deal:
     dists: list[Dist]
     reasons: list[str]
     rival: bool = False
+    facts: list[schemas.ReasonFact] = field(default_factory=list)  # ``reasons`` as data, same order
     rosters: dict[int, list[Player]] = field(default_factory=dict)  # team index -> roster after the deal
     my_add: Player | None = None  # free agent I pick up for the spot a 2-for-1 opens
     faab: int = 0  # FAAB dollars I send with the players
@@ -202,6 +204,7 @@ class TradeFinder:
         self.base = [model.strength(i, self.dists) for i in range(len(self.teams))]
         self.base_cats = [self._avg_win(i, self.dists) for i in range(len(self.teams))]
         self.punts = [cats < PUNT_WIN for cats in self.base_cats]
+        self.standing: dict[int, int] = {}  # team index -> place in the standings, once games are played
         self.struggling = self._outside_playoffs()
         self.filler = best_pickup(league, model)
         self.free_move, self.free_roster, self.free_base = self._free_move()
@@ -270,6 +273,7 @@ class TradeFinder:
         if not any(t.wins + t.losses + t.ties for t in self.teams):
             return set()
         order = sorted(range(len(self.teams)), key=lambda i: pct(self.teams[i]), reverse=True)
+        self.standing = {i: r for r, i in enumerate(order, 1)}
         return set(order[self.league.playoff_teams :])
 
     def _rivals(self) -> set[int]:
@@ -411,26 +415,44 @@ class TradeFinder:
             if playoff_gain < VISION_MIN_PLAYOFF_GAIN:
                 return None
         struggling = j in self.struggling
-        reasons = self._reasons(j, give, get, dists, struggling)
+        facts = self._reasons(j, give, get, dists, struggling)
         acceptance = shape_odds(acceptance_odds(ratio, their_gain, struggling), len(give), len(get))
         if len(give) > len(get):
-            reasons.append(
-                "They have to cut a player to fit two of yours. Real offers like this get accepted "
-                "less than half as often as a 1-for-1 of the same value."
+            facts.append(
+                _fact(
+                    "roster_squeeze",
+                    "against",
+                    "They have to cut a player to fit two of yours. Real offers like this get accepted "
+                    "less than half as often as a 1-for-1 of the same value.",
+                    count=len(give) - len(get),
+                )
             )
         lost = self._keystones_lost(j, get, dists)
         if lost:
             acceptance = max(acceptance - KEYSTONE_PENALTY, 0.05)
-            reasons.append(f"It takes away their {', '.join(lost)} keystone without replacing it: a harder sell.")
+            facts.append(
+                _fact(
+                    "keystone_lost",
+                    "against",
+                    f"It takes away their {', '.join(lost)} keystone without replacing it: a harder sell.",
+                    categories=lost,
+                )
+            )
         rival = j in self.rivals
         if self.mode == "edge":
-            reasons = self._edge_reasons(j, give, get, ratio, rival) + reasons
+            facts = self._edge_reasons(j, give, get, ratio, rival) + facts
         if vs_pickup is not None:
             add, drop = vs_pickup
-            reasons.append(
-                f"Measured against just adding {add.name} for {drop.name}, which needs no trade: "
-                "the odds above count only what the trade adds."
+            facts.append(
+                _fact(
+                    "vs_pickup",
+                    "note",
+                    f"Measured against just adding {add.name} for {drop.name}, which needs no trade: "
+                    "the odds above count only what the trade adds.",
+                    player=add,
+                )
             )
+        reasons = [f.text for f in facts]
         return Deal(
             partner_idx=j,
             give=give,
@@ -444,6 +466,7 @@ class TradeFinder:
             acceptance=acceptance,
             dists=dists,
             reasons=reasons,
+            facts=facts,
             rival=rival,
             rosters={self.me_idx: my_roster, j: their_roster},
             my_add=my_add,
@@ -480,47 +503,82 @@ class TradeFinder:
             return []
         return [self.model.cats[c].name for c in np.flatnonzero(punts & (z > 0.25))]
 
-    def _edge_reasons(self, j: int, give: list[Player], get: list[Player], ratio: float, rival: bool) -> list[str]:
+    def _edge_reasons(
+        self, j: int, give: list[Player], get: list[Player], ratio: float, rival: bool
+    ) -> list[schemas.ReasonFact]:
         """Why the deal favors me even though it looks like a win for them."""
         out = []
         if ratio >= 1.05:
-            out.append(f"On paper they win: they get {ratio:.0%} of the trade value they send.")
+            out.append(
+                _fact(
+                    "paper_win",
+                    "for",
+                    f"On paper they win: they get {ratio:.0%} of the trade value they send.",
+                    ratio=round(ratio, 3),
+                )
+            )
         for p in give:
             cats = self._wasted(p, self.punts[self.me_idx])
             if cats:
-                out.append(f"{p.name}'s value is mostly {', '.join(cats)}, which you punt: it costs you little.")
+                text = f"{p.name}'s value is mostly {', '.join(cats)}, which you punt: it costs you little."
+                out.append(_fact("punt_mine", "note", text, player=p, categories=cats))
         for p in get:
             cats = self._wasted(p, self.punts[j])
             if cats:
-                out.append(f"{p.name}'s {', '.join(cats)} is wasted on them: they punt it.")
+                text = f"{p.name}'s {', '.join(cats)} is wasted on them: they punt it."
+                out.append(_fact("punt_theirs", "note", text, player=p, categories=cats))
         if not rival:
-            out.append("They aren't one of your direct playoff rivals.")
+            out.append(_fact("not_rival", "note", "They aren't one of your direct playoff rivals."))
         return out
 
-    def _reasons(self, j: int, give: list[Player], get: list[Player], dists: list[Dist], struggling: bool) -> list[str]:
+    def _reasons(
+        self, j: int, give: list[Player], get: list[Player], dists: list[Dist], struggling: bool
+    ) -> list[schemas.ReasonFact]:
         """Talking points for the pitch, and why the deal can work for both sides."""
         pv, out = self.perceived, []
         at = "at" if self.league.is_auction else "like"  # "at $12" / "like a 4th-round pick"
-        for p in give:
-            owners, ours = pv.value(p), self.model_dollars.get(p.id, 0.0)
-            if owners - ours >= MISPRICED and pv.describe(owners) != pv.describe(ours):
-                out.append(f"Sell high: owners value {p.name} {at} {pv.describe(owners)}, {_ours(pv, ours)}.")
-        for p in get:
-            owners, ours = pv.value(p), self.model_dollars.get(p.id, 0.0)
-            if ours - owners >= MISPRICED and pv.describe(owners) != pv.describe(ours):
-                out.append(f"Buy low: owners value {p.name} {at} {pv.describe(owners)}, {_ours(pv, ours)}.")
+        for kind, players in (("sell_high", give), ("buy_low", get)):
+            for p in players:
+                owners, ours = pv.value(p), self.model_dollars.get(p.id, 0.0)
+                gap = owners - ours if kind == "sell_high" else ours - owners
+                if gap >= MISPRICED and pv.describe(owners) != pv.describe(ours):
+                    word = "Sell high" if kind == "sell_high" else "Buy low"
+                    out.append(
+                        _fact(
+                            kind,
+                            "for",
+                            f"{word}: owners value {p.name} {at} {pv.describe(owners)}, {_ours(pv, ours)}.",
+                            player=p,
+                            owners_value=round(owners, 1),
+                            our_value=round(ours, 1),
+                            owners_label=pv.describe(owners),
+                            our_label=pv.describe(ours) if ours >= 1 else "replacement level",
+                        )
+                    )
         change = self._avg_win(j, dists) - self.base_cats[j]
         lost = [self.model.cats[c].name for c in np.flatnonzero(self.punts[j] & (change < -0.02))]
         if lost:
-            out.append(f"They punt {', '.join(lost)}, so what they give up there doesn't cost them.")
+            text = f"They punt {', '.join(lost)}, so what they give up there doesn't cost them."
+            out.append(_fact("punt_cost", "for", text, categories=lost))
         partner = self.teams[j]
         out_count = sum(not p.available for p in partner.roster)
         if len(give) > len(get) and out_count >= 2:
-            out.append(f"They have {out_count} players out, so an extra healthy body helps them now.")
+            text = f"They have {out_count} players out, so an extra healthy body helps them now."
+            out.append(_fact("players_out", "for", text, count=out_count))
         if len(get) > len(give):
-            out.append("They turn two roster spots into one better player and can grab someone off waivers.")
+            text = "They turn two roster spots into one better player and can grab someone off waivers."
+            out.append(_fact("consolidate", "for", text, count=len(get) - len(give)))
         if struggling:
-            out.append("They're outside the playoff spots, so they have reason to shake things up.")
+            out.append(
+                _fact(
+                    "chasing",
+                    "for",
+                    "They're outside the playoff spots, so they have reason to shake things up.",
+                    rank=self.standing.get(j),
+                    teams=len(self.teams),
+                    playoff_spots=self.league.playoff_teams,
+                )
+            )
         return out
 
     def candidates(
@@ -637,8 +695,8 @@ class TradeFinder:
             picked.append(d)
         return mix_shapes(picked, SHORTLIST, lambda d: len(d.give) != len(d.get))
 
-    def pitch(self, d: Deal) -> str:
-        """One line on why the deal helps them, in the categories where they need it most."""
+    def pitch_needs(self, d: Deal) -> list[schemas.PitchNeed]:
+        """The categories where the deal helps them most, with their rank and what it adds a game."""
         j = d.partner_idx
         before = self._avg_win(j, self.dists)
         after = self._avg_win(j, d.dists)
@@ -647,12 +705,10 @@ class TradeFinder:
         signed = np.where(self.model.reverse, -mus, mus)
         ranks = (signed > signed[j]).sum(0) + 1
         order = [c for c in np.argsort(-change) if change[c] >= 0.03][:2]
-        if not order:
-            return "Balances their roster without costing them a category."
-        parts = []
+        out = []
         for c in order:
             cat = self.model.cats[c]
-            line = f"{cat.name} ({_ordinal(int(ranks[c]))} in the league)"
+            per_game = None
             if not cat.ratio:
                 delta = sum(p.per_game.get(cat.stat_id, 0.0) for p in d.give) - sum(
                     p.per_game.get(cat.stat_id, 0.0) for p in d.get
@@ -660,12 +716,31 @@ class TradeFinder:
                 if cat.reverse:
                     delta = -delta
                 if delta >= 0.5:
-                    line += f", +{delta:.1f} a game"
+                    per_game = round(delta, 1)
+            out.append(schemas.PitchNeed(category=cat.name, league_rank=int(ranks[c]), per_game=per_game))
+        return out
+
+    def pitch(self, d: Deal) -> str:
+        """One line on why the deal helps them, in the categories where they need it most."""
+        needs = self.pitch_needs(d)
+        if not needs:
+            return "Balances their roster without costing them a category."
+        parts = []
+        for n in needs:
+            line = f"{n.category} ({_ordinal(n.league_rank)} in the league)"
+            if n.per_game is not None:
+                line += f", +{n.per_game:.1f} a game"
             parts.append(line)
         return "Helps their " + " and ".join(parts) + "."
 
     def _avg_win(self, i: int, dists: list[Dist]) -> np.ndarray:
         return self.model.avg_cat_win(i, dists)
+
+
+def _fact(kind: schemas.FactKind, tone: str, text: str, player: Player | None = None, **data) -> schemas.ReasonFact:
+    if player is not None:
+        data.update(player_id=player.id, player_name=player.name)
+    return schemas.ReasonFact(kind=kind, tone=tone, text=text, **data)
 
 
 def _ours(pv: PerceivedValue, dollars: float) -> str:

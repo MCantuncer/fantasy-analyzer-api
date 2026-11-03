@@ -193,3 +193,10 @@ def test_slow_scan_answers_pending(client, monkeypatch):
     monkeypatch.setattr(main, "DAILY_WAIT", 0.0)
     r = client.post("/api/trade-of-the-day", json={"league_id": LEAGUE_ID, "season": 2027})
     assert r.status_code == 200 and r.json()["status"] == "pending"
+
+
+def test_sides_carry_reasons_as_data(pick):
+    for s in pick.sides:
+        assert [f.text for f in s.facts] == s.reasons
+        assert all(f.kind not in ("sell_high", "buy_low") for f in s.facts)
+        assert all(n.category in s.pitch for n in s.pitch_needs)

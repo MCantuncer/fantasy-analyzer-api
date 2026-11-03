@@ -216,6 +216,8 @@ class Analyzer:
             acceptance_label=acceptance_label(d.acceptance),
             pitch=finder.pitch(d),
             reasons=d.reasons,
+            facts=d.facts,
+            pitch_needs=finder.pitch_needs(d),
             playoff_pct_before=round(before, 3),
             playoff_pct_after=round(after, 3),
             playoff_week_cats_before=_round(self.playoff_strength(self.idx)),
