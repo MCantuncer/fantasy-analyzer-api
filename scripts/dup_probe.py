@@ -59,19 +59,6 @@ async def main():
     print("HEALTH", json.dumps({k: (v.get("ok"), v.get("items"), v.get("error")) for k, v in svc.health().items()}))
     print("STORIES", len(stories))
     report(stories, states, "BASE")
-    index = NameIndex({pid: st.name for pid, st in states.items()})
-    extra = await bluesky(index, states, now)
-    print("BSKY items", len(extra))
-    from app.news.service import item_from_dict
-    items = [item_from_dict(d) for d in store.news_items("2000-01-01")] + extra
-    import app.news.verify as v
-    from app.news.sources import BY_ID, Source
-    for h in BSKY:
-        sid = f"bsky_{h.split('.')[0]}"
-        BY_ID[sid] = Source(sid, h, "outlet", sid)
-    with_bsky = v.build_stories(items, states, teams, now)
-    print("STORIES with bluesky", len(with_bsky))
-    report(with_bsky, states, "BSKY")
 
 
 def report(stories, states, label):

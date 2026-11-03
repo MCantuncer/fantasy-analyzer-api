@@ -1,6 +1,6 @@
 name: News feed sample
 
-# One-off (run 10): which stories look like duplicates.
+# One-off (run 11: with Bluesky and merging): which stories look like duplicates.
 on:
   push:
     branches: [feature/news-feed-sample]
@@ -13,6 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: feature/news-bluesky-dedup
+      - uses: actions/checkout@v4
+        with:
+          path: probe
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --locked
-      - run: PYTHONPATH=. uv run python scripts/dup_probe.py
+      - run: PYTHONPATH=. uv run python probe/scripts/dup_probe.py
