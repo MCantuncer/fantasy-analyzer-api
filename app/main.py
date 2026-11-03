@@ -42,6 +42,7 @@ from app.analysis.durability import HISTORY_SEASONS, games_played, long_absences
 from app.analysis.durability import attach as attach_durability
 from app.analysis.injury import LAST_SEASON_WEIGHT, Season, parse_gamelogs
 from app.analysis.injury import analyze as analyze_absence
+from app.analysis.projection import project_matchup
 from app.analysis.report import Analyzer, league_summary
 from app.analysis.shop import ShopAnalyzer, ShopError
 from app.analysis.target import TargetAnalyzer, TargetError
@@ -348,17 +349,22 @@ def create_app(
             cache.set(key, raw)
         return raw
 
-    async def load_league(league_id: int, season: int, creds: EspnCredentials | None, with_fa: bool) -> League:
-        key = (league_id, season, credentials_key(creds), with_fa)
+    async def load_league(
+        league_id: int, season: int, creds: EspnCredentials | None, with_fa: bool, with_calendar: bool = False
+    ) -> League:
+        """The league, parsed. ``with_fa`` adds free agents and everything the analysis needs;
+        ``with_calendar`` only the NBA calendar, durability and absences, for projections."""
+        full = with_fa or with_calendar
+        key = (league_id, season, credentials_key(creds), with_fa, full)
         league = app.state.leagues.get(key)
         if league is None:
             raw = await app.state.espn.league(season, league_id, creds)
             fas = await app.state.espn.free_agents(season, league_id, creds) if with_fa else []
-            schedule = await pro_schedule(season) if with_fa else None
+            schedule = await pro_schedule(season) if full else None
             snake = ((raw.get("settings") or {}).get("draftSettings") or {}).get("type") != "AUCTION"
             adp = await market_adp(season) if with_fa and snake else None
             league = parse_league(raw, fas, schedule, adp)
-            if with_fa:
+            if full:
                 past = await past_games(season)
                 attach_durability(league, past, await past_absences(league, past) if past else None)
                 await attach_absences(league)
@@ -1200,6 +1206,53 @@ def create_app(
             g = week_games(roster_pro_teams(team.roster), sched, now)
             out[team.id] = schemas.WeekGames(today=g.today, left=g.left, total=g.total)
         return out
+
+    @app.post(
+        "/api/matchup-projection",
+        response_model=schemas.MatchupProjection | None,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def matchup_projection(
+        body: schemas.LeagueRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.MatchupProjection | None:
+        """Your matchup projected to its last day: who takes each category, and who sits on crowded days.
+
+        Each day the best healthy players with a game fill the lineup slots, for both teams.
+        Null without the NBA calendar or a matchup this week.
+        """
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        seat = await linked(authorization, body.league_id, season, required=True)
+        league = await load_league(body.league_id, season, creds, with_fa=False, with_calendar=True)
+        proj = await run_in_threadpool(project_matchup, league, seat.team_id)
+        if proj is None:
+            return None
+
+        def days(rows: list) -> list[schemas.CrowdedDay]:
+            return [
+                schemas.CrowdedDay(
+                    date=d.date,
+                    playing=d.playing,
+                    slots=d.slots,
+                    sit=[schemas.BenchedPlayer(id=pid, name=name) for pid, name in d.sit],
+                )
+                for d in rows
+            ]
+
+        return schemas.MatchupProjection(
+            opponent_id=proj.opponent_id,
+            wins=proj.wins,
+            losses=proj.losses,
+            categories=[
+                schemas.ProjectedCategory(stat=c.stat, mine=c.mine, theirs=c.theirs, winner=c.winner, close=c.close)
+                for c in proj.categories
+            ],
+            my_crowded=days(proj.my_crowded),
+            their_crowded=days(proj.their_crowded),
+        )
 
     @app.post(
         "/api/league-overview", response_model=schemas.LeagueOverview, responses={401: {"model": schemas.ErrorBody}}

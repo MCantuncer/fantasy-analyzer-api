@@ -1874,6 +1874,123 @@
         }
       }
     },
+    "/api/matchup-projection": {
+      "post": {
+        "summary": "Matchup Projection",
+        "description": "Your matchup projected to its last day: who takes each category, and who sits on crowded days.\n\nEach day the best healthy players with a game fill the lineup slots, for both teams.\nNull without the NBA calendar or a matchup this week.",
+        "operationId": "matchup_projection_api_matchup_projection_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeagueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/MatchupProjection"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Matchup Projection Api Matchup Projection Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/league-overview": {
       "post": {
         "summary": "League Overview",
@@ -3348,6 +3465,24 @@
         ],
         "title": "AuthResult"
       },
+      "BenchedPlayer": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "BenchedPlayer"
+      },
       "Beneficiary": {
         "properties": {
           "player_id": {
@@ -3595,6 +3730,41 @@
           "evidence"
         ],
         "title": "CheckVerdict"
+      },
+      "CrowdedDay": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "description": "ISO date (US)"
+          },
+          "playing": {
+            "type": "integer",
+            "title": "Playing",
+            "description": "Healthy players with a game that day"
+          },
+          "slots": {
+            "type": "integer",
+            "title": "Slots",
+            "description": "Lineup slots"
+          },
+          "sit": {
+            "items": {
+              "$ref": "#/components/schemas/BenchedPlayer"
+            },
+            "type": "array",
+            "title": "Sit",
+            "description": "Players with a game who don't make the best lineup"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "playing",
+          "slots",
+          "sit"
+        ],
+        "title": "CrowdedDay"
       },
       "DeletePostRequest": {
         "properties": {
@@ -4723,6 +4893,55 @@
           "team_name"
         ],
         "title": "LinkedTeam"
+      },
+      "MatchupProjection": {
+        "properties": {
+          "opponent_id": {
+            "type": "integer",
+            "title": "Opponent Id"
+          },
+          "wins": {
+            "type": "integer",
+            "title": "Wins",
+            "description": "Categories you're projected to take"
+          },
+          "losses": {
+            "type": "integer",
+            "title": "Losses"
+          },
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectedCategory"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "my_crowded": {
+            "items": {
+              "$ref": "#/components/schemas/CrowdedDay"
+            },
+            "type": "array",
+            "title": "My Crowded",
+            "description": "Your days left with more players than slots"
+          },
+          "their_crowded": {
+            "items": {
+              "$ref": "#/components/schemas/CrowdedDay"
+            },
+            "type": "array",
+            "title": "Their Crowded"
+          }
+        },
+        "type": "object",
+        "required": [
+          "opponent_id",
+          "wins",
+          "losses",
+          "categories",
+          "my_crowded",
+          "their_crowded"
+        ],
+        "title": "MatchupProjection"
       },
       "MatchupSide": {
         "properties": {
@@ -6252,6 +6471,46 @@
           "body"
         ],
         "title": "PostRequest"
+      },
+      "ProjectedCategory": {
+        "properties": {
+          "stat": {
+            "type": "string",
+            "title": "Stat"
+          },
+          "mine": {
+            "type": "number",
+            "title": "Mine",
+            "description": "Your projected total by the last day of the week (percentages as fractions)"
+          },
+          "theirs": {
+            "type": "number",
+            "title": "Theirs"
+          },
+          "winner": {
+            "type": "string",
+            "enum": [
+              "me",
+              "them"
+            ],
+            "title": "Winner",
+            "description": "Who is projected to take the category"
+          },
+          "close": {
+            "type": "boolean",
+            "title": "Close",
+            "description": "Close to a coin flip: could go either way"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stat",
+          "mine",
+          "theirs",
+          "winner",
+          "close"
+        ],
+        "title": "ProjectedCategory"
       },
       "ReactRequest": {
         "properties": {

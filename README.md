@@ -52,6 +52,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🛒 | **FA Targets:** every healthy free agent against every possible drop | `/api/analyze` |
 | 🎲 | **Season simulation:** 4,000 runs of the remaining schedule in the league's real format | `/api/analyze` |
 | ⭐ | **Trade of the day:** one league-wide win-win deal a day, with a poll | `/api/trade-of-the-day` |
+| 📅 | **Matchup projection:** who takes each category by Sunday, starting the best lineup each day and benching the rest on crowded days | `/api/matchup-projection` |
 | 🏀 | **Live scores:** NBA scores and box scores tagged with fantasy teams | `/api/scores` |
 | 📰 | **Checked NBA news:** stories confirmed across sources before they show | `/api/news` |
 | 🩹 | **Injury impact:** which teammates gain while a player is out | `/api/injury-impact` |
