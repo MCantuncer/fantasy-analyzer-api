@@ -5761,6 +5761,38 @@
         ],
         "title": "PickupIdea"
       },
+      "PitchNeed": {
+        "properties": {
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "league_rank": {
+            "type": "integer",
+            "title": "League Rank",
+            "description": "Their rank in the category now, 1 is best"
+          },
+          "per_game": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Game",
+            "description": "What the deal adds a game, counting stats only"
+          }
+        },
+        "type": "object",
+        "required": [
+          "category",
+          "league_rank"
+        ],
+        "title": "PitchNeed",
+        "description": "A category the deal helps them in, as the pitch names it."
+      },
       "PlayerBadge": {
         "properties": {
           "kind": {
@@ -6561,6 +6593,186 @@
         ],
         "title": "ReactionsOut"
       },
+      "ReasonFact": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sell_high",
+              "buy_low",
+              "punt_cost",
+              "players_out",
+              "consolidate",
+              "chasing",
+              "roster_squeeze",
+              "keystone_lost",
+              "vs_pickup",
+              "faab",
+              "paper_win",
+              "punt_mine",
+              "punt_theirs",
+              "not_rival"
+            ],
+            "title": "Kind"
+          },
+          "tone": {
+            "type": "string",
+            "enum": [
+              "for",
+              "against",
+              "note"
+            ],
+            "title": "Tone",
+            "description": "for: a reason they say yes; against: a reason they may not; note: context for you"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The same point as a sentence, as in `reasons`"
+          },
+          "player_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Id"
+          },
+          "player_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Name"
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "owners_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owners Value",
+            "description": "What owners pay for the player, in dollars"
+          },
+          "our_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Our Value",
+            "description": "What he's worth in this league's categories, in dollars"
+          },
+          "owners_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owners Label",
+            "description": "owners_value as owners say it: \"$38\", \"a 4th-round pick\""
+          },
+          "our_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Our Label"
+          },
+          "count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank",
+            "description": "chasing: their place in the standings"
+          },
+          "teams": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teams"
+          },
+          "playoff_spots": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Spots"
+          },
+          "ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio",
+            "description": "paper_win: trade value they get over what they send"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "tone",
+          "text"
+        ],
+        "title": "ReasonFact",
+        "description": "One reason as data, so the page can draw it (bars, chips) instead of printing a sentence."
+      },
       "RepliesPage": {
         "properties": {
           "target": {
@@ -6955,6 +7167,22 @@
             "type": "array",
             "title": "Reasons",
             "description": "Why it can work for both sides: sell high, buy low, their punts, timing"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonFact"
+            },
+            "type": "array",
+            "title": "Facts",
+            "description": "`reasons` as data, in the same order"
+          },
+          "pitch_needs": {
+            "items": {
+              "$ref": "#/components/schemas/PitchNeed"
+            },
+            "type": "array",
+            "title": "Pitch Needs",
+            "description": "`pitch` as data"
           },
           "playoff_pct_before": {
             "type": "number",
@@ -7492,6 +7720,22 @@
             "type": "array",
             "title": "Reasons",
             "description": "Why it can work for both sides: sell high, buy low, their punts, timing"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonFact"
+            },
+            "type": "array",
+            "title": "Facts",
+            "description": "`reasons` as data, in the same order"
+          },
+          "pitch_needs": {
+            "items": {
+              "$ref": "#/components/schemas/PitchNeed"
+            },
+            "type": "array",
+            "title": "Pitch Needs",
+            "description": "`pitch` as data"
           },
           "playoff_pct_before": {
             "type": "number",
@@ -8328,6 +8572,22 @@
             "title": "Reasons",
             "description": "Why it can work for both sides: sell high, buy low, their punts, timing"
           },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonFact"
+            },
+            "type": "array",
+            "title": "Facts",
+            "description": "`reasons` as data, in the same order"
+          },
+          "pitch_needs": {
+            "items": {
+              "$ref": "#/components/schemas/PitchNeed"
+            },
+            "type": "array",
+            "title": "Pitch Needs",
+            "description": "`pitch` as data"
+          },
           "playoff_pct_before": {
             "type": "number",
             "title": "Playoff Pct Before"
@@ -8794,6 +9054,22 @@
             },
             "type": "array",
             "title": "Reasons"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonFact"
+            },
+            "type": "array",
+            "title": "Facts",
+            "description": "`reasons` as data, in the same order"
+          },
+          "pitch_needs": {
+            "items": {
+              "$ref": "#/components/schemas/PitchNeed"
+            },
+            "type": "array",
+            "title": "Pitch Needs",
+            "description": "`pitch` as data"
           },
           "playoff_pct_before": {
             "type": "number",

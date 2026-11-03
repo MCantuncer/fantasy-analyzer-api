@@ -339,3 +339,29 @@ def test_uneven_trades_are_a_small_part_of_the_list():
     assert mix_shapes(ranked, 10, uneven) == ["1-2a", "1-2b", "2-2a", "1-1a", "1-1b"]
     assert mix_shapes(ranked, 3, uneven) == ["1-2a", "2-2a", "1-1a"]
     assert mix_shapes(["2-2a", "1-1a", "1-1b"], 2, uneven) == ["2-2a", "1-1a"]
+
+
+def test_facts_match_reasons_and_carry_their_numbers(league):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    deals = TradeFinder(league, model, me, keep=set()).candidates()
+    assert deals
+    for d in deals:
+        assert [f.text for f in d.facts] == d.reasons
+        for f in d.facts:
+            if f.kind in ("sell_high", "buy_low"):
+                assert f.player_id is not None and f.owners_value is not None and f.our_value is not None
+                assert (f.owners_value > f.our_value) == (f.kind == "sell_high")
+            if f.kind == "roster_squeeze":
+                assert f.tone == "against" and len(d.give) > len(d.get)
+
+
+def test_pitch_needs_spell_out_the_pitch(league):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set())
+    for d in finder.candidates()[:20]:
+        needs, pitch = finder.pitch_needs(d), finder.pitch(d)
+        assert len(needs) <= 2
+        for n in needs:
+            assert n.category in pitch and 1 <= n.league_rank <= len(league.teams)

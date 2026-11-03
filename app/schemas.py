@@ -114,6 +114,56 @@ class TeamBuild(BaseModel):
     expected_cats_won: float
 
 
+FactKind = Literal[
+    "sell_high",
+    "buy_low",
+    "punt_cost",
+    "players_out",
+    "consolidate",
+    "chasing",
+    "roster_squeeze",
+    "keystone_lost",
+    "vs_pickup",
+    "faab",
+    "paper_win",
+    "punt_mine",
+    "punt_theirs",
+    "not_rival",
+]
+
+
+class ReasonFact(BaseModel):
+    """One reason as data, so the page can draw it (bars, chips) instead of printing a sentence."""
+
+    kind: FactKind
+    tone: Literal["for", "against", "note"] = Field(
+        description="for: a reason they say yes; against: a reason they may not; note: context for you"
+    )
+    text: str = Field(description="The same point as a sentence, as in `reasons`")
+    player_id: int | None = None
+    player_name: str | None = None
+    categories: list[str] = Field(default_factory=list)
+    owners_value: float | None = Field(default=None, description="What owners pay for the player, in dollars")
+    our_value: float | None = Field(default=None, description="What he's worth in this league's categories, in dollars")
+    owners_label: str | None = Field(
+        default=None, description='owners_value as owners say it: "$38", "a 4th-round pick"'
+    )
+    our_label: str | None = None
+    count: int | None = None
+    rank: int | None = Field(default=None, description="chasing: their place in the standings")
+    teams: int | None = None
+    playoff_spots: int | None = None
+    ratio: float | None = Field(default=None, description="paper_win: trade value they get over what they send")
+
+
+class PitchNeed(BaseModel):
+    """A category the deal helps them in, as the pitch names it."""
+
+    category: str
+    league_rank: int = Field(description="Their rank in the category now, 1 is best")
+    per_game: float | None = Field(default=None, description="What the deal adds a game, counting stats only")
+
+
 class TradeIdea(BaseModel):
     partner_team_id: int
     partner_team_name: str
@@ -141,6 +191,8 @@ class TradeIdea(BaseModel):
     acceptance_label: Literal["likely", "possible", "long_shot"]
     pitch: str = Field(description="Why the deal helps them, to use when you propose it")
     reasons: list[str] = Field(description="Why it can work for both sides: sell high, buy low, their punts, timing")
+    facts: list[ReasonFact] = Field(default_factory=list, description="`reasons` as data, in the same order")
+    pitch_needs: list[PitchNeed] = Field(default_factory=list, description="`pitch` as data")
     playoff_pct_before: float
     playoff_pct_after: float
     playoff_week_cats_before: float | None = Field(
@@ -260,6 +312,8 @@ class TradeSide(BaseModel):
     acceptance_label: Literal["likely", "possible", "long_shot"]
     pitch: str = Field(description="Why the deal helps this team")
     reasons: list[str]
+    facts: list[ReasonFact] = Field(default_factory=list, description="`reasons` as data, in the same order")
+    pitch_needs: list[PitchNeed] = Field(default_factory=list, description="`pitch` as data")
     playoff_pct_before: float
     playoff_pct_after: float
 
