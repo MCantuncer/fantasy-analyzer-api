@@ -11,7 +11,7 @@ from app.espn.client import EspnClient
 from app.main import create_app
 from app.news import facts, sources
 from app.news.extract import NameIndex, body_part, kind_of, newsworthy, severity, tag
-from app.news.sources import parse_espn, parse_rss
+from app.news.sources import parse_bluesky, parse_espn, parse_rss
 from app.news.verify import Item, build_stories
 from app.store import MemoryStore
 from tests.conftest import LEAGUE_ID, signed_in
@@ -169,6 +169,12 @@ def test_kind_and_severity_come_from_the_words():
     assert body_part("Right ankle; sprain") == "ankle"
 
 
+def test_a_name_with_an_apostrophe_s_is_still_found():
+    index = NameIndex(NAMES)
+    assert index.find("Thunder retire Jalen Williams's No. 8") == [JWILL]
+    assert index.find("Zach LaVine’s elbow is fine") == [LAVINE]
+
+
 def test_roundups_tag_nobody():
     many = "Power rankings: Jalen Williams, Kris Dunn, Zach LaVine and Ajay Mitchell"
     assert tag(many, "", NameIndex(NAMES)).player_ids == []
@@ -302,7 +308,7 @@ def test_news_endpoint_checks_sources_and_hides_held_stories(recorded, fake_espn
     <link>https://cbs.example/jw</link><pubDate>Sun, 26 Oct 2026 09:00:00 GMT</pubDate></item></channel></rss>"""
     feeds = {
         "www.cbssports.com": httpx.Response(200, content=cbs),
-        "www.rotowire.com": httpx.Response(200, content=rss),
+        "basketball.realgm.com": httpx.Response(200, content=rss),
         "www.reddit.com": httpx.Response(200, content=ATOM),
     }
     app = news_client(recorded, fake_espn, feeds)
@@ -315,7 +321,7 @@ def test_news_endpoint_checks_sources_and_hides_held_stories(recorded, fake_espn
     assert jw["players"][0]["pro_team"] == "OKC" and jw["players"][0]["injury_status"] == "DAY_TO_DAY"
     dunn = next(s for h, s in stories.items() if "Kris Dunn" in h)
     assert dunn["status"] == "reported"
-    assert [s["source_id"] for s in dunn["sources"]] == ["rotowire"], "one chip per source"
+    assert [s["source_id"] for s in dunn["sources"]] == ["realgm"], "one chip per source"
     assert not any("LaVine" in h for h in stories), "a Reddit-only trade stays hidden"
 
     health = {s["source_id"]: s for s in body["sources"]}
@@ -359,3 +365,82 @@ def test_espn_gets_a_user_agent_without_a_link():
 
     asyncio.run(sources.fetch(sources.BY_ID["espn"], httpx.MockTransport(handler)))
     assert "http" not in seen["site.api.espn.com"]
+
+
+def test_bluesky_posts_parse_to_items_without_reposts_or_replies():
+    def post(text, at, card=None, **kw):
+        entry = {
+            "post": {
+                "uri": "at://did:plc:abc/app.bsky.feed.post/3kx",
+                "author": {"handle": "rotowirenba.bsky.social"},
+                "record": {"text": text, "createdAt": at, **kw},
+            }
+        }
+        if card:
+            entry["post"]["embed"] = {"external": card}
+        return entry
+
+    data = {
+        "feed": [
+            post(
+                "Kris Dunn: Out against Detroit\nDunn will miss a second game.",
+                "2026-10-26T08:00:00.000Z",
+                {"uri": "https://www.rotowire.com/basketball/player/kris-dunn", "description": "Card text"},
+            ),
+            post("Zach LaVine scores 30", "2026-10-26T09:00:00Z"),
+            {**post("Reposted", "2026-10-26T09:00:00Z"), "reason": {"$type": "app.bsky.feed.defs#reasonRepost"}},
+            post("A reply", "2026-10-26T09:00:00Z", reply={"parent": {}}),
+        ]
+    }
+    items = parse_bluesky("rotowire", data)
+    assert [i.title for i in items] == ["Kris Dunn: Out against Detroit", "Zach LaVine scores 30"]
+    assert items[0].url == "https://www.rotowire.com/basketball/player/kris-dunn"
+    assert items[0].summary == "Dunn will miss a second game."
+    assert items[1].url == "https://bsky.app/profile/rotowirenba.bsky.social/post/3kx"
+    assert items[0].published == datetime(2026, 10, 26, 8, tzinfo=UTC)
+
+
+# -- one event, one story: real headline shapes from a live run of every feed (2026-11-03)
+
+
+def test_differently_worded_headlines_about_nobody_we_track_are_one_story():
+    items = [
+        item("cbs", "Oklahoma City to retire Russell Westbrook's jersey in Feb. 7 ceremony", 5),
+        # tagged with a player only its summary mentions
+        item("yahoo", "Thunder to retire Russell Westbrook's No. 0", 4, players=(1,)),
+        item("hoopsrumors", "Thunder To Retire Russell Westbrook’s Jersey On Feb. 7", 3),
+    ]
+    stories = build_stories(items, states(), TEAMS, NOW)
+    assert len(stories) == 1 and len(stories[0].items) == 3 and stories[0].status == "confirmed"
+
+
+def test_injury_report_lines_about_different_players_stay_apart():
+    items = [
+        item("rotowire", "Jalen Johnson: Ruled out Monday", 2),
+        item("rotoworld", "Dejounte Murray ruled out Monday", 1),
+    ]
+    assert len(build_stories(items, states(), TEAMS, NOW)) == 2
+
+
+def test_the_same_line_about_two_named_players_stays_two_stories():
+    items = [
+        item("rotoworld", "Kris Dunn (back) removed from injury report", 2),
+        item("rotoworld", "Zach LaVine (back) removed from injury report", 1),
+    ]
+    assert len(build_stories(items, states(), TEAMS, NOW)) == 2
+
+
+def test_a_loosely_worded_update_joins_the_same_players_story():
+    items = [
+        item("rotoworld", "Kris Dunn (rest) out Monday vs. Rockets", 3),
+        item("rotowire", "Kris Dunn: Will sit out Monday", 2),
+    ]
+    stories = build_stories(items, states(), TEAMS, NOW)
+    assert len(stories) == 1 and {i.source_id for i in stories[0].items} == {"rotoworld", "rotowire"}
+    assert stories[0].status == "confirmed", "two fantasy desks from different companies"
+
+
+def test_a_suspension_is_neither_an_injury_nor_a_release():
+    assert kind_of("NBA Suspends Hawks' Kris Dunn For One Game") == "other"
+    assert kind_of("Kris Dunn Suspended 1 Game For Elbowing Zach LaVine") == "other"
+    assert newsworthy("NBA Suspends Hawks' Kris Dunn For One Game")

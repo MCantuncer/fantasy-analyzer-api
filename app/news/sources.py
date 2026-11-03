@@ -5,6 +5,9 @@ site. Each source has a kind:
 
 - ``outlet``: a news organisation. Two outlets from different groups agreeing is
   enough to publish a story; one alone shows as "Reported".
+Some outlets are read through their Bluesky account (public API, no key), where
+fantasy desks post every player update as it happens.
+
 - ``tip``: social sites (Reddit). Never enough to publish on its own, because that
   is where look-alike insider accounts and made-up trades spread.
 
@@ -35,6 +38,11 @@ ESPN_USER_AGENT = "Mozilla/5.0 (compatible; fantasy-analyzer/1.0)"
 MAX_BYTES = 2_000_000  # a feed bigger than this is not a news feed
 SUMMARY_CHARS = 400
 ESPN_SITE = "https://site.api.espn.com"
+BLUESKY_FEED = "https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed"
+
+
+def _bluesky(handle: str) -> str:
+    return f"{BLUESKY_FEED}?actor={handle}&limit=100&filter=posts_no_replies"
 
 
 @dataclass(frozen=True)
@@ -44,13 +52,15 @@ class Source:
     kind: SourceKind
     group: str
     url: str = ""
-    format: Literal["rss", "espn", "none"] = "rss"
+    format: Literal["rss", "espn", "bluesky", "none"] = "rss"
 
 
 SOURCES: tuple[Source, ...] = (
     Source("espn_players", "ESPN player data", "fact", "espn_data", format="none"),
     Source("espn", "ESPN", "outlet", "espn", f"{ESPN_SITE}/apis/site/v2/sports/basketball/nba/news?limit=50", "espn"),
-    Source("rotowire", "RotoWire", "outlet", "rotowire", "https://www.rotowire.com/rss/news.php?sport=NBA"),
+    # RotoWire's RSS carries a handful of items a day; its Bluesky account posts every player update.
+    Source("rotowire", "RotoWire", "outlet", "rotowire", _bluesky("rotowirenba.bsky.social"), "bluesky"),
+    Source("rotoworld", "Rotoworld", "outlet", "nbc", _bluesky("rotoworld-hoops.bsky.social"), "bluesky"),
     Source("cbs", "CBS Sports", "outlet", "cbs", "https://www.cbssports.com/rss/headlines/nba/"),
     Source("yahoo", "Yahoo Sports", "outlet", "yahoo", "https://sports.yahoo.com/nba/rss.xml"),
     Source("realgm", "RealGM", "outlet", "realgm", "https://basketball.realgm.com/rss/wiretap/0/0.xml"),
@@ -190,6 +200,39 @@ def parse_espn(source_id: str, data: dict) -> list[RawItem]:
     return out
 
 
+def parse_bluesky(source_id: str, data: dict) -> list[RawItem]:
+    """An account's own posts (no reposts or replies): the first line is the headline, and a
+    linked card gives the link and summary."""
+    out = []
+    for entry in data.get("feed") or []:
+        if entry.get("reason"):  # a repost of someone else
+            continue
+        post = entry.get("post") or {}
+        record = post.get("record") or {}
+        if record.get("reply"):
+            continue
+        card = ((post.get("embed") or {}).get("external")) or {}
+        text = (record.get("text") or "").strip()
+        title = clean(text.split("\n", 1)[0]) or clean(card.get("title"))
+        published = _when(record.get("createdAt"))
+        if not title or published is None:
+            continue
+        uri = post.get("uri", "")
+        handle = (post.get("author") or {}).get("handle", "")
+        link = card.get("uri") or (f"https://bsky.app/profile/{handle}/post/{uri.rsplit('/', 1)[-1]}" if uri else "")
+        rest = clean(text.split("\n", 1)[1]) if "\n" in text else ""
+        out.append(
+            RawItem(
+                source_id=source_id,
+                title=title,
+                url=link,
+                published=published,
+                summary=clean(rest or card.get("description"), SUMMARY_CHARS),
+            )
+        )
+    return out
+
+
 def _site(url: str) -> str:
     host = httpx.URL(url).host
     return ".".join(host.split(".")[-2:])
@@ -218,9 +261,10 @@ async def fetch(
         raise FeedError(f"HTTP {resp.status_code}")
     if len(resp.content) > MAX_BYTES:
         raise FeedError("feed too large")
-    if source.format == "espn":
+    if source.format in ("espn", "bluesky"):
         try:
-            return parse_espn(source.id, resp.json())
+            data = resp.json()
         except ValueError:
             raise FeedError("not JSON") from None
+        return parse_espn(source.id, data) if source.format == "espn" else parse_bluesky(source.id, data)
     return parse_rss(source.id, resp.content)

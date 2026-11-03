@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal
 
-from app.news.extract import SEVERITY_LABEL, newsworthy, normalize
+from app.news.extract import SEVERITY_LABEL, newsworthy, normalize, without_possessives
 from app.news.facts import STATUS_LABEL, STATUS_SEVERITY, PlayerState
 from app.news.sources import BY_ID
 
@@ -38,7 +38,13 @@ FAMILY = {
 JOIN_WINDOW = timedelta(hours=48)
 TITLE_WINDOW = timedelta(hours=24)
 TRADE_PROOF_WINDOW = timedelta(hours=72)
-SAME_TITLE = 0.5  # word overlap for two headlines about nobody in particular to count as one story
+SAME_TITLE = 0.3  # overlap of telling words for two headlines about nobody in particular to be one story
+# Words every injury report or schedule line shares; they say nothing about which story it is.
+COMMON = set(
+    "the and for with from his her their its out ruled questionable doubtful probable available listed "
+    "injury report game games tonight today monday tuesday wednesday thursday friday saturday sunday "
+    "will not after before against vs nba team season night week".split()
+)
 FACT_SOURCE = "espn_players"
 MOVES = ("trade", "signing", "waive")
 
@@ -85,6 +91,7 @@ class _Cluster:
     family: str
     items: list[Item] = field(default_factory=list)
     players: list[int] = field(default_factory=list)
+    named: set[int] = field(default_factory=set)  # players named in a headline
 
     @property
     def last(self) -> datetime:
@@ -92,7 +99,7 @@ class _Cluster:
 
 
 def _words(title: str) -> set[str]:
-    return {w for w in normalize(title).split() if len(w) > 2}
+    return {w for w in normalize(without_possessives(title)).split() if len(w) > 2 and w not in COMMON}
 
 
 def _overlap(a: str, b: str) -> float:
@@ -100,27 +107,50 @@ def _overlap(a: str, b: str) -> float:
     return len(wa & wb) / len(wa | wb) if wa and wb else 0.0
 
 
-def cluster(items: list[Item]) -> list[_Cluster]:
+_SUFFIX = {"jr", "sr", "ii", "iii", "iv"}
+
+
+def _surname(name: str) -> str:
+    words = [w for w in normalize(name).split() if w not in _SUFFIX]
+    return words[-1] if words else ""
+
+
+def _named(item: Item, names: dict[int, str]) -> set[int]:
+    """The item's players whose name is in its headline, not only in its summary or tags."""
+    title = f" {normalize(without_possessives(item.title))} "
+    return {p for p in item.player_ids if (s := _surname(names.get(p, ""))) and f" {s} " in title}
+
+
+def _joins(item: Item, family: str, c: _Cluster, names: dict[int, str]) -> bool:
+    """Does the item belong to this story? Same player and kind of news within two days; a
+    loosely worded item ("sits out", "suspended") about the same player within a day; or a
+    headline telling the same story within a day, unless the two headlines name different
+    players ("Jerome removed from injury report", "Gobert removed from injury report")."""
+    gap = item.published - c.last
+    if item.player_ids and set(item.player_ids) & set(c.players):
+        if c.family == family:
+            return gap <= JOIN_WINDOW
+        return "other" in (c.family, family) and gap <= TITLE_WINDOW
+    if gap > TITLE_WINDOW or (_named(item, names) and c.named):
+        return False
+    return any(_overlap(item.title, i.title) >= SAME_TITLE for i in c.items if i.title)
+
+
+def cluster(items: list[Item], names: dict[int, str] | None = None) -> list[_Cluster]:
+    """Groups items that tell the same story, so each event shows once with all its sources."""
     out: list[_Cluster] = []
+    names = names or {}
     for item in sorted(items, key=lambda i: (i.published, i.id)):
         family = FAMILY.get(item.kind, "other")
-        home = None
-        for c in reversed(out):
-            if c.family != family:
-                continue
-            if item.player_ids:
-                if set(item.player_ids) & set(c.players) and item.published - c.last <= JOIN_WINDOW:
-                    home = c
-                    break
-            elif not c.players and item.published - c.last <= TITLE_WINDOW:
-                if _overlap(item.title, c.items[0].title) >= SAME_TITLE:
-                    home = c
-                    break
+        home = next((c for c in reversed(out) if _joins(item, family, c, names)), None)
         if home is None:
             home = _Cluster(family)
             out.append(home)
+        elif home.family == "other":
+            home.family = family  # the story is what its clearest item says it is
         home.items.append(item)
         home.players.extend(p for p in item.player_ids if p not in home.players)
+        home.named |= _named(item, names)
     return out
 
 
@@ -197,7 +227,7 @@ def build_stories(
     stories = []
     # Only NBA news makes a story: no game guides, betting, recaps, rankings or other leagues.
     items = [i for i in items if i.source_id == FACT_SOURCE or newsworthy(i.title)]
-    for c in cluster(items):
+    for c in cluster(items, names):
         trusted = [i for i in c.items if i.source_kind != "tip"]
         outlets = [i for i in trusted if i.source_kind == "outlet"]
         facts = [i for i in trusted if i.source_id == FACT_SOURCE]
