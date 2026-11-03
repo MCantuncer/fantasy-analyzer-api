@@ -164,9 +164,19 @@ def test_scores_list_this_weeks_fixtures_with_my_players(recorded, schedule_raw,
     mine = {p["name"] for d in body["week"] for g in d["games"] for p in g["my_players"]}
     roster = {p.name for p in league.team(MY_TEAM).roster}
     assert mine and mine <= roster
+    # Each of your players is on one of the two teams, so the other one is his opponent.
+    for d in body["week"]:
+        for g in d["games"]:
+            for p in g["my_players"]:
+                assert p["pro_team_id"] in (g["away"]["pro_team_id"], g["home"]["pro_team_id"])
+    # Who sits is one of your players with a game that day.
+    for d in body["week"]:
+        playing = {p["player_id"] for g in d["games"] for p in g["my_players"]}
+        assert set(d["sits"]) <= playing
     # Without a team, fixtures still come back, just without names.
     body = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()
     assert all(not g["my_players"] for d in body["week"] for g in d["games"])
+    assert all(not d["sits"] for d in body["week"])
 
 
 def test_live_games_get_the_quarter_and_clock(recorded, schedule_raw, day4_players):
