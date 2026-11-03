@@ -565,9 +565,6 @@ class TradeFinder:
         if len(give) > len(get) and out_count >= 2:
             text = f"They have {out_count} players out, so an extra healthy body helps them now."
             out.append(_fact("players_out", "for", text, count=out_count))
-        if len(get) > len(give):
-            text = "They turn two roster spots into one better player and can grab someone off waivers."
-            out.append(_fact("consolidate", "for", text, count=len(get) - len(give)))
         if struggling:
             out.append(
                 _fact(

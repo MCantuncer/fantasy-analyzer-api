@@ -354,6 +354,8 @@ def test_facts_match_reasons_and_carry_their_numbers(league):
                 assert (f.owners_value > f.our_value) == (f.kind == "sell_high")
             if f.kind == "roster_squeeze":
                 assert f.tone == "against" and len(d.give) > len(d.get)
+            # Can (2026-11-03): an uneven deal is never sold as a plus for the other side.
+            assert f.kind != "consolidate"
 
 
 def test_pitch_needs_spell_out_the_pitch(league):
