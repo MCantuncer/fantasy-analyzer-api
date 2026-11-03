@@ -400,7 +400,8 @@ def test_bluesky_posts_parse_to_items_without_reposts_or_replies():
 def test_differently_worded_headlines_about_nobody_we_track_are_one_story():
     items = [
         item("cbs", "Oklahoma City to retire Russell Westbrook's jersey in Feb. 7 ceremony", 5),
-        item("yahoo", "Thunder to retire Russell Westbrook's No. 0", 4),
+        # tagged with a player only its summary mentions
+        item("yahoo", "Thunder to retire Russell Westbrook's No. 0", 4, players=(1,)),
         item("hoopsrumors", "Thunder To Retire Russell Westbrook’s Jersey On Feb. 7", 3),
     ]
     stories = build_stories(items, states(), TEAMS, NOW)
@@ -411,6 +412,14 @@ def test_injury_report_lines_about_different_players_stay_apart():
     items = [
         item("rotowire", "Jalen Johnson: Ruled out Monday", 2),
         item("rotoworld", "Dejounte Murray ruled out Monday", 1),
+    ]
+    assert len(build_stories(items, states(), TEAMS, NOW)) == 2
+
+
+def test_the_same_line_about_two_named_players_stays_two_stories():
+    items = [
+        item("rotoworld", "Kris Dunn (back) removed from injury report", 2),
+        item("rotoworld", "Zach LaVine (back) removed from injury report", 1),
     ]
     assert len(build_stories(items, states(), TEAMS, NOW)) == 2
 
