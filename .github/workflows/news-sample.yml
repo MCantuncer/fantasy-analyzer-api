@@ -1,6 +1,6 @@
 name: News feed sample
 
-# One-off (run 9): which stories look like duplicates.
+# One-off (run 10): which stories look like duplicates.
 on:
   push:
     branches: [feature/news-feed-sample]
