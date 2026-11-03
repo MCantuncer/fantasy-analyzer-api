@@ -1,6 +1,6 @@
 name: News feed sample
 
-# One-off (run 11: with Bluesky and merging): which stories look like duplicates.
+# One-off (run 12: with Bluesky and merging): which stories look like duplicates.
 on:
   push:
     branches: [feature/news-feed-sample]
