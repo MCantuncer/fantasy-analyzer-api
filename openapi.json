@@ -4174,6 +4174,14 @@
             },
             "type": "array",
             "title": "Games"
+          },
+          "sits": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Sits",
+            "description": "Your players with a game who sit: more of them play than the lineup has slots, and the best lineup leaves these out. Empty when everyone fits or without team_id"
           }
         },
         "type": "object",
@@ -4196,6 +4204,18 @@
           "injury_status": {
             "type": "string",
             "title": "Injury Status"
+          },
+          "pro_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pro Team Id",
+            "description": "His NBA team, so the other side is the opponent"
           }
         },
         "type": "object",

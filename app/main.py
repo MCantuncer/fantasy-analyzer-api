@@ -42,7 +42,8 @@ from app.analysis.durability import HISTORY_SEASONS, games_played, long_absences
 from app.analysis.durability import attach as attach_durability
 from app.analysis.injury import LAST_SEASON_WEIGHT, Season, parse_gamelogs
 from app.analysis.injury import analyze as analyze_absence
-from app.analysis.projection import project_matchup
+from app.analysis.model import CategoryModel
+from app.analysis.projection import crowded_days, project_matchup
 from app.analysis.report import Analyzer, league_summary
 from app.analysis.shop import ShopAnalyzer, ShopError
 from app.analysis.target import TargetAnalyzer, TargetError
@@ -216,6 +217,7 @@ def create_app(
     # (season, player id) -> his long absences that season; finished seasons don't change.
     app.state.past_absences = TTLCache(PAST_GAMES_TTL, max_items=20_000)
     app.state.score_days = TTLCache(LIVE_SCORES_TTL)
+    app.state.week_sits = TTLCache(LEAGUE_TTL)
     # Quarter and clock from ESPN's scoreboard, by date; refreshed as often as live scores.
     app.state.clocks = TTLCache(LIVE_SCORES_TTL)
     app.state.clock_transport = clock_transport
@@ -1557,6 +1559,33 @@ def create_app(
             app.state.clocks.set(day_date, clocks or {})
         return apply_clocks(data, clocks) if clocks else data
 
+    async def week_sits(
+        league_id: int, season: int, creds: EspnCredentials | None, team_id: int
+    ) -> dict[str, list[int]]:
+        """Who sits on each crowded day left this week, by date: the same lineup the matchup projection uses."""
+        key = (league_id, season, credentials_key(creds), team_id)
+        cached = app.state.week_sits.get(key)
+        if cached is not None:
+            return cached
+        out: dict[str, list[int]] = {}
+        try:
+            league = await load_league(league_id, season, creds, with_fa=False, with_calendar=True)
+            team = league.team(team_id)
+
+            def compute() -> list:
+                model = CategoryModel(league)
+                period = league.current_period
+                if team is None or not model.cal or period not in model.horizon:
+                    return []
+                return crowded_days(model, team.roster, period)
+
+            for c in await run_in_threadpool(compute):
+                out[c.date] = [pid for pid, _ in c.sit]
+        except Exception:  # the grid still shows the games without it
+            logging.getLogger(__name__).exception("week sits failed for league %s team %s", league_id, team_id)
+        app.state.week_sits.set(key, out)
+        return out
+
     @app.post("/api/scores", response_model=schemas.ScoreDay, responses={401: {"model": schemas.ErrorBody}})
     async def scores(
         body: schemas.ScoresRequest,
@@ -1602,10 +1631,12 @@ def create_app(
             abbrev, name = sched.teams.get(pro_team_id, ("", ""))
             return schemas.GameSide(pro_team_id=pro_team_id, abbrev=abbrev, name=name)
 
+        sits = await week_sits(body.league_id, season, creds, team.id) if team else {}
         week = [
             schemas.FixtureDay(
                 day=d,
                 date=_iso_date(sched.date_of(d)),
+                sits=sits.get(_iso_date(sched.date_of(d)) or "", []),
                 games=[
                     schemas.Fixture(
                         id=g.id,
@@ -1613,7 +1644,9 @@ def create_app(
                         away=fixture_side(g.away),
                         home=fixture_side(g.home),
                         my_players=[
-                            schemas.FixturePlayer(player_id=p.id, name=p.name, injury_status=p.injury_status)
+                            schemas.FixturePlayer(
+                                player_id=p.id, name=p.name, injury_status=p.injury_status, pro_team_id=p.pro_team_id
+                            )
                             for p in roster
                             if p.pro_team_id in (g.away, g.home)
                         ],

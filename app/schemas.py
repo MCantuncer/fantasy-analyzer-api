@@ -801,6 +801,7 @@ class FixturePlayer(BaseModel):
     player_id: int
     name: str
     injury_status: str
+    pro_team_id: int | None = Field(default=None, description="His NBA team, so the other side is the opponent")
 
 
 class Fixture(BaseModel):
@@ -815,6 +816,11 @@ class FixtureDay(BaseModel):
     day: int
     date: str | None = None
     games: list[Fixture]
+    sits: list[int] = Field(
+        default_factory=list,
+        description="Your players with a game who sit: more of them play than the lineup has slots, "
+        "and the best lineup leaves these out. Empty when everyone fits or without team_id",
+    )
 
 
 class ScoreDayRef(BaseModel):
