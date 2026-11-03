@@ -1,6 +1,6 @@
 name: News feed sample
 
-# One-off (run 6): why ESPN and HoopsHype fail, using the app's own fetch.
+# One-off (run 9): which stories look like duplicates.
 on:
   push:
     branches: [feature/news-feed-sample]
@@ -15,17 +15,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --locked
-      - run: |
-          uv run python - <<'PY'
-          import asyncio, httpx
-          from app.news.sources import BY_ID, fetch, USER_AGENT
-          async def main():
-              from app.news.sources import parse_rss
-              for name, ua in {"old": USER_AGENT, "new": "Mozilla/5.0 (compatible; fantasy-analyzer/1.0)"}.items():
-                  async with httpx.AsyncClient(follow_redirects=True, headers={"User-Agent": ua}, timeout=12) as h:
-                      for u in [BY_ID["espn"].url, "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard", "https://www.hoopsrumors.com/feed", "https://www.cbssports.com/rss/headlines/nba/", "https://sports.yahoo.com/nba/rss.xml", "https://basketball.realgm.com/rss/wiretap/0/0.xml", "https://marcstein.substack.com/feed", "https://www.reddit.com/r/nba/new/.rss?limit=50", "https://www.rotowire.com/rss/news.php?sport=NBA"]:
-                          r = await h.get(u)
-                          n = len(parse_rss("x", r.content)) if r.status_code == 200 and "xml" in (r.headers.get("content-type") or "") else "-"
-                          print(name, r.status_code, n, u)
-          asyncio.run(main())
-          PY
+      - run: uv run python scripts/dup_probe.py
