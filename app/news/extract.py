@@ -131,8 +131,13 @@ def newsworthy(title: str) -> bool:
 SEVERITY_LABEL = {0: "no injury", 1: "minor, day-to-day", 2: "out, short term", 3: "serious, weeks or more"}
 
 
+SUSPENSION = _any(r"\bsuspen(d|ds|ded|sion)\b")
+
+
 def kind_of(text: str) -> Kind:
     t = normalize(text)
+    if SUSPENSION.search(t):  # league discipline: not an injury, and not a release
+        return "other"
     move = TRADE.search(t) or SIGNING.search(t)
     if move and RUMOR.search(t):
         return "rumor"
