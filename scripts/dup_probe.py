@@ -64,6 +64,10 @@ async def main():
 def report(stories, states, label):
     name = lambda pid: states[pid].name if pid in states else str(pid)  # noqa: E731
     for s in stories:
+        if "Westbrook" in s.headline:
+            for i in s.items:
+                print(label, "ITEM", s.headline[:30], "|", i.published.isoformat()[:16], i.source_id, i.kind, [name(p) for p in i.player_ids], "|", i.title[:100])
+    for s in stories:
         print(label, "STORY", s.kind, s.status, s.published.isoformat()[:16], [name(p) for p in s.player_ids][:4], "|", s.headline[:110], "| n=", len(s.items), sorted({i.source_id for i in s.items}))
     n = 0
     for a, b in combinations(stories, 2):
