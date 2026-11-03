@@ -27,6 +27,14 @@ def normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
+_POSSESSIVE = re.compile(r"(\w)['’]s\b", re.IGNORECASE)
+
+
+def without_possessives(text: str) -> str:
+    """ "Westbrook's jersey" -> "Westbrook jersey", so a name followed by 's is still found."""
+    return _POSSESSIVE.sub(r"\1", text)
+
+
 def _name_key(full_name: str) -> str:
     words = [w for w in normalize(full_name).split() if w not in SUFFIXES]
     return " ".join(words)
@@ -49,7 +57,7 @@ class NameIndex:
     def find(self, text: str) -> list[int]:
         if self._re is None:
             return []
-        words = " ".join(w for w in normalize(text).split() if w not in SUFFIXES)
+        words = " ".join(w for w in normalize(without_possessives(text)).split() if w not in SUFFIXES)
         out: list[int] = []
         for m in self._re.finditer(words):
             pid = self._ids[m.group(1)]

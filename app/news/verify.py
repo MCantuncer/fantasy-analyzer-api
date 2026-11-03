@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal
 
-from app.news.extract import SEVERITY_LABEL, newsworthy, normalize
+from app.news.extract import SEVERITY_LABEL, newsworthy, normalize, without_possessives
 from app.news.facts import STATUS_LABEL, STATUS_SEVERITY, PlayerState
 from app.news.sources import BY_ID
 
@@ -99,7 +99,7 @@ class _Cluster:
 
 
 def _words(title: str) -> set[str]:
-    return {w for w in normalize(title).split() if len(w) > 2 and w not in COMMON}
+    return {w for w in normalize(without_possessives(title)).split() if len(w) > 2 and w not in COMMON}
 
 
 def _overlap(a: str, b: str) -> float:
@@ -117,7 +117,7 @@ def _surname(name: str) -> str:
 
 def _named(item: Item, names: dict[int, str]) -> set[int]:
     """The item's players whose name is in its headline, not only in its summary or tags."""
-    title = f" {normalize(item.title)} "
+    title = f" {normalize(without_possessives(item.title))} "
     return {p for p in item.player_ids if (s := _surname(names.get(p, ""))) and f" {s} " in title}
 
 

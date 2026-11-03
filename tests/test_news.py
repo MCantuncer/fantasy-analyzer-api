@@ -169,6 +169,12 @@ def test_kind_and_severity_come_from_the_words():
     assert body_part("Right ankle; sprain") == "ankle"
 
 
+def test_a_name_with_an_apostrophe_s_is_still_found():
+    index = NameIndex(NAMES)
+    assert index.find("Thunder retire Jalen Williams's No. 8") == [JWILL]
+    assert index.find("Zach LaVine’s elbow is fine") == [LAVINE]
+
+
 def test_roundups_tag_nobody():
     many = "Power rankings: Jalen Williams, Kris Dunn, Zach LaVine and Ajay Mitchell"
     assert tag(many, "", NameIndex(NAMES)).player_ids == []
