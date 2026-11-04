@@ -1,6 +1,6 @@
 name: News feed sample
 
-# One-off (run 13: with Bluesky and merging): which stories look like duplicates.
+# One-off (run 14): why the Kawhi return story also tags Anthony Edwards.
 on:
   push:
     branches: [feature/news-feed-sample]
@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: feature/news-bluesky-dedup
+          ref: main
       - uses: actions/checkout@v4
         with:
           path: probe
