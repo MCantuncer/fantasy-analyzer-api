@@ -91,6 +91,20 @@ def test_drift_and_links_spread_the_simulated_records(league, monkeypatch):
     assert linked.playoff_pct.min() > independent.playoff_pct.min()
 
 
+def test_teams_drift_back_toward_the_average(league, monkeypatch):
+    model = CategoryModel(league)
+    dists = [model.dist(t.roster) for t in league.teams]
+    drifting = simulate_season(league, dists, model.reverse, n_sims=1000)
+    fixed_sim = SeasonSim(league, dists, model.reverse, n_sims=1000)
+    monkeypatch.setattr(sim, "REVERSION", 0.0)
+    fixed = simulate_season(league, dists, model.reverse, n_sims=1000)
+    # Today's best team is less of a lock and today's worst less hopeless when teams can change.
+    assert drifting.playoff_pct.max() < fixed.playoff_pct.max()
+    assert drifting.playoff_pct.min() > fixed.playoff_pct.min()
+    # The fast what-if simulation drifts the same way.
+    assert np.allclose(fixed_sim.base.playoff_pct, drifting.playoff_pct, atol=0.005)
+
+
 def test_report_sections(league):
     keep = [p.id for p in league.team(3).roster if p.name == "Kyshawn George"]
     report = Analyzer(league, 3, keep_player_ids=keep).report()

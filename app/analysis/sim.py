@@ -47,6 +47,18 @@ CATEGORY_LINKS = {
 # Injuries, trades and role changes last: each simulated season gives every team a shock
 # per category, in sds of one week, that holds for the rest of that season.
 TEAM_DRIFT = 0.5
+# Teams drift back toward the league average the further ahead the week: bad teams pick up
+# free agents, get stars back from injury and trade; good ones lose players. Each week ahead
+# keeps this much less of a team's gap to the average (none for the week being played).
+# Measured on League A's 2022, 2024, 2025 and 2026 seasons: from week 2 the model's predicted
+# gaps between teams' final records were ~2.5x the real ones (slope 0.41), shrinking to about
+# right by week 10. At 0.10 the slope is 0.73 at week 2 and 0.95-1.1 from week 4 on.
+REVERSION = 0.10
+
+
+def _pull(period: int, first: int) -> float:
+    """Share of a team's gap to the league average still there in ``period``."""
+    return (1.0 - REVERSION) ** max(period - first, 0)
 
 
 def category_links(names: list[str]) -> np.ndarray:
@@ -107,7 +119,9 @@ def simulate_season(
 
     Categories are drawn together (CATEGORY_LINKS), and each team carries a lasting
     shock per category for the whole simulated season (TEAM_DRIFT): without them the
-    simulated records spread too little and the odds come out too sure.
+    simulated records spread too little and the odds come out too sure. Each team's
+    projection also drifts back toward the league average week by week (REVERSION), since
+    rosters, injuries and roles keep changing all season.
 
     Uses a fixed seed so that two runs differing only in one roster share the same
     random draws, which makes "before vs after" comparisons much less noisy.
@@ -133,6 +147,8 @@ def simulate_season(
         week = (period_dists or {}).get(period, dists)
         mu = np.array([d.mu for d in week])
         sd = np.array([d.sd for d in week])
+        center = mu.mean(0)
+        mu = center + _pull(period, periods[0]) * (mu - center)
         z = rng.standard_normal(size=(n_sims, n_teams, mu.shape[1])) @ chol.T
         draws = mu + sd * (z + drift)
         if period == league.current_period and period in (period_dists or {}):
@@ -241,6 +257,9 @@ class SeasonSim:
                     if banked and tid in self.index
                 }
         self.tiebreak = rng.uniform(0, 1e-6, size=(n_sims, n_teams))
+        # The league average each period, from today's rosters; what-ifs keep it (a trade moves it little).
+        self.center = {p: np.mean([self._base_dist(p, i).mu for i in range(n_teams)], axis=0) for p in self.periods}
+        self.pull = {p: _pull(p, self.periods[0]) for p in self.periods}
 
         self.wins = np.tile(np.array([t.wins for t in league.teams], float), (n_sims, 1))
         self.losses = np.tile(np.array([t.losses for t in league.teams], float), (n_sims, 1))
@@ -263,7 +282,8 @@ class SeasonSim:
 
     def _draws(self, period: int, i: int, d: Dist) -> np.ndarray:
         """Team i's (n_sims, C) signed category totals for one matchup period."""
-        draws = d.mu + d.sd * self.noise[period][:, i, :].astype(float)
+        mu = self.center[period] + self.pull[period] * (d.mu - self.center[period])
+        draws = mu + d.sd * self.noise[period][:, i, :].astype(float)
         banked = self.banked.get(period, {}).get(i)
         if banked:
             wrapped = draws[:, None, :]
