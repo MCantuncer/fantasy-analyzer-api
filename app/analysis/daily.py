@@ -5,7 +5,9 @@ from both sides. A deal qualifies only if
   * each owner, judging it the way owners do (rankings, draft prices), sees fair value,
   * it raises each team's expected categories won, and also in the categories that
     team competes in (its punts are ignored), and
-  * neither team's playoff odds drop in the season simulation.
+  * both teams' playoff odds visibly go up in the season simulation (the same one the
+    Standings page shows, on each week's real games and injuries): a side whose odds stay
+    flat gains nothing its owner can see, so the deal is not suggested.
 
 Deals are ranked by the smaller of the two gains, weighted by how likely both owners
 are to say yes, so the pick is good for both sides rather than great for one.
@@ -39,7 +41,8 @@ from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.durability import injury_prone
 from app.analysis.model import CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
-from app.analysis.sim import simulate_season
+from app.analysis.report import partner_gains
+from app.analysis.sim import SeasonSim
 from app.analysis.tiers import tier
 from app.analysis.trades import Deal, TradeFinder, acceptance_label
 from app.espn.parse import League, Player
@@ -114,6 +117,7 @@ class DailyTrade:
         self.finders = [TradeFinder(league, self.model, i, set(), premium=self.premium) for i in range(len(self.teams))]
         self.dists: list[Dist] = self.finders[0].dists
         self.spotlight = spotlight_index(league, day)
+        self._sim: SeasonSim | None = None
 
     def pairs(self) -> list[Pair]:
         """Every deal that works for both owners, scanning each pair of teams once."""
@@ -130,8 +134,28 @@ class DailyTrade:
                     out.append(Pair(a=a, b=b, i=i, j=j))
         return sorted(out, key=lambda p: p.score, reverse=True)
 
-    def playoff_odds(self, dists: list[Dist]) -> np.ndarray:
-        return simulate_season(self.league, dists, self.model.reverse, n_sims=SIMS).playoff_pct
+    def period_dists(self, changed: dict[int, list[Player]] | None = None) -> dict[int, list[Dist]] | None:
+        """Each team's projection for every remaining matchup period, with changed rosters swapped in."""
+        if not self.model.cal:
+            return None
+        rosters = [(changed or {}).get(i, t.roster) for i, t in enumerate(self.teams)]
+        periods = sorted({m.period for m in self.league.schedule if m.winner == "UNDECIDED"})
+        return {p: [self.model.dist(r, p) for r in rosters] for p in periods}
+
+    def playoff_odds(self, pair: Pair | None = None) -> np.ndarray:
+        """Every team's playoff odds today, or after ``pair``'s deal: paired draws, so the change is the deal's."""
+        if self._sim is None:
+            self._sim = SeasonSim(
+                self.league, self.dists, self.model.reverse, n_sims=SIMS, period_dists=self.period_dists()
+            )
+        if pair is None:
+            return self._sim.base.playoff_pct
+        changed = {pair.i, pair.j}
+        return self._sim.what_if(changed, pair.a.dists, self.period_dists(pair.a.rosters)).playoff_pct
+
+    @staticmethod
+    def both_gain(pair: Pair, before: np.ndarray, after: np.ndarray) -> bool:
+        return partner_gains(before[pair.i], after[pair.i]) and partner_gains(before[pair.j], after[pair.j])
 
     def pick(self, keep_id: str | None = None) -> tuple[Pair | None, np.ndarray, np.ndarray | None, int]:
         """The day's deal. ``keep_id`` is the current pick on a re-check: it stays unless it no longer
@@ -139,12 +163,12 @@ class DailyTrade:
         pairs = self.pairs()
         involved = [p for p in pairs if self.spotlight in (p.i, p.j)]
         shortlist = pairs[:SIM_TOP] + [p for p in involved[:SIM_SPOTLIGHT] if p not in pairs[:SIM_TOP]]
-        before = self.playoff_odds(self.dists)
+        before = self.playoff_odds()
         held: list[tuple[Pair, np.ndarray]] = []
         for p in shortlist:
-            after = self.playoff_odds(p.a.dists)
-            # Small category gains can vanish in the full simulation; both sides must hold up there.
-            if after[p.i] >= before[p.i] and after[p.j] >= before[p.j]:
+            after = self.playoff_odds(p)
+            # Small category gains can vanish in the full simulation; both owners must see their odds go up.
+            if self.both_gain(p, before, after):
                 held.append((p, after))
         best = held[0] if held else None
         spot = next((h for h in held if self.spotlight in (h[0].i, h[0].j)), None)
@@ -152,8 +176,8 @@ class DailyTrade:
             best = spot
         current = next((p for p in pairs if p.pick_id(self.teams) == keep_id), None) if keep_id else None
         if current is not None and (best is None or current.score >= KEEP_SHARE * best[0].score):
-            after = self.playoff_odds(current.a.dists)
-            if after[current.i] >= before[current.i] and after[current.j] >= before[current.j]:
+            after = self.playoff_odds(current)
+            if self.both_gain(current, before, after):
                 best = (current, after)
         if best is None:
             return None, before, None, len(pairs)

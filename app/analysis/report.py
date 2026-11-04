@@ -32,9 +32,23 @@ EDGE_SPAN = ("Screening edge trades", 0.50, 0.65)
 VISION_SPAN = ("Screening vision trades", 0.65, 0.80)
 # A vision trade can cost a little now for a stronger playoff run: playoff odds may dip this much.
 VISION_ODDS_SLACK = 0.02
+# No trade is suggested unless the other team's playoff odds visibly go up too: the deal has to
+# be one their owner can see is good for them, never one that only looks good on paper.
+PARTNER_MIN_ODDS_GAIN = 0.01
+LOCK_ODDS = 0.98  # a team this sure of the playoffs can't rise a point: it only must not drop
 PICKUP_SPAN = ("Screening pickups", 0.80, 0.94)
 
 Progress = Callable[[str, float], None]
+
+
+def partner_gains(before: float, after: float) -> bool:
+    """Whether the other team's playoff odds go up enough for their owner to see it.
+
+    A team already at (or near) certain gets in can't gain a point, so it only has to not drop.
+    """
+    if before >= LOCK_ODDS:
+        return after >= before
+    return after - before >= PARTNER_MIN_ODDS_GAIN - 1e-9
 
 
 def _round(x: float | None, digits: int = 2) -> float | None:
@@ -99,6 +113,7 @@ class Analyzer:
         self.premium = OwnerPremium(league, self.model, self.perceived, not_for_sale)
         self._sim: SeasonSim | None = None  # drawn on the first what-if, shared by every later one
         self._today: tuple[float, np.ndarray] | None = None
+        self._league_today: np.ndarray | None = None  # every team's playoff odds today
         self._after_pickup: dict[tuple[int, int], tuple[float, np.ndarray]] = {}
 
     # ---- helpers -----------------------------------------------------------------------
@@ -158,22 +173,36 @@ class Analyzer:
         rosters = [(changed or {}).get(j, t.roster) for j, t in enumerate(self.teams)]
         return float(np.mean([self.model.strength(i, [self.model.dist(r, p) for r in rosters]) for p in periods]))
 
-    def playoff_pct(
+    def playoff_odds(
         self, dists: list[Dist], changed: dict[int, list[Player]] | None = None, sims: int = WHAT_IF_SIMS
-    ) -> float:
-        """My playoff odds with these projections. ``changed`` holds the rosters that differ from today's."""
+    ) -> np.ndarray:
+        """Every team's playoff odds with these projections. ``changed`` holds the rosters that differ from today's."""
         if sims != WHAT_IF_SIMS:
             res = simulate_season(
                 self.league, dists, self.model.reverse, n_sims=sims, period_dists=self.period_dists(changed)
             )
-            return float(res.playoff_pct[self.idx])
+            return res.playoff_pct
         if self._sim is None:
             self._sim = SeasonSim(
                 self.league, self.dists, self.model.reverse, n_sims=WHAT_IF_SIMS, period_dists=self.period_dists()
             )
         moved = set(changed or {}) | {i for i, d in enumerate(dists) if not same_dist(d, self.dists[i])}
         period_dists = self.period_dists(changed) if moved else None
-        return float(self._sim.what_if(moved, dists, period_dists).playoff_pct[self.idx])
+        return self._sim.what_if(moved, dists, period_dists).playoff_pct
+
+    def playoff_pct(
+        self, dists: list[Dist], changed: dict[int, list[Player]] | None = None, sims: int = WHAT_IF_SIMS
+    ) -> float:
+        """My playoff odds with these projections. ``changed`` holds the rosters that differ from today's."""
+        return float(self.playoff_odds(dists, changed, sims)[self.idx])
+
+    def deal_odds(self, d: Deal) -> tuple[float, tuple[float, float]]:
+        """My playoff odds after the deal, and the partner's before and after it."""
+        if self._league_today is None:
+            self._league_today = self.playoff_odds(self.dists)
+        odds = self.playoff_odds(d.dists, d.rosters)
+        j = d.partner_idx
+        return float(odds[self.idx]), (float(self._league_today[j]), float(odds[j]))
 
     def baseline(self, d: Deal) -> tuple[float, np.ndarray]:
         """My playoff odds and category win rates that a deal is measured against.
@@ -194,7 +223,13 @@ class Analyzer:
         return self._after_pickup[key]
 
     def trade_idea(
-        self, finder: TradeFinder, d: Deal, before: float, after: float, base_cats: np.ndarray
+        self,
+        finder: TradeFinder,
+        d: Deal,
+        before: float,
+        after: float,
+        base_cats: np.ndarray,
+        theirs: tuple[float, float] | None = None,
     ) -> schemas.TradeIdea:
         cats = self.avg_cat_win(self.idx, d.dists) - base_cats
         return schemas.TradeIdea(
@@ -220,6 +255,8 @@ class Analyzer:
             pitch_needs=finder.pitch_needs(d),
             playoff_pct_before=round(before, 3),
             playoff_pct_after=round(after, 3),
+            partner_playoff_pct_before=round(theirs[0], 3) if theirs else None,
+            partner_playoff_pct_after=round(theirs[1], 3) if theirs else None,
             playoff_week_cats_before=_round(self.playoff_strength(self.idx)),
             playoff_week_cats_after=_round(self.playoff_strength(self.idx, d.rosters)),
             category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
@@ -274,11 +311,13 @@ class Analyzer:
         for n, d in enumerate(shortlist):
             self._tick(span, n, len(shortlist))
             before, base_cats = self.baseline(d)
-            after = self.playoff_pct(d.dists, d.rosters)
+            after, theirs = self.deal_odds(d)
             # Small category gains can vanish in the full simulation; only keep moves that hold up there.
             if after < before - (VISION_ODDS_SLACK if mode == "vision" else 0.0):
                 continue
-            ideas.append(self.trade_idea(finder, d, before, after, base_cats))
+            if not partner_gains(*theirs):
+                continue
+            ideas.append(self.trade_idea(finder, d, before, after, base_cats, theirs))
         if mode == "vision":
             # Expected playoff payoff: the chance to be there times how strong I am once there.
             ideas.sort(key=lambda t: t.acceptance * _playoff_payoff(t), reverse=True)

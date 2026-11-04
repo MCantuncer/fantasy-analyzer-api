@@ -195,6 +195,10 @@ class TradeIdea(BaseModel):
     pitch_needs: list[PitchNeed] = Field(default_factory=list, description="`pitch` as data")
     playoff_pct_before: float
     playoff_pct_after: float
+    partner_playoff_pct_before: float | None = Field(default=None, description="The other team's playoff odds today")
+    partner_playoff_pct_after: float | None = Field(
+        default=None, description="The other team's playoff odds after the deal: always up, so they see the gain"
+    )
     playoff_week_cats_before: float | None = Field(
         default=None,
         description="My expected categories won per fantasy playoff week against an average team, before the deal",

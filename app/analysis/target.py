@@ -22,7 +22,7 @@ from itertools import combinations
 import numpy as np
 
 from app import schemas
-from app.analysis.report import WHAT_IF_SIMS, Analyzer, record
+from app.analysis.report import WHAT_IF_SIMS, Analyzer, partner_gains, record
 from app.analysis.sim import simulate_season
 from app.analysis.trades import MIN_VALUE_RATIO, PUNT_WIN, Deal, TradeFinder
 from app.espn.parse import League, Player
@@ -172,9 +172,9 @@ class TargetAnalyzer(Analyzer):
         ideas = []
         for d in unique[:SIM_TOP]:
             before, base_cats = self.baseline(d)
-            after = self.playoff_pct(d.dists, d.rosters)
-            if after >= before:
-                ideas.append(self.trade_idea(self.finder, d, before, after, base_cats))
+            after, theirs = self.deal_odds(d)
+            if after >= before and partner_gains(*theirs):
+                ideas.append(self.trade_idea(self.finder, d, before, after, base_cats, theirs))
         if not ideas:
             return []
 
@@ -213,22 +213,14 @@ class TargetAnalyzer(Analyzer):
         if self.perceived.package(mine[:3]) < MIN_VALUE_RATIO * self.premium.price(self.target):
             return f"Owners value {name} far above anything you can send without hurting your own team."
         tail = " Try freeing up players you've kept." if self.keep else ""
-        return f"No package for {name} both helps you and looks fair to his owner.{tail}"
+        return f"No package for {name} helps both you and his owner's playoff odds.{tail}"
 
     def target_report(self) -> schemas.TargetReport:
         started = time.perf_counter()
         fit = self.fit()
         for_sale = not self.premium.not_for_sale(self.target)
         offers = self.offers() if for_sale else []
-        note = None
-        if not offers and for_sale and fit.label != "none":
-            # Nothing keeps their build even: show the best long shots, judged on paper value alone.
-            offers = self.offers(min_their_gain=-np.inf)
-            if offers:
-                note = (
-                    f"Every package that's fair on paper weakens {self.owner.name}'s build, "
-                    "so these are long shots that rely on the owner going by value."
-                )
+        # No long shots that only look fair on paper: an offer must help their team too.
         report = schemas.TargetReport(
             team_id=self.me.id,
             team_name=self.me.name,
@@ -236,7 +228,7 @@ class TargetAnalyzer(Analyzer):
             fit=fit,
             owner=self.owner_read(),
             offers=offers,
-            note=note if offers else self._no_offer_note(fit),
+            note=None if offers else self._no_offer_note(fit),
             generated_at=datetime.now(UTC).isoformat(timespec="seconds"),
             elapsed_ms=0,
         )
