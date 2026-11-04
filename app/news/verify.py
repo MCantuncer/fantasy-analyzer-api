@@ -154,6 +154,23 @@ def cluster(items: list[Item], names: dict[int, str] | None = None) -> list[_Clu
     return out
 
 
+def _story_players(c: _Cluster) -> list[int]:
+    """The players a merged story is about: those most of its items are tagged with. A source that
+    also names someone else (a roundup line, a related athlete tag) joins the story through the
+    shared player, but its extra player is not what the story is about. A player stays when more
+    than half as many items tag him as tag the story's main player; most-tagged first."""
+    counts: dict[int, int] = {}
+    for i in c.items:
+        for p in dict.fromkeys(i.player_ids):
+            counts[p] = counts.get(p, 0) + 1
+    if not counts:
+        return []
+    top = max(counts.values())
+    order = {p: n for n, p in enumerate(c.players)}
+    keep = [p for p, n in counts.items() if n * 2 > top]
+    return sorted(keep, key=lambda p: (-counts[p], order.get(p, len(order))))
+
+
 def describe_fact(item: Item, names: dict[int, str], teams: dict[int, str]) -> str:
     name = names.get(item.player_ids[0], "A player") if item.player_ids else "A player"
 
@@ -185,7 +202,7 @@ def _story_kind(c: _Cluster, trusted: list[Item]) -> str:
     return pool[-1].kind
 
 
-def _injury_views(c: _Cluster, states: dict[int, PlayerState]) -> list[tuple[str, int, str | None]]:
+def _injury_views(c: _Cluster, states: dict[int, PlayerState], pid: int | None) -> list[tuple[str, int, str | None]]:
     """(source name, severity, body part) for every source that says how bad an injury is."""
     views = []
     for i in c.items:
@@ -196,10 +213,9 @@ def _injury_views(c: _Cluster, states: dict[int, PlayerState]) -> list[tuple[str
         elif i.severity > 0:
             views.append((BY_ID[i.source_id].name, i.severity, i.body_part))
     if not any(v[0] == "ESPN status" for v in views):
-        for pid in c.players[:1]:
-            st = states.get(pid)
-            if st is not None and st.injured:
-                views.append(("ESPN status", STATUS_SEVERITY.get(st.status, 1), None))
+        st = states.get(pid) if pid is not None else None
+        if st is not None and st.injured:
+            views.append(("ESPN status", STATUS_SEVERITY.get(st.status, 1), None))
     return views
 
 
@@ -233,7 +249,8 @@ def build_stories(
         facts = [i for i in trusted if i.source_id == FACT_SOURCE]
         groups = {BY_ID[i.source_id].group for i in outlets}
         kind = _story_kind(c, trusted)
-        pid = c.players[0] if c.players else None
+        players = _story_players(c)
+        pid = players[0] if players else None
 
         fact_agrees = any(f.kind == kind for f in facts)
         if kind == "injury" and pid is not None and pid in states and states[pid].injured:
@@ -253,7 +270,7 @@ def build_stories(
         ):
             status = "didnt_happen"
 
-        views = _injury_views(c, states) if c.family == "health" else []
+        views = _injury_views(c, states, pid) if c.family == "health" else []
         lead = outlets[-1] if outlets else (facts[-1] if facts else c.items[-1])
         headline = describe_fact(lead, names, teams) if lead.source_id == FACT_SOURCE else lead.title
         stories.append(
@@ -265,7 +282,7 @@ def build_stories(
                 summary=lead.summary,
                 published=c.items[0].published,
                 updated=c.last,
-                player_ids=c.players[:3],
+                player_ids=players[:3],
                 items=c.items,
                 severity=max((v[1] for v in views), default=0),
                 conflict=_conflict(views, states, pid) if kind == "injury" else None,

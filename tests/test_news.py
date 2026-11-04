@@ -444,3 +444,26 @@ def test_a_suspension_is_neither_an_injury_nor_a_release():
     assert kind_of("NBA Suspends Hawks' Kris Dunn For One Game") == "other"
     assert kind_of("Kris Dunn Suspended 1 Game For Elbowing Zach LaVine") == "other"
     assert newsworthy("NBA Suspends Hawks' Kris Dunn For One Game")
+
+
+def test_a_source_naming_another_player_too_does_not_tag_him_on_the_story():
+    # Live 2026-11-04: a five-source story about one player's return also showed a second player,
+    # because one merged source named both. The story tags whom its sources are about.
+    items = [
+        item("cbs", "Zach LaVine and Kris Dunn among injured stars nearing return", 6, players=(LAVINE, DUNN)),
+        item("yahoo", "Kris Dunn to begin return after completing knee treatment", 5),
+        item("espn", "Clippers' Kris Dunn completes knee treatment, begins return to play process", 4),
+        item("realgm", "Kris Dunn Starting 'Return To Play Process,' Will Be Re-Evaluated In 1 Week", 2),
+    ]
+    [story] = build_stories(items, states(**{str(LAVINE): "OUT"}), TEAMS, NOW)
+    assert story.player_ids == [DUNN]
+    assert story.kind == "return"
+
+
+def test_a_story_about_two_players_keeps_both():
+    items = [
+        item("cbs", "Zach LaVine traded to Clippers for Kris Dunn", 3),
+        item("yahoo", "Clippers acquire Zach LaVine, send Kris Dunn to Kings", 2),
+    ]
+    [story] = build_stories(items, states(), TEAMS, NOW)
+    assert set(story.player_ids) == {LAVINE, DUNN}
