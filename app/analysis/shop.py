@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from itertools import combinations
 
 from app import schemas
-from app.analysis.report import Analyzer, record
+from app.analysis.report import Analyzer, partner_gains, record
 from app.analysis.trades import MIN_THEIR_GAIN, Deal, TradeFinder
 from app.espn.parse import League, Player
 
@@ -209,11 +209,11 @@ class ShopAnalyzer(Analyzer):
         shown: list[schemas.ShopDeal] = []
         for d in self._to_sim(by_team):
             before, base_cats = self.baseline(d)
-            after = self.playoff_pct(d.dists, d.rosters)
+            after, theirs = self.deal_odds(d)
             # Small category gains can vanish in the full simulation; only keep moves that hold up there.
-            if after - before < MIN_ODDS_GAIN:
+            if after - before < MIN_ODDS_GAIN or not partner_gains(*theirs):
                 continue
-            idea = self.trade_idea(self.finder, d, before, after, base_cats)
+            idea = self.trade_idea(self.finder, d, before, after, base_cats, theirs)
             if d.faab:
                 text = (
                     f"You add ${d.faab} FAAB of your ${self.faab_left}. It never comes back, "

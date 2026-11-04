@@ -2,7 +2,7 @@ import numpy as np
 
 import app.analysis.sim as sim
 from app.analysis.model import CategoryModel, norm_cdf
-from app.analysis.report import Analyzer
+from app.analysis.report import Analyzer, partner_gains
 from app.analysis.sim import SeasonSim, category_links, simulate_season
 
 
@@ -89,6 +89,21 @@ def test_drift_and_links_spread_the_simulated_records(league, monkeypatch):
     # Less certain: the favourite's odds come down, the long shots' go up.
     assert linked.playoff_pct.max() < independent.playoff_pct.max()
     assert linked.playoff_pct.min() > independent.playoff_pct.min()
+
+
+def test_every_trade_idea_raises_the_partners_odds(league):
+    report = Analyzer(league, 3).report()
+    assert report.trades
+    for t in report.trades:
+        assert t.partner_playoff_pct_after - t.partner_playoff_pct_before >= 0.0099
+
+
+def test_partner_gains_needs_a_visible_rise():
+    assert not partner_gains(0.04, 0.04)
+    assert not partner_gains(0.40, 0.405)
+    assert partner_gains(0.40, 0.41)
+    assert partner_gains(0.99, 0.99)  # a near-lock can't rise a point: it just must not drop
+    assert not partner_gains(0.99, 0.985)
 
 
 def test_teams_drift_back_toward_the_average(league, monkeypatch):

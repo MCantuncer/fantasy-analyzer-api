@@ -44,7 +44,8 @@ def test_pick_is_a_win_win_between_two_teams(pick):
     assert a.team_id != b.team_id
     assert a.cats_gain > 0 and b.cats_gain > 0
     for s in pick.sides:
-        assert s.playoff_pct_after >= s.playoff_pct_before
+        # Both owners see their odds go up: a side whose odds stay flat gains nothing it can see.
+        assert s.playoff_pct_after - s.playoff_pct_before >= 0.0099
         assert s.sends and s.pitch
     assert not {p.id for p in a.sends} & {p.id for p in b.sends}
     assert a.team_name in pick.headline and b.team_name in pick.headline
