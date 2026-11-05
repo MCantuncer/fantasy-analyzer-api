@@ -22,7 +22,7 @@ from itertools import combinations
 import numpy as np
 
 from app import schemas
-from app.analysis.report import WHAT_IF_SIMS, Analyzer, partner_gains, record
+from app.analysis.report import WHAT_IF_SIMS, Analyzer, i_gain, partner_gains, record
 from app.analysis.sim import simulate_season
 from app.analysis.trades import MIN_VALUE_RATIO, PUNT_WIN, Deal, TradeFinder
 from app.espn.parse import League, Player
@@ -173,7 +173,7 @@ class TargetAnalyzer(Analyzer):
         for d in unique[:SIM_TOP]:
             before, base_cats = self.baseline(d)
             after, theirs = self.deal_odds(d)
-            if after >= before and partner_gains(*theirs):
+            if i_gain(before, after) and partner_gains(*theirs):
                 ideas.append(self.trade_idea(self.finder, d, before, after, base_cats, theirs))
         if not ideas:
             return []
