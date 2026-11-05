@@ -137,7 +137,7 @@ def test_my_attached_players_need_a_spectacular_deal(league, model, premium):
     me = next(i for i, t in enumerate(league.teams) if t.id == ME)
     finder = TradeFinder(league, model, me, keep=set(), premium=premium)
     bar = finder.spectacular(finder.candidates())
-    picked = finder.shortlist()
+    picked = finder.queue()
     assert picked
     for d in picked:
         if any(premium.is_attached(p) for p in d.give):
