@@ -83,3 +83,75 @@ def test_pickups_say_when_to_make_them(league):
         assert t.wait == (t.make_on != league.calendar.date_of(league.calendar.today).isoformat())
         if t.wait:
             assert t.cats_best >= t.cats_now + WAIT_MIN_GAIN - 1e-3
+
+
+def test_timing_carries_its_categories_and_week(league, setup):
+    model, drop, add = setup
+    t = MatchupTiming(league, MY_TEAM, model, noon_ms(league, league.calendar.today)).best(add, drop)
+    assert abs(float(t.cat_changes.sum()) - t.cats_best) < 1e-9
+    assert len(t.rest.mu) == len(league.categories)
+
+
+def test_adds_allowed_per_day_and_per_matchup(league):
+    from app.espn.parse import _adds_limit
+
+    week = league.current_period
+    days = len(league.calendar.period_days[week])
+    per_day = replace(league, **_adds_limit({"matchupAcquisitionLimit": 5 / 7, "matchupLimitPerScoringPeriod": True}))
+    assert per_day.adds_allowed(week) == (5 if days == 7 else int(round(5 / 7 * days, 6)))
+    flat = replace(league, **_adds_limit({"matchupAcquisitionLimit": 4}))
+    assert flat.adds_allowed(week) == 4
+    assert replace(league, **_adds_limit({"matchupAcquisitionLimit": -1})).adds_allowed(week) is None
+
+
+def test_week_override_with_todays_roster_changes_nothing(league):
+    a = Analyzer(league, MY_TEAM)
+    today = a.model.dist(a.me.roster, league.current_period)
+    assert abs(a.playoff_pct(a.dists, week=today) - a.playoff_pct(a.dists)) < 1e-9
+
+
+@pytest.fixture(scope="module")
+def ideas(league):
+    now = datetime.fromtimestamp(noon_ms(league, league.calendar.today) / 1000, UTC)
+    a = Analyzer(league, MY_TEAM, now=now)
+    return a, a.pickups()
+
+
+def test_streams_only_release_players_without_trade_value(ideas):
+    from app.analysis.report import STREAM_MIN_CATS
+    from app.analysis.tiers import has_market
+
+    a, found = ideas
+    roster = {p.id: p for p in a.me.roster}
+    for idea in found:
+        if idea.stream:
+            assert not idea.open_spot_by_trade
+            assert not has_market(roster[idea.drop.id])
+            assert idea.timing is not None and idea.my_cats_gain >= STREAM_MIN_CATS - 1e-3
+        assert idea.playoff_pct_after >= idea.playoff_pct_before
+
+
+def test_no_adds_left_means_no_streams_and_no_timing(league):
+    me = league.team(MY_TEAM)
+    full = replace(me, period_adds={league.current_period: 99})
+    capped = replace(
+        league,
+        teams=[full if t.id == MY_TEAM else t for t in league.teams],
+        adds_limit=5,
+        adds_limit_per_day=False,
+    )
+    now = datetime.fromtimestamp(noon_ms(league, league.calendar.today) / 1000, UTC)
+    a = Analyzer(capped, MY_TEAM, now=now)
+    assert a.adds_left() == 0
+    assert a.week_matchup().adds_allowed == 5
+    found = a.pickups()
+    assert not any(i.stream for i in found)
+    assert all(i.timing is None for i in found)
+
+
+def test_timing_lists_who_plays_each_day_left(ideas, league):
+    _, found = ideas
+    days = [league.calendar.date_of(d).isoformat() for d in league.calendar.days_left(league.current_period)]
+    for idea in found:
+        if idea.timing is not None:
+            assert [d.date for d in idea.timing.days] == days

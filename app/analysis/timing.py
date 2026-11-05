@@ -37,6 +37,11 @@ class Timing:
     cats_best: float  # the same if made on best_day
     drop_games_kept: int  # games the dropped player still plays for you by waiting
     add_games_missed: int  # games of the new player you miss by waiting
+    cat_changes: np.ndarray  # (C,) change in each category's win chance this matchup, made on best_day
+    rest: Dist  # your days left this matchup with the move made on best_day (no banked stats)
+    days: list[int]  # the matchup's days left, today first
+    add_plays: list[bool]  # the new player has a game that day (and is expected to play)
+    drop_plays: list[bool]  # the same for the player you'd drop
 
 
 class MatchupTiming:
@@ -67,10 +72,11 @@ class MatchupTiming:
         self.banked = m.home_totals if home else m.away_totals
         self.theirs = full_week(model, model.dist(opponent.roster, period), m.away_totals if home else m.home_totals)
         self.base = self._cats(model.dist(self.roster, period))
+        self.opponent = opponent
         self.ready = True
 
-    def _cats(self, mine: Dist) -> float:
-        return float(self.model.cat_win_prob(full_week(self.model, mine, self.banked), self.theirs).sum())
+    def _cats(self, mine: Dist) -> np.ndarray:
+        return self.model.cat_win_prob(full_week(self.model, mine, self.banked), self.theirs)
 
     def _tipped(self, p: Player, day: int, ms: int) -> bool:
         """His game that day has tipped off by ``ms`` (no tip time known: not yet)."""
@@ -97,7 +103,7 @@ class MatchupTiming:
         add_first = not self._tipped(add, earliest, joins_ms)
         drop_first = self._tipped(drop, earliest, joins_ms)
         roster = self.roster + [add]
-        tried: list[tuple[int, float, np.ndarray, np.ndarray]] = []
+        tried: list[tuple[int, float, np.ndarray, np.ndarray, np.ndarray, Dist]] = []
         for start in range(earliest, last + 2):  # last + 1: wait for next week
             after = self.days > start
             on = self.days == start
@@ -107,10 +113,11 @@ class MatchupTiming:
             else:
                 a = add_days & (after | on)
                 d = drop_days & (self.days < start)
-            gain = self._cats(self.model.dist_with(roster, self.period, {add.id: a, drop.id: d})) - self.base
-            tried.append((start, gain, a, d))
+            rest = self.model.dist_with(roster, self.period, {add.id: a, drop.id: d})
+            changes = self._cats(rest) - self.base
+            tried.append((start, float(changes.sum()), a, d, changes, rest))
         first = tried[0]
-        top = max(g for _, g, _, _ in tried)
+        top = max(t[1] for t in tried)
         # The earliest day within reach of the best: a later one must clearly beat it.
         pick = first if top - first[1] < WAIT_MIN_GAIN else max(tried, key=lambda t: t[1])
         return Timing(
@@ -120,4 +127,9 @@ class MatchupTiming:
             cats_best=pick[1],
             drop_games_kept=int(pick[3].sum() - first[3].sum()),
             add_games_missed=int(first[2].sum() - pick[2].sum()),
+            cat_changes=pick[4],
+            rest=pick[5],
+            days=[int(d) for d in self.days],
+            add_plays=[bool(x) for x in add_days],
+            drop_plays=[bool(x) for x in drop_days],
         )
