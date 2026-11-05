@@ -214,6 +214,12 @@ class TradeIdea(BaseModel):
     category_changes: dict[str, float] = Field(description="Change in my weekly win % per category")
 
 
+class MoveDay(BaseModel):
+    date: str = Field(description="YYYY-MM-DD, a day left in this week's matchup")
+    add_plays: bool = Field(description="The added player has a game that day and is expected to play")
+    drop_plays: bool = Field(description="The same for the dropped player")
+
+
 class MoveTiming(BaseModel):
     """When a pickup should take effect, judged on this week's matchup (analysis/timing.py)."""
 
@@ -225,6 +231,22 @@ class MoveTiming(BaseModel):
     cats_best: float = Field(description="The same if made on make_on")
     drop_games_kept: int = Field(description="Games the dropped player still plays for you by waiting")
     add_games_missed: int = Field(description="Games of the added player you miss by waiting")
+    week_changes: dict[str, float] = Field(
+        description="Change in each category's win chance in this week's matchup, made on make_on"
+    )
+    days: list[MoveDay] = Field(description="The matchup's days left, today first")
+
+
+class WeekMatchup(BaseModel):
+    """This week's matchup, for moves made in it."""
+
+    opponent_team_id: int
+    opponent_name: str
+    adds_used: int = Field(description="Pickups you have made in this matchup")
+    adds_allowed: int | None = Field(description="Pickups the league allows in this matchup; none: no limit")
+    close_categories: list[str] = Field(
+        description="Categories still close this week on today's rosters: ones a move can steal"
+    )
 
 
 class PickupIdea(BaseModel):
@@ -232,6 +254,11 @@ class PickupIdea(BaseModel):
     drop: PlayerRef
     open_spot_by_trade: bool = Field(
         description="The spot would come from trading `drop` (he has trade value), not from releasing him"
+    )
+    stream: bool = Field(
+        default=False,
+        description="A swap for this week's matchup only: my_cats_gain, category_changes and the odds count "
+        "this matchup alone, since a player like `drop` can be picked up again next week",
     )
     availability: str
     my_cats_gain: float
@@ -297,6 +324,7 @@ class AnalysisReport(BaseModel):
     season: list[SeasonRow]
     league_rosters: list[TeamRoster] = Field(description="Every other team's players, for picking a trade target")
     faab_remaining: int | None
+    week: WeekMatchup | None = Field(default=None, description="None without the NBA calendar or a matchup")
     waiver_priority: int | None = Field(
         default=None,
         description="Your place in the rolling waiver order (1 = first claim), in leagues without FAAB. "

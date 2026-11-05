@@ -13,6 +13,7 @@ from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.durability import injury_prone
 from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
+from app.analysis.projection import CLOSE
 from app.analysis.sim import EACH_CATEGORY, SeasonSim, simulate_season
 from app.analysis.tiers import droppable, has_market, tier
 from app.analysis.timing import MatchupTiming, Timing
@@ -27,6 +28,10 @@ TRADE_RESULTS = 10
 # free plan); these caps bound the run.
 TRADE_SIMS = {"fair": 120, "edge": 50, "vision": 50}
 PICKUP_SIM_TOP = 8
+PICKUP_STREAMS = 3  # at most this many this-week-only streams
+KEEPER_MIN_GAIN = 0.02  # expected categories a week a pickup must add to be worth keeping
+# Expected categories this matchup a stream must add: about one close category moved by 5 points.
+STREAM_MIN_CATS = 0.05
 PICKUP_VIA_TRADE = 2  # at most this many "trade X to open a spot" ideas
 MIN_SAMPLE_GAMES = 5  # a free agent with no projection or last season needs this many games
 LOCKED, LOST = 0.70, 0.30
@@ -130,6 +135,7 @@ class Analyzer:
         self._today: tuple[float, np.ndarray] | None = None
         self._league_today: np.ndarray | None = None  # every team's playoff odds today
         self._after_pickup: dict[tuple[int, int], tuple[float, np.ndarray]] = {}
+        self._timing: MatchupTiming | None = None
 
     # ---- helpers -----------------------------------------------------------------------
 
@@ -190,27 +196,40 @@ class Analyzer:
         return float(np.mean([self.model.strength(i, [self.model.dist(r, p) for r in rosters]) for p in periods]))
 
     def playoff_odds(
-        self, dists: list[Dist], changed: dict[int, list[Player]] | None = None, sims: int = WHAT_IF_SIMS
+        self,
+        dists: list[Dist],
+        changed: dict[int, list[Player]] | None = None,
+        sims: int = WHAT_IF_SIMS,
+        week: Dist | None = None,
     ) -> np.ndarray:
-        """Every team's playoff odds with these projections. ``changed`` holds the rosters that differ from today's."""
+        """Every team's playoff odds with these projections. ``changed`` holds the rosters that differ from today's;
+        ``week`` replaces my days left in the current matchup (a move made later this week, or only for it)."""
+        period_dists = self.period_dists(changed)
+        cur = self.league.current_period
+        if week is not None and period_dists and cur in period_dists:
+            period_dists[cur] = list(period_dists[cur])
+            period_dists[cur][self.idx] = week
         if sims != WHAT_IF_SIMS:
-            res = simulate_season(
-                self.league, dists, self.model.reverse, n_sims=sims, period_dists=self.period_dists(changed)
-            )
+            res = simulate_season(self.league, dists, self.model.reverse, n_sims=sims, period_dists=period_dists)
             return res.playoff_pct
         if self._sim is None:
             self._sim = SeasonSim(
                 self.league, self.dists, self.model.reverse, n_sims=WHAT_IF_SIMS, period_dists=self.period_dists()
             )
         moved = set(changed or {}) | {i for i, d in enumerate(dists) if not same_dist(d, self.dists[i])}
-        period_dists = self.period_dists(changed) if moved else None
-        return self._sim.what_if(moved, dists, period_dists).playoff_pct
+        if week is not None:
+            moved.add(self.idx)
+        return self._sim.what_if(moved, dists, period_dists if moved else None).playoff_pct
 
     def playoff_pct(
-        self, dists: list[Dist], changed: dict[int, list[Player]] | None = None, sims: int = WHAT_IF_SIMS
+        self,
+        dists: list[Dist],
+        changed: dict[int, list[Player]] | None = None,
+        sims: int = WHAT_IF_SIMS,
+        week: Dist | None = None,
     ) -> float:
-        """My playoff odds with these projections. ``changed`` holds the rosters that differ from today's."""
-        return float(self.playoff_odds(dists, changed, sims)[self.idx])
+        """My playoff odds with these projections (see ``playoff_odds``)."""
+        return float(self.playoff_odds(dists, changed, sims, week)[self.idx])
 
     def deal_odds(self, d: Deal) -> tuple[float, tuple[float, float]]:
         """My playoff odds after the deal, and the partner's before and after it."""
@@ -365,19 +384,66 @@ class Analyzer:
             ideas.sort(key=lambda t: t.acceptance * (t.playoff_pct_after - t.playoff_pct_before), reverse=True)
         return mix_shapes(ideas, TRADE_RESULTS, lambda t: len(t.give) != len(t.get))
 
+    def matchup_timing(self) -> MatchupTiming:
+        if self._timing is None:
+            self._timing = MatchupTiming(self.league, self.me.id, self.model, int(self.now.timestamp() * 1000))
+        return self._timing
+
+    def adds_left(self) -> int | None:
+        """Pickups you can still make in this matchup; None when the league has no limit."""
+        period = self.league.current_period
+        allowed = self.league.adds_allowed(period)
+        if allowed is None:
+            return None
+        return max(allowed - self.me.period_adds.get(period, 0), 0)
+
+    def week_matchup(self) -> schemas.WeekMatchup | None:
+        t = self.matchup_timing()
+        if not t.ready:
+            return None
+        return schemas.WeekMatchup(
+            opponent_team_id=t.opponent.id,
+            opponent_name=t.opponent.name,
+            adds_used=self.me.period_adds.get(self.league.current_period, 0),
+            adds_allowed=self.league.adds_allowed(self.league.current_period),
+            close_categories=[n for c, n in enumerate(self.cat_names) if abs(float(t.base[c]) - 0.5) <= CLOSE],
+        )
+
+    def _weeks_after_this(self) -> float:
+        """Weeks of the regular season left after the current matchup."""
+        if not self.model.cal or "season" not in self.model.horizon:
+            return 0.0
+        season_days, _ = self.model.horizon["season"]
+        week_days, _ = self.model.horizon.get(self.league.current_period, ([], 1.0))
+        return max(len(season_days) - len(week_days), 0) / 7
+
     def pickups(self, span: tuple[str, float, float] | None = None) -> list[schemas.PickupIdea]:
+        """Free agents worth adding: keepers that help the rest of the season, and streams that
+        only help this week's matchup (more games, or a category close enough to steal).
+
+        A keeper is ranked on the categories it adds over the rest of the season plus this
+        week, made on its best day this week. A stream is a swap for this week only: the
+        player you drop has no trade value, so another like him is there next week, and only
+        this matchup is counted.
+        """
         self._tick(span, 0, 1)
         base = self.model.strength(self.idx, self.dists)
         base_cats = self.avg_cat_win(self.idx, self.dists)
+        timing = self.matchup_timing()
+        left = self.adds_left()
+        can_add = left is None or left > 0
+        weeks_after = self._weeks_after_this()
         # Only players with no trade value are ever released. A swap that needs a
         # player with a market is shown as "trade him to open the spot" instead.
         outgoing = [p for p in self.me.roster if p.id not in self.keep and p.available]
         candidates = []
+        streams: list[tuple[Timing, Player, Player]] = []
         for fa in self.league.free_agents:
             # No NBA team (unsigned) means no games, whatever his stats say.
             if not fa.available or not fa.pro_team_id or (not fa.has_prior and fa.games_played < MIN_SAMPLE_GAMES):
                 continue
             best: dict[bool, tuple] = {}
+            stream: tuple[Timing, Player, Player] | None = None
             for drop in outgoing:
                 roster = [p for p in self.me.roster if p.id != drop.id] + [fa]
                 dists = list(self.dists)
@@ -386,23 +452,38 @@ class Analyzer:
                 via_trade = has_market(drop)
                 if via_trade not in best or gain > best[via_trade][0]:
                     best[via_trade] = (gain, drop, dists, roster)
+                if not via_trade and can_add and gain <= KEEPER_MIN_GAIN:
+                    t = timing.best(fa, drop)
+                    better = t is not None and (stream is None or t.cats_best > stream[0].cats_best)
+                    if better and t.cats_best >= STREAM_MIN_CATS:
+                        stream = (t, fa, drop)
             for via_trade, (gain, drop, dists, roster) in best.items():
-                if gain > 0.02:
-                    candidates.append((gain, fa, drop, dists, via_trade, roster))
+                if gain > KEEPER_MIN_GAIN:
+                    t = timing.best(fa, drop) if not via_trade and can_add else None
+                    candidates.append((gain, fa, drop, dists, via_trade, roster, t))
+            if stream is not None:
+                streams.append(stream)
 
-        candidates.sort(key=lambda c: c[0], reverse=True)
-        released = [c for c in candidates if not c[4]][:PICKUP_SIM_TOP]
-        traded = [c for c in candidates if c[4]]
+        def total(c: tuple) -> float:
+            """Expected categories the move adds: every week after this one, plus this one."""
+            gain, t = c[0], c[6]
+            return gain * weeks_after + (t.cats_best if t is not None else gain)
+
+        released = sorted((c for c in candidates if not c[4]), key=total, reverse=True)[:PICKUP_SIM_TOP]
+        traded = sorted((c for c in candidates if c[4]), key=lambda c: c[0], reverse=True)
         # A trade-first idea is worth showing only if it beats every straight pickup.
-        top_release = released[0][0] if released else 0.0
+        top_release = max((c[0] for c in released), default=0.0)
         traded = [c for c in traded if c[0] > top_release + 0.05][:PICKUP_VIA_TRADE]
+        streams = sorted(streams, key=lambda s: s[0].cats_best, reverse=True)[:PICKUP_STREAMS]
         before = self.playoff_pct(self.dists)
-        timing = MatchupTiming(self.league, self.me.id, self.model, int(self.now.timestamp() * 1000))
+        # With no pickups left this matchup, a move only counts from next week.
+        this_week = None if can_add else self.model.dist(self.me.roster, self.league.current_period)
         ideas = []
-        to_sim = released + traded
-        for n, (gain, fa, drop, dists, via_trade, roster) in enumerate(to_sim):
-            self._tick(span, n, len(to_sim))
+        to_sim = len(released) + len(traded) + len(streams)
+        for n, (gain, fa, drop, dists, via_trade, roster, t) in enumerate(released + traded):
+            self._tick(span, n, to_sim)
             cats = self.avg_cat_win(self.idx, dists) - base_cats
+            week = t.rest if t is not None else (None if via_trade else this_week)
             ideas.append(
                 schemas.PickupIdea(
                     add=self.ref(fa),
@@ -411,9 +492,25 @@ class Analyzer:
                     availability=fa.status,
                     my_cats_gain=round(gain, 3),
                     playoff_pct_before=round(before, 3),
-                    playoff_pct_after=round(self.playoff_pct(dists, {self.idx: roster}), 3),
+                    playoff_pct_after=round(self.playoff_pct(dists, {self.idx: roster}, week=week), 3),
                     category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
-                    timing=self.move_timing(timing.best(fa, drop)),
+                    timing=self.move_timing(t),
+                )
+            )
+        for n, (t, fa, drop) in enumerate(streams, start=len(released) + len(traded)):
+            self._tick(span, n, to_sim)
+            ideas.append(
+                schemas.PickupIdea(
+                    add=self.ref(fa),
+                    drop=self.ref(drop),
+                    open_spot_by_trade=False,
+                    stream=True,
+                    availability=fa.status,
+                    my_cats_gain=round(t.cats_best, 3),
+                    playoff_pct_before=round(before, 3),
+                    playoff_pct_after=round(self.playoff_pct(self.dists, week=t.rest), 3),
+                    category_changes={n: round(float(t.cat_changes[c]), 3) for c, n in enumerate(self.cat_names)},
+                    timing=self.move_timing(t),
                 )
             )
         ideas = [p for p in ideas if p.playoff_pct_after >= p.playoff_pct_before]
@@ -435,6 +532,11 @@ class Analyzer:
             cats_best=round(t.cats_best, 3),
             drop_games_kept=t.drop_games_kept,
             add_games_missed=t.add_games_missed,
+            week_changes={n: round(float(t.cat_changes[c]), 3) for c, n in enumerate(self.cat_names)},
+            days=[
+                schemas.MoveDay(date=cal.date_of(d).isoformat(), add_plays=a, drop_plays=p)
+                for d, a, p in zip(t.days, t.add_plays, t.drop_plays, strict=True)
+            ],
         )
 
     def season(self) -> list[schemas.SeasonRow]:
@@ -501,6 +603,7 @@ class Analyzer:
             season=self._season_step(),
             league_rosters=self.league_rosters(),
             faab_remaining=self.me.faab_remaining,
+            week=self.week_matchup(),
             waiver_priority=self.me.waiver_priority,
             assumptions=schemas.Assumptions(
                 games_per_week=GAMES_PER_WEEK,

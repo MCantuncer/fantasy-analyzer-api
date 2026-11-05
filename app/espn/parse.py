@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
@@ -162,6 +163,7 @@ class Team:
     trades: int = 0  # trades made this season
     acquisitions: int = 0  # free-agent and waiver pickups this season
     trade_block: dict[int, str] = field(default_factory=dict)  # player id -> ON_THE_BLOCK / UNTOUCHABLE
+    period_adds: dict[int, int] = field(default_factory=dict)  # matchup period -> pickups made in it
 
 
 @dataclass
@@ -217,6 +219,19 @@ class League:
     draft_rounds: int = 0  # rounds in this league's draft
     lineup_slots: dict[int, int] = field(default_factory=dict)  # starting slot id -> count
     calendar: Calendar | None = None  # None: no NBA schedule, assume an even number of games a week
+    # Pickups allowed in a matchup: a number, or a number per day of it (ESPN stores 5 a week as
+    # 5/7 a day). None: no limit.
+    adds_limit: float | None = None
+    adds_limit_per_day: bool = False
+
+    def adds_allowed(self, period: int) -> int | None:
+        """Pickups allowed in a matchup period, or None for no limit."""
+        if self.adds_limit is None:
+            return None
+        if not self.adds_limit_per_day:
+            return int(self.adds_limit)
+        days = len(self.calendar.period_days.get(period, [])) if self.calendar else 7
+        return math.floor(round(self.adds_limit * days, 6))
 
     def team(self, team_id: int) -> Team | None:
         return next((t for t in self.teams if t.id == team_id), None)
@@ -470,6 +485,7 @@ def parse_league(
                 trades=int(counter.get("trades") or 0),
                 acquisitions=int(counter.get("acquisitions") or 0),
                 trade_block=_trade_block(t.get("tradeBlock")),
+                period_adds=_period_adds(counter),
             )
         )
 
@@ -517,4 +533,18 @@ def parse_league(
         draft_rounds=-(-max((int(pk.get("overallPickNumber") or 0) for pk in picks), default=0) // max(len(teams), 1)),
         lineup_slots=_lineup_slots(settings.get("rosterSettings", {})),
         calendar=parse_calendar(pro_schedule, raw) if pro_schedule else None,
+        **_adds_limit(settings.get("acquisitionSettings") or {}),
     )
+
+
+def _period_adds(counter: dict) -> dict[int, int]:
+    totals = counter.get("matchupAcquisitionTotals") or {}
+    return {int(k): int(v) for k, v in totals.items() if str(k).isdigit()}
+
+
+def _adds_limit(acq: dict) -> dict:
+    """ESPN's pickup limit per matchup. 0 or negative means none."""
+    limit = float(acq.get("matchupAcquisitionLimit") or 0)
+    if limit <= 0:
+        return {"adds_limit": None, "adds_limit_per_day": False}
+    return {"adds_limit": limit, "adds_limit_per_day": bool(acq.get("matchupLimitPerScoringPeriod"))}
