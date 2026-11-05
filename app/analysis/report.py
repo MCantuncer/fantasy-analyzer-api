@@ -51,6 +51,14 @@ def partner_gains(before: float, after: float) -> bool:
     return after - before >= PARTNER_MIN_ODDS_GAIN - 1e-9
 
 
+def i_gain(before: float, after: float) -> bool:
+    """Whether a trade raises my playoff odds by the same visible point it asks of the other team.
+
+    A trade that leaves me at 52% -> 52% isn't worth making, however it looks in the categories.
+    """
+    return partner_gains(before, after)
+
+
 def _round(x: float | None, digits: int = 2) -> float | None:
     return None if x is None else round(x, digits)
 
@@ -314,7 +322,12 @@ class Analyzer:
             before, base_cats = self.baseline(d)
             after, theirs = self.deal_odds(d)
             # Small category gains can vanish in the full simulation; only keep moves that hold up there.
-            if after < before - (VISION_ODDS_SLACK if mode == "vision" else 0.0):
+            # A vision trade may cost a little now for a stronger playoff run; any other trade must
+            # raise my odds by a point, as it must theirs.
+            if mode == "vision":
+                if after < before - VISION_ODDS_SLACK:
+                    continue
+            elif not i_gain(before, after):
                 continue
             if not partner_gains(*theirs):
                 continue
