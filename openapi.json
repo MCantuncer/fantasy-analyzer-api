@@ -5056,6 +5056,63 @@
         ],
         "title": "Me"
       },
+      "MoveTiming": {
+        "properties": {
+          "wait": {
+            "type": "boolean",
+            "title": "Wait",
+            "description": "Making the move later this week (or next week) beats making it now"
+          },
+          "make_on": {
+            "type": "string",
+            "title": "Make On",
+            "description": "Day (YYYY-MM-DD) to make the move: today unless waiting pays"
+          },
+          "next_week": {
+            "type": "boolean",
+            "title": "Next Week",
+            "description": "Best left until the next matchup starts: make_on is its first day"
+          },
+          "earliest_on": {
+            "type": "string",
+            "title": "Earliest On",
+            "description": "Day it takes effect if made now (a waiver claim: when it processes)"
+          },
+          "cats_now": {
+            "type": "number",
+            "title": "Cats Now",
+            "description": "Change in expected categories won this matchup if made now"
+          },
+          "cats_best": {
+            "type": "number",
+            "title": "Cats Best",
+            "description": "The same if made on make_on"
+          },
+          "drop_games_kept": {
+            "type": "integer",
+            "title": "Drop Games Kept",
+            "description": "Games the dropped player still plays for you by waiting"
+          },
+          "add_games_missed": {
+            "type": "integer",
+            "title": "Add Games Missed",
+            "description": "Games of the added player you miss by waiting"
+          }
+        },
+        "type": "object",
+        "required": [
+          "wait",
+          "make_on",
+          "next_week",
+          "earliest_on",
+          "cats_now",
+          "cats_best",
+          "drop_games_kept",
+          "add_games_missed"
+        ],
+        "title": "MoveTiming",
+        "description": "When a pickup should take effect, judged on this week's matchup (analysis/timing.py)."
+      },
       "MvpCandidate": {
         "properties": {
           "team_id": {
@@ -5766,6 +5823,17 @@
             },
             "type": "object",
             "title": "Category Changes"
+          },
+          "timing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MoveTiming"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Best day this week to make it; none without the NBA calendar or a matchup"
           }
         },
         "type": "object",

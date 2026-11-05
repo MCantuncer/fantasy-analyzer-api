@@ -654,7 +654,12 @@ def create_app(
         job.update("Reading rosters", 0.02)
         report = await run_in_threadpool(
             lambda: Analyzer(
-                lg, body.team_id, body.keep_player_ids, body.not_for_sale_player_ids, progress=job.update
+                lg,
+                body.team_id,
+                body.keep_player_ids,
+                body.not_for_sale_player_ids,
+                progress=job.update,
+                now=app.state.now(),
             ).report()
         )
         app.state.reports.set(key, report)

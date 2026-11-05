@@ -160,7 +160,14 @@ class CategoryModel:
             cached = self._dists[key] = self._compute_dist(roster, horizon)
         return cached
 
-    def _compute_dist(self, roster: list[Player], horizon: object) -> Dist:
+    def dist_with(self, roster: list[Player], horizon: object, days: dict[int, np.ndarray]) -> Dist:
+        """Like ``dist``, with the days some players count for set by hand (player id -> (D,) bool
+        over the horizon's days), e.g. a swap that takes effect partway through a week. Not cached."""
+        return self._compute_dist(roster, horizon, days)
+
+    def _compute_dist(
+        self, roster: list[Player], horizon: object, days_for: dict[int, np.ndarray] | None = None
+    ) -> Dist:
         if not self.cal or horizon not in self.horizon:
             lineup = self.lineup(roster)
             if not lineup:
@@ -168,7 +175,7 @@ class CategoryModel:
             total, att, var = np.sum([self.row(p) for p in lineup], axis=0)
             return self._dist(total, att, var, SCHEDULE_CV)
         days, weeks = self.horizon[horizon]
-        starts = self.starts(roster, horizon)
+        starts = self.starts(roster, horizon, days_for)
         if not starts.any():
             return self._empty()
         # row() is one week at self.g games; scale each player to his starts per week.
@@ -236,12 +243,17 @@ class CategoryModel:
             index = self._game_index[team] = {d: i for i, d in enumerate(days)}
         return index
 
-    def starts(self, roster: list[Player], horizon: object = "season") -> np.ndarray:
-        """(P,) games each player starts over the horizon, in roster order."""
+    def starts(
+        self, roster: list[Player], horizon: object = "season", days_for: dict[int, np.ndarray] | None = None
+    ) -> np.ndarray:
+        """(P,) games each player starts over the horizon, in roster order. ``days_for`` overrides
+        the days some players are available (see ``dist_with``)."""
         if not roster:
             return np.zeros(0)
         order = sorted(range(len(roster)), key=lambda i: self.value(roster[i]), reverse=True)
-        m = np.array([self.plays(roster[i], horizon) for i in order])  # (P, D) in value order
+        over = days_for or {}
+        # (P, D) in value order
+        m = np.array([over[roster[i].id] if roster[i].id in over else self.plays(roster[i], horizon) for i in order])
         out = np.zeros(len(roster))
         if not m.size:
             return out
