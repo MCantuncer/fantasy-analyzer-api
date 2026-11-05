@@ -106,6 +106,42 @@ class Player:
         return self.injury_status in HEALTHY and self.lineup_slot != IR_SLOT
 
 
+# ESPN's NBA pro team ids and the abbreviations ESPN uses for them (logos are keyed by these).
+# Stable across seasons; 0 is a free agent.
+PRO_TEAM_ABBREV: dict[int, str] = {
+    1: "ATL",
+    2: "BOS",
+    3: "NO",
+    4: "CHI",
+    5: "CLE",
+    6: "DAL",
+    7: "DEN",
+    8: "DET",
+    9: "GS",
+    10: "HOU",
+    11: "IND",
+    12: "LAC",
+    13: "LAL",
+    14: "MIA",
+    15: "MIL",
+    16: "MIN",
+    17: "BKN",
+    18: "NY",
+    19: "ORL",
+    20: "PHI",
+    21: "PHX",
+    22: "POR",
+    23: "SAC",
+    24: "SA",
+    25: "OKC",
+    26: "UTAH",
+    27: "WSH",
+    28: "TOR",
+    29: "MEM",
+    30: "CHA",
+}
+
+
 @dataclass
 class Team:
     id: int

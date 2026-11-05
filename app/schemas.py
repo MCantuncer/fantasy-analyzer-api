@@ -61,6 +61,9 @@ class PlayerBadge(BaseModel):
 class PlayerRef(BaseModel):
     id: int
     name: str
+    pro_team: str = Field(
+        default="", description="NBA team abbreviation as ESPN writes it (NO, GS, UTAH); empty for a free agent"
+    )
     positions: list[str]
     injury_status: str
     percent_owned: float
