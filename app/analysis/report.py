@@ -15,6 +15,7 @@ from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import EACH_CATEGORY, SeasonSim, simulate_season
 from app.analysis.tiers import droppable, has_market, tier
+from app.analysis.timing import MatchupTiming, Timing
 from app.analysis.trades import SCREEN_MIN_THEIR_GAIN, Deal, Mode, TradeFinder, acceptance_label, mix_shapes
 from app.espn.parse import PRO_TEAM_ABBREV, League, Player, Team
 
@@ -109,8 +110,10 @@ class Analyzer:
         keep_player_ids: list[int] | None = None,
         not_for_sale_player_ids: list[int] | None = None,
         progress: Progress | None = None,
+        now: datetime | None = None,
     ):
         self.league = league
+        self.now = now or datetime.now(UTC)
         self.progress = progress
         self.model = CategoryModel(league)
         self.teams = league.teams
@@ -394,6 +397,7 @@ class Analyzer:
         top_release = released[0][0] if released else 0.0
         traded = [c for c in traded if c[0] > top_release + 0.05][:PICKUP_VIA_TRADE]
         before = self.playoff_pct(self.dists)
+        timing = MatchupTiming(self.league, self.me.id, self.model, int(self.now.timestamp() * 1000))
         ideas = []
         to_sim = released + traded
         for n, (gain, fa, drop, dists, via_trade, roster) in enumerate(to_sim):
@@ -409,11 +413,29 @@ class Analyzer:
                     playoff_pct_before=round(before, 3),
                     playoff_pct_after=round(self.playoff_pct(dists, {self.idx: roster}), 3),
                     category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
+                    timing=self.move_timing(timing.best(fa, drop)),
                 )
             )
         ideas = [p for p in ideas if p.playoff_pct_after >= p.playoff_pct_before]
         ideas.sort(key=lambda p: (not p.open_spot_by_trade, p.playoff_pct_after, p.my_cats_gain), reverse=True)
         return ideas
+
+    def move_timing(self, t: Timing | None) -> schemas.MoveTiming | None:
+        if t is None:
+            return None
+        cal = self.model.cal
+        last = self.model.horizon[self.league.current_period][0][-1]
+        wait = t.best_day != t.earliest_day
+        return schemas.MoveTiming(
+            wait=wait,
+            make_on=cal.date_of(t.best_day if wait else cal.today).isoformat(),
+            next_week=t.best_day > last,
+            earliest_on=cal.date_of(t.earliest_day).isoformat(),
+            cats_now=round(t.cats_earliest, 3),
+            cats_best=round(t.cats_best, 3),
+            drop_games_kept=t.drop_games_kept,
+            add_games_missed=t.add_games_missed,
+        )
 
     def season(self) -> list[schemas.SeasonRow]:
         res = simulate_season(

@@ -35,6 +35,9 @@ BENCH_SLOT = 12
 UTIL_SLOT = 11
 UNAVAILABLE = {"OUT", "INJURY_RESERVE", "SUSPENSION"}
 HEALTHY = {"ACTIVE", "NORMAL"}  # no injury tag at all, not even day-to-day
+# Game times are UTC, and US evening games land on the next UTC day: stepping back 8 hours
+# puts every NBA game, and a morning waiver run, on its US date.
+US_DAY_SHIFT = 8 * 3600
 
 # Weight on actual stats grows with games played: gp / (gp + games), projections dominate early.
 # Shooting percentages need more games to mean something; points, assists and threes fewer.
@@ -91,6 +94,7 @@ class Player:
     slots: tuple[int, ...] = ()  # lineup slot ids he can fill (PG..C, G, F, UTIL, ...)
     acquisition_type: str = ""  # DRAFT / ADD / TRADE, for rostered players
     acquired_ms: int | None = None  # when his current team got him, epoch milliseconds
+    waiver_ms: int | None = None  # when a claim on him processes, epoch milliseconds (players on waivers)
     durability: float | None = None  # expected share of his team's remaining games (analysis/durability.py)
     games_out: float | None = None  # expected team games he still misses while listed out (analysis/absence.py)
     out_report: str | None = None  # the news headline games_out rests on, when it reported a timeline
@@ -179,9 +183,14 @@ class Calendar:
     today: int  # current scoring period
     team_days: dict[int, frozenset[int]]  # pro team id -> days it plays
     period_days: dict[int, list[int]]  # matchup period -> its days, regular season and playoffs
+    tips: dict[int, dict[int, int]] = field(default_factory=dict)  # pro team id -> day -> tip-off, epoch ms
 
     def date_of(self, day: int) -> date:
         return self.opening + timedelta(days=day - 1)
+
+    def day_at(self, ms: int) -> int:
+        """The scoring day a moment falls on, on the US calendar (see parse_calendar)."""
+        return (date(1970, 1, 1) + timedelta(seconds=ms / 1000 - US_DAY_SHIFT) - self.opening).days + 1
 
     def days_left(self, period: int) -> list[int]:
         return [d for d in self.period_days.get(period, []) if d >= self.today]
@@ -316,6 +325,7 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None, roste
         slots=tuple(int(s) for s in p.get("eligibleSlots", [])),
         acquisition_type=acq.get("acquisitionType") or "",
         acquired_ms=int(acq["acquisitionDate"]) if acq.get("acquisitionDate") else None,
+        waiver_ms=int(entry["waiverProcessDate"]) if entry.get("waiverProcessDate") else None,
     )
 
 
@@ -344,15 +354,17 @@ def parse_calendar(pro_schedule: dict, raw: dict) -> Calendar | None:
     folded together with the week after it, as ESPN did in 2025 and 2026.
     """
     team_days: dict[int, set[int]] = {}
+    tips: dict[int, dict[int, int]] = {}
     opening: date | None = None
     for team in (pro_schedule.get("settings") or {}).get("proTeams", []):
         for day, games in (team.get("proGamesByScoringPeriod") or {}).items():
             if not games:
                 continue
             team_days.setdefault(int(team["id"]), set()).add(int(day))
+            if games[0].get("date"):
+                tips.setdefault(int(team["id"]), {})[int(day)] = int(games[0]["date"])
             if int(day) == 1:
-                # Game times are UTC; US evening games land on the next UTC day, so step back 8 hours.
-                ts = games[0]["date"] / 1000 - 8 * 3600
+                ts = games[0]["date"] / 1000 - US_DAY_SHIFT
                 opening = date(1970, 1, 1) + timedelta(seconds=ts)
     if not team_days or opening is None:
         return None
@@ -404,6 +416,7 @@ def parse_calendar(pro_schedule: dict, raw: dict) -> Calendar | None:
         today=int(status.get("latestScoringPeriod") or raw.get("scoringPeriodId") or 1),
         team_days={t: frozenset(d) for t, d in team_days.items()},
         period_days={i + 1: w for i, w in enumerate(weeks)},
+        tips=tips,
     )
 
 

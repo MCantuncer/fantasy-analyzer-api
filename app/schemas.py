@@ -214,6 +214,19 @@ class TradeIdea(BaseModel):
     category_changes: dict[str, float] = Field(description="Change in my weekly win % per category")
 
 
+class MoveTiming(BaseModel):
+    """When a pickup should take effect, judged on this week's matchup (analysis/timing.py)."""
+
+    wait: bool = Field(description="Making the move later this week (or next week) beats making it now")
+    make_on: str = Field(description="Day (YYYY-MM-DD) to make the move: today unless waiting pays")
+    next_week: bool = Field(description="Best left until the next matchup starts: make_on is its first day")
+    earliest_on: str = Field(description="Day it takes effect if made now (a waiver claim: when it processes)")
+    cats_now: float = Field(description="Change in expected categories won this matchup if made now")
+    cats_best: float = Field(description="The same if made on make_on")
+    drop_games_kept: int = Field(description="Games the dropped player still plays for you by waiting")
+    add_games_missed: int = Field(description="Games of the added player you miss by waiting")
+
+
 class PickupIdea(BaseModel):
     add: PlayerRef
     drop: PlayerRef
@@ -225,6 +238,9 @@ class PickupIdea(BaseModel):
     playoff_pct_before: float
     playoff_pct_after: float
     category_changes: dict[str, float]
+    timing: MoveTiming | None = Field(
+        default=None, description="Best day this week to make it; none without the NBA calendar or a matchup"
+    )
 
 
 class SeasonRow(BaseModel):
