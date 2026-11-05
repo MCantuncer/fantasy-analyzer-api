@@ -15,12 +15,16 @@ from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import EACH_CATEGORY, SeasonSim, simulate_season
 from app.analysis.tiers import droppable, has_market, tier
-from app.analysis.trades import Deal, Mode, TradeFinder, acceptance_label, mix_shapes
+from app.analysis.trades import SCREEN_MIN_THEIR_GAIN, Deal, Mode, TradeFinder, acceptance_label, mix_shapes
 from app.espn.parse import PRO_TEAM_ABBREV, League, Player, Team
 
 SEASON_SIMS = 4000
 WHAT_IF_SIMS = 4000  # what-if gains are paired differences: ~0.5 point noise at 4000, ~1 at 2000
 TRADE_RESULTS = 10
+# Most deals fail the both-teams-gain check early in the season, so the report simulates down
+# the finder's queue until the list is full. Each simulation takes ~0.04s locally (more on the
+# free plan); these caps bound the run.
+TRADE_SIMS = {"fair": 120, "edge": 50, "vision": 50}
 PICKUP_SIM_TOP = 8
 PICKUP_VIA_TRADE = 2  # at most this many "trade X to open a spot" ideas
 MIN_SAMPLE_GAMES = 5  # a free agent with no projection or last season needs this many games
@@ -306,11 +310,28 @@ class Analyzer:
 
     def trades(self, mode: Mode = "fair", span: tuple[str, float, float] | None = None) -> list[schemas.TradeIdea]:
         self._tick(span, 0, 1)
-        finder = TradeFinder(self.league, self.model, self.idx, self.keep, mode, premium=self.premium)
+        # The playoff-odds check below has the final say, so the screen lets through deals that leave
+        # their average week flat: their odds can still rise (healthy players for injured ones).
+        finder = TradeFinder(
+            self.league,
+            self.model,
+            self.idx,
+            self.keep,
+            mode,
+            premium=self.premium,
+            min_their_gain=SCREEN_MIN_THEIR_GAIN,
+        )
         ideas = []
-        shortlist = finder.shortlist()
-        for n, d in enumerate(shortlist):
-            self._tick(span, n, len(shortlist))
+        picks = finder.picks(TRADE_RESULTS)
+        budget = TRADE_SIMS[mode]
+        sims = 0
+        for d in finder.queue():
+            if picks.full or sims >= budget:
+                break
+            if not picks.room(d):
+                continue
+            self._tick(span, sims, budget)
+            sims += 1
             before, base_cats = self.baseline(d)
             after, theirs = self.deal_odds(d)
             # Small category gains can vanish in the full simulation; only keep moves that hold up there.
@@ -318,6 +339,7 @@ class Analyzer:
                 continue
             if not partner_gains(*theirs):
                 continue
+            picks.add(d)
             ideas.append(self.trade_idea(finder, d, before, after, base_cats, theirs))
         if mode == "vision":
             # Expected playoff payoff: the chance to be there times how strong I am once there.

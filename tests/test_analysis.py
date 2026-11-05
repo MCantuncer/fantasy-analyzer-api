@@ -4,6 +4,7 @@ import app.analysis.sim as sim
 from app.analysis.model import CategoryModel, norm_cdf
 from app.analysis.report import Analyzer, partner_gains
 from app.analysis.sim import SeasonSim, category_links, simulate_season
+from app.analysis.trades import SCREEN_MIN_THEIR_GAIN
 
 
 def test_norm_cdf_matches_known_values():
@@ -129,7 +130,9 @@ def test_report_sections(league):
     assert report.trades and report.pickups
     for t in report.trades:
         assert t.my_cats_gain > 0
-        assert t.their_cats_gain > 0
+        # Their average week may stay about flat; the playoff-odds check is what they must pass.
+        assert t.their_cats_gain >= SCREEN_MIN_THEIR_GAIN
+        assert t.partner_playoff_pct_after - t.partner_playoff_pct_before >= 0.0099
         assert t.playoff_pct_after >= t.playoff_pct_before
         assert all(p.id not in keep for p in t.give)
         assert t.pitch
@@ -198,3 +201,15 @@ def test_lineup_caches_stay_bounded(league, monkeypatch):
         got = small.dist(r)
         assert np.allclose(got.mu, want.mu) and np.allclose(got.sd, want.sd)
         assert len(small._fills) <= 20 and len(small._dists) <= 3
+
+
+def test_trades_simulate_down_the_queue_within_budget(league, monkeypatch):
+    from app.analysis import report as report_module
+
+    monkeypatch.setitem(report_module.TRADE_SIMS, "fair", 3)
+    analyzer = Analyzer(league, 3)
+    calls = []
+    real = analyzer.deal_odds
+    monkeypatch.setattr(analyzer, "deal_odds", lambda d: calls.append(d) or real(d))
+    analyzer.trades("fair")
+    assert len(calls) <= 3

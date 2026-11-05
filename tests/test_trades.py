@@ -8,6 +8,8 @@ from app.analysis.report import Analyzer, league_summary
 from app.analysis.tiers import droppable
 from app.analysis.tiers import droppable as no_trade_value
 from app.analysis.trades import (
+    MAX_PER_PARTNER,
+    MAX_PER_TARGET,
     MAX_VALUE_RATIO,
     MIN_THEIR_GAIN,
     MIN_VALUE_RATIO,
@@ -165,14 +167,36 @@ def test_every_candidate_is_fair_on_paper_and_helps_both(league):
     assert any(len(d.give) == 2 for d in deals) or any(len(d.get) == 2 for d in deals)
 
 
-def test_shortlist_limits_repeats(league):
+def test_queue_puts_deals_that_help_both_first(league):
     model = CategoryModel(league)
     me = next(i for i, t in enumerate(league.teams) if t.id == 3)
     finder = TradeFinder(league, model, me, keep=set())
-    picked = finder.shortlist()
+    queue = finder.queue()
+    assert queue
+    keys = [min(d.my_gain, d.their_strength) for d in queue]
+    assert keys == sorted(keys, reverse=True)
+    assert all(finder.pitch(d).endswith(".") for d in queue)
+
+
+def test_picks_limit_repeats_and_uneven_deals(league):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set())
+    picks = finder.picks(10)
+    picked = []
+    for d in finder.queue():
+        if picks.full:
+            break
+        if picks.room(d):
+            picks.add(d)
+            picked.append(d)
+    assert picked
     partners = [d.partner_idx for d in picked]
-    assert all(partners.count(p) <= 4 for p in set(partners))
-    assert all(finder.pitch(d).endswith(".") for d in picked)
+    assert all(partners.count(p) <= MAX_PER_PARTNER for p in set(partners))
+    targets = [max(d.get, key=finder.perceived.value).id for d in picked]
+    assert all(targets.count(t) <= MAX_PER_TARGET for t in set(targets))
+    assert sum(len(d.give) != len(d.get) for d in picked) <= 2
+    assert len(picked) <= 10
 
 
 def test_package_value_has_a_star_premium(league):
@@ -327,7 +351,7 @@ def test_vision_deals_buy_the_target_and_pay_in_the_playoffs(league):
         assert all(p.available for p in d.give) and 1 <= len(d.give) <= 2
         assert d.playoff_gain >= VISION_MIN_PLAYOFF_GAIN
         assert d.my_gain >= VISION_MIN_SEASON_GAIN
-    ranked = finder.shortlist()
+    ranked = finder.queue()
     keys = [finder.rank_key(d) for d in ranked]
     assert keys == sorted(keys, reverse=True)
 
