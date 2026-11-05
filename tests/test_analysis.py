@@ -2,7 +2,7 @@ import numpy as np
 
 import app.analysis.sim as sim
 from app.analysis.model import CategoryModel, norm_cdf
-from app.analysis.report import Analyzer, partner_gains
+from app.analysis.report import Analyzer, i_gain, partner_gains
 from app.analysis.sim import SeasonSim, category_links, simulate_season
 from app.analysis.trades import SCREEN_MIN_THEIR_GAIN
 
@@ -107,6 +107,12 @@ def test_partner_gains_needs_a_visible_rise():
     assert not partner_gains(0.99, 0.985)
 
 
+def test_my_side_needs_a_visible_rise_too():
+    assert not i_gain(0.52, 0.52)  # 52% -> 52% ±0 is no reason to trade
+    assert not i_gain(0.52, 0.525)
+    assert i_gain(0.52, 0.53)
+
+
 def test_teams_drift_back_toward_the_average(league, monkeypatch):
     model = CategoryModel(league)
     dists = [model.dist(t.roster) for t in league.teams]
@@ -133,7 +139,7 @@ def test_report_sections(league):
         # Their average week may stay about flat; the playoff-odds check is what they must pass.
         assert t.their_cats_gain >= SCREEN_MIN_THEIR_GAIN
         assert t.partner_playoff_pct_after - t.partner_playoff_pct_before >= 0.0099
-        assert t.playoff_pct_after >= t.playoff_pct_before
+        assert t.playoff_pct_after - t.playoff_pct_before >= 0.0099
         assert all(p.id not in keep for p in t.give)
         assert t.pitch
     assert all(p.drop.id not in keep for p in report.pickups)

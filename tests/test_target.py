@@ -31,7 +31,7 @@ def test_offers_are_distinct_and_help_me(league):
     assert len(set(gives)) == len(gives)
     for o in offers:
         assert giddey.id in {p.id for p in o.get}
-        assert o.playoff_pct_after >= o.playoff_pct_before
+        assert o.playoff_pct_after - o.playoff_pct_before >= 0.0099
         assert o.pitch
 
 
