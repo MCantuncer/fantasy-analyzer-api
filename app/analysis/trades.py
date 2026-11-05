@@ -26,6 +26,12 @@ rarely gets accepted, however good it looks on paper.
 
 Each surviving deal gets an acceptance estimate and a list of reasons to use when
 pitching it. Deals are ranked by playoff-odds gain weighted by that estimate.
+
+The final word is the season simulation: a deal is shown only if it raises both teams'
+playoff odds by a point (report.py). Early in the season most deals that help me cost the
+partner, because I become a tougher rival for the same playoff spots, so few pass. The finder
+screens loosely and hands over a queue ordered by how likely a deal is to pass that check,
+and the report simulates down the queue until the list is full.
 """
 
 from __future__ import annotations
@@ -45,10 +51,13 @@ from app.analysis.tiers import droppable
 from app.espn.parse import League, Player, Team
 
 MIN_MY_GAIN = 0.05  # expected categories won per week
-MIN_THEIR_GAIN = 0.02
+MIN_THEIR_GAIN = 0.02  # a clear gain in the categories they play for: a win-win on the court
+# Moves' fair screen: what a deal may cost their build before the playoff-odds check, which has
+# the final say there. Their odds can rise while their average week stays flat, e.g. when they
+# get healthy players for injured ones, so a stricter screen would hide deals that help them.
+SCREEN_MIN_THEIR_GAIN = -0.05
 MIN_VALUE_RATIO = 0.85  # they must get back at least this share of perceived value
 MAX_VALUE_RATIO = 1.4  # never overpay by more than this on paper
-SHORTLIST = 14
 MAX_PER_TARGET = 2
 MAX_PER_PARTNER = 4
 # Uneven trades (2-for-1, 1-for-2) are only a small part of any list: they look good on paper
@@ -112,7 +121,7 @@ class Deal:
     my_drop: Player | None  # I receive more players than I send
     their_drop: Player | None  # they receive more players than they send
     my_gain: float
-    their_gain: float
+    their_gain: float  # in the categories they play for
     give_value: float  # perceived value they receive
     get_value: float  # perceived value they send, including a player they must cut
     acceptance: float
@@ -129,6 +138,8 @@ class Deal:
     vs_pickup: tuple[Player, Player] | None = None
     playoff_gain: float = 0.0  # vision mode: change in my expected categories won per playoff week
     vision: list[str] = field(default_factory=list)  # vision mode: why the players I get are worth more later
+    # Change in their expected categories won counting every category, as the season simulation does.
+    their_strength: float = 0.0
 
     @property
     def edge(self) -> float:
@@ -154,6 +165,45 @@ def acceptance_odds(ratio: float, their_gain: float, struggling: bool = False) -
     if struggling:
         p += STRUGGLING_BONUS
     return float(np.clip(p, 0.05, 0.9))
+
+
+class Picks:
+    """Deals picked so far, within the per-target, per-partner and shape limits of a list of ``n``.
+
+    Used while simulating down the queue: a deal that couldn't make the list isn't simulated.
+    """
+
+    def __init__(self, n: int, value: Callable[[Player], float]):
+        self.n = n
+        self.value = value
+        self.uneven_cap = max(1, round(n * MAX_UNEVEN_SHARE))
+        self.even = self.uneven = 0
+        self.per_target: dict[int, int] = {}
+        self.per_partner: dict[int, int] = {}
+
+    def _target(self, d: Deal) -> int:
+        return max(d.get, key=self.value).id
+
+    def room(self, d: Deal) -> bool:
+        if len(d.give) != len(d.get) and self.uneven >= self.uneven_cap:
+            return False
+        return (
+            self.per_target.get(self._target(d), 0) < MAX_PER_TARGET
+            and self.per_partner.get(d.partner_idx, 0) < MAX_PER_PARTNER
+        )
+
+    def add(self, d: Deal) -> None:
+        if len(d.give) != len(d.get):
+            self.uneven += 1
+        else:
+            self.even += 1
+        t = self._target(d)
+        self.per_target[t] = self.per_target.get(t, 0) + 1
+        self.per_partner[d.partner_idx] = self.per_partner.get(d.partner_idx, 0) + 1
+
+    @property
+    def full(self) -> bool:
+        return self.even + self.uneven >= self.n
 
 
 def mix_shapes[T](ranked: list[T], n: int, uneven: Callable[[T], bool]) -> list[T]:
@@ -191,8 +241,11 @@ class TradeFinder:
         keep: set[int],
         mode: Mode = "fair",
         premium: OwnerPremium | None = None,
+        min_their_gain: float = MIN_THEIR_GAIN,
     ):
+        """``min_their_gain`` is the fair-mode floor for their gain in the categories they play for."""
         self.mode = mode
+        self.min_their_gain = min_their_gain
         self.league = league
         self.model = model
         self.me_idx = me_idx
@@ -291,10 +344,12 @@ class TradeFinder:
         pos = order.index(self.me_idx)
         return {i for k, i in enumerate(order) if i != self.me_idx and abs(k - pos) <= RIVAL_SPOTS}
 
-    def fit_gain(self, j: int, dists: list[Dist], baseline: np.ndarray | None = None) -> float:
-        """Change in team j's expected categories won, ignoring the categories it punts."""
+    def fit_gain(
+        self, j: int, dists: list[Dist], baseline: np.ndarray | None = None, every_category: bool = False
+    ) -> float:
+        """Change in team j's expected categories won, ignoring the categories it punts unless ``every_category``."""
         change = self._avg_win(j, dists) - (self.base_cats[j] if baseline is None else baseline)
-        return float(change[~self.punts[j]].sum())
+        return float(change.sum() if every_category else change[~self.punts[j]].sum())
 
     def their_free_cats(self, j: int) -> np.ndarray:
         """Team j's category win rates after the best pickup it can make without a trade.
@@ -396,10 +451,11 @@ class TradeFinder:
         if my_gain < min_my_gain:
             return None
         # When the deal's open spot on their side takes the free agent, compare with just making that pickup.
-        their_gain = self.fit_gain(j, dists, self.their_free_cats(j) if len(get) > len(give) else None)
+        their_base = self.their_free_cats(j) if len(get) > len(give) else None
+        their_gain = self.fit_gain(j, dists, their_base)
         edge = self.mode == "edge"
         if min_their_gain is None:
-            min_their_gain = EDGE_MIN_THEIR_GAIN if edge else MIN_THEIR_GAIN
+            min_their_gain = EDGE_MIN_THEIR_GAIN if edge else self.min_their_gain
         if min_margin is None:
             min_margin = EDGE_MIN_MARGIN if edge else float("-inf")
         if their_gain < min_their_gain or my_gain - their_gain < min_margin:
@@ -475,6 +531,7 @@ class TradeFinder:
             vs_pickup=vs_pickup,
             playoff_gain=playoff_gain,
             vision=[line for p in get for line in self.vision_signals(p)] if vision else [],
+            their_strength=self.fit_gain(j, dists, their_base, every_category=True),
         )
 
     def _keystones_lost(self, j: int, get: list[Player], dists: list[Dist]) -> list[str]:
@@ -675,22 +732,25 @@ class TradeFinder:
             return SPECTACULAR_FLOOR
         return max(SPECTACULAR_FLOOR, float(np.percentile([d.my_gain for d in deals], SPECTACULAR_PERCENTILE)))
 
-    def shortlist(self) -> list[Deal]:
+    def sim_key(self, d: Deal) -> float:
+        """How likely a deal is to raise both teams' playoff odds: the smaller of the two gains.
+
+        On League A (2026-11-05, 2,549 deals simulated) the deals that passed ranked 74th and
+        129th by this key, against 1,308th and 2,022nd by ``rank_key``, which looks at my side only.
+        """
+        if self.mode == "vision":
+            return self.rank_key(d)
+        return min(d.my_gain, d.their_strength)
+
+    def queue(self) -> list[Deal]:
+        """Every deal worth simulating, the likeliest to help both teams' playoff odds first."""
         deals = self.candidates()
         bar = self.spectacular(deals)
         deals = [d for d in deals if d.my_gain >= bar or not any(self.premium.is_attached(p) for p in d.give)]
-        deals = sorted(deals, key=self.rank_key, reverse=True)
-        picked: list[Deal] = []
-        per_target: dict[int, int] = {}
-        per_partner: dict[int, int] = {}
-        for d in deals:
-            target = max(d.get, key=self.perceived.value).id
-            if per_target.get(target, 0) >= MAX_PER_TARGET or per_partner.get(d.partner_idx, 0) >= MAX_PER_PARTNER:
-                continue
-            per_target[target] = per_target.get(target, 0) + 1
-            per_partner[d.partner_idx] = per_partner.get(d.partner_idx, 0) + 1
-            picked.append(d)
-        return mix_shapes(picked, SHORTLIST, lambda d: len(d.give) != len(d.get))
+        return sorted(deals, key=self.sim_key, reverse=True)
+
+    def picks(self, n: int) -> Picks:
+        return Picks(n, self.perceived.value)
 
     def pitch_needs(self, d: Deal) -> list[schemas.PitchNeed]:
         """The categories where the deal helps them most, with their rank and what it adds a game."""
