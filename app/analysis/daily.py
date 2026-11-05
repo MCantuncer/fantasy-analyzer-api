@@ -45,7 +45,7 @@ from app.analysis.report import partner_gains
 from app.analysis.sim import SeasonSim
 from app.analysis.tiers import tier
 from app.analysis.trades import Deal, TradeFinder, acceptance_label
-from app.espn.parse import League, Player
+from app.espn.parse import PRO_TEAM_ABBREV, League, Player
 
 SIM_TOP = 8  # candidates checked in the season simulation
 SIM_SPOTLIGHT = 3  # extra spotlight-team candidates checked
@@ -189,6 +189,7 @@ class DailyTrade:
         return schemas.PlayerRef(
             id=p.id,
             name=p.name,
+            pro_team=PRO_TEAM_ABBREV.get(p.pro_team_id, ""),
             positions=p.positions,
             injury_status=p.injury_status,
             percent_owned=round(p.percent_owned, 1),

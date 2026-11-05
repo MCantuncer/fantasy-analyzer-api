@@ -16,7 +16,7 @@ from app.analysis.perceived import PerceivedValue
 from app.analysis.sim import EACH_CATEGORY, SeasonSim, simulate_season
 from app.analysis.tiers import droppable, has_market, tier
 from app.analysis.trades import Deal, Mode, TradeFinder, acceptance_label, mix_shapes
-from app.espn.parse import League, Player, Team
+from app.espn.parse import PRO_TEAM_ABBREV, League, Player, Team
 
 SEASON_SIMS = 4000
 WHAT_IF_SIMS = 4000  # what-if gains are paired differences: ~0.5 point noise at 4000, ~1 at 2000
@@ -122,6 +122,7 @@ class Analyzer:
         return schemas.PlayerRef(
             id=p.id,
             name=p.name,
+            pro_team=PRO_TEAM_ABBREV.get(p.pro_team_id, ""),
             positions=p.positions,
             injury_status=p.injury_status,
             percent_owned=round(p.percent_owned, 1),

@@ -188,3 +188,14 @@ def test_attach_sets_aside_a_one_off(league):
     counted = star.durability
     attach(league, past, [{star.id: [62]}, {star.id: []}, {star.id: []}])
     assert counted < PRONE_SHARE < LEAGUE_SHARE < star.durability
+
+
+def test_player_refs_name_the_nba_team(league):
+    from app.analysis.report import Analyzer
+    from app.espn.parse import PRO_TEAM_ABBREV
+    from tests.conftest import MY_TEAM
+
+    rostered = league.teams[0].roster[0]
+    ref = Analyzer(league, MY_TEAM).ref(rostered)
+    assert ref.pro_team == PRO_TEAM_ABBREV.get(rostered.pro_team_id, "")
+    assert Analyzer(league, MY_TEAM).ref(replace(rostered, pro_team_id=0)).pro_team == ""

@@ -6268,6 +6268,12 @@
             "type": "string",
             "title": "Name"
           },
+          "pro_team": {
+            "type": "string",
+            "title": "Pro Team",
+            "description": "NBA team abbreviation as ESPN writes it (NO, GS, UTAH); empty for a free agent",
+            "default": ""
+          },
           "positions": {
             "items": {
               "type": "string"
