@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
 # ESPN stat ids in a game line.
-PTS, BLK, STL, AST, REB, TO, FGM, FGA, FTM, FTA, TPM, MIN = 0, 1, 2, 3, 6, 11, 13, 14, 15, 16, 17, 40
+PTS, BLK, STL, AST, REB, TO, FGM, FGA, FTM, FTA, TPM, MIN, GS = 0, 1, 2, 3, 6, 11, 13, 14, 15, 16, 17, 40, 41
 GAME_SPLIT = 5  # statSplitTypeId of a single game
 # A regulation game takes about 2h15m; this leaves room for overtime and delays.
 GAME_LENGTH = timedelta(hours=3)
@@ -53,6 +53,7 @@ class Line:
     fga: int
     ftm: int
     fta: int
+    starter: bool = False  # in the starting five
 
 
 @dataclass
@@ -131,6 +132,7 @@ def parse_lines(players: list[dict], day: int) -> dict[int, list[Line]]:
                     fga=v(FGA),
                     ftm=v(FTM),
                     fta=v(FTA),
+                    starter=v(GS) > 0,
                 )
             )
     for lines in out.values():
@@ -169,6 +171,11 @@ def build_day(schedule: Schedule, day: int, players: list[dict], now: datetime) 
         )
     d = schedule.date_of(day)
     return {"day": day, "date": d.isoformat() if d else None, "games": games}
+
+
+def has_starters(body: dict) -> bool:
+    """False for a day saved before lines said who started; such a day is fetched once more."""
+    return all("starter" in line for g in body.get("games", []) for line in g.get("lines", []))
 
 
 def settled(schedule: Schedule, day: int, now: datetime) -> bool:

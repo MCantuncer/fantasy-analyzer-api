@@ -4708,6 +4708,12 @@
           "fta": {
             "type": "integer",
             "title": "Fta"
+          },
+          "starter": {
+            "type": "boolean",
+            "title": "Starter",
+            "description": "In his team's starting five",
+            "default": false
           }
         },
         "type": "object",
