@@ -157,7 +157,9 @@ All settings are optional for local development.
 | POST | `/api/trade-rules/mine` | `{league_id, team_id, season?}` | Your trade rules in the league |
 | POST | `/api/trade-rules/delete` | `{league_id, team_id, season?, rule_id}` | Removes a rule and returns the rest |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
-| POST | `/api/scores` | `{league_id, season?, day?, team_id?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
+| POST | `/api/scores` | `{league_id, season?, day?, team_id?, with_sits?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
+| POST | `/api/scores/games` | `{league_id, season?, day?, team_id?}` | The same day at once from the NBA calendar, with no stats call: teams, tip-off and status, plus this week's fixtures. `complete` is false until the scores are in; ask `/api/scores` for them |
+| POST | `/api/scores/sits` | `{league_id, season?, team_id}` | Who sits on each crowded day left this week, on its own (the slow part of the Scores page) |
 | POST | `/api/injury-impact` | `{player_id, league_id?, season?}` | Teammates who gain while a player is out, from games his team played without him, each tagged with his fantasy team in `league_id` |
 | POST | `/api/news` | `{league_id?, season?, include_held?}` | Checked NBA news from every source, each player tagged with his fantasy team in `league_id`; source health; today's most-added players |
 | GET | `/api/news/refresh` | | Starts a check of every news source if the last is over 15 minutes old. For the scheduled ping |
