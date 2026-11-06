@@ -826,6 +826,7 @@ def create_app(
     ) -> schemas.TradeOfTheDay:
         """Scan the league for the day's pick. On a re-check, ``current`` stays unless something beats it."""
         league_id, season, _, day = key
+        await analyses_done(league_id, season)
         lg = await load_league(league_id, season, creds, with_fa=True)
         summary = league_summary(lg)
         if not summary.supported:
@@ -837,6 +838,21 @@ def create_app(
         await run_in_threadpool(app.state.store.save_trade, key, pick.model_dump(mode="json", exclude={"votes"}))
         app.state.daily.set(key, pick)
         return pick
+
+    async def analyses_done(league_id: int, season: int) -> None:
+        """Wait for this league's running analyses before the daily scan.
+
+        Both are long CPU work on a small server. Run together they share the CPU and both
+        finish late; one after the other, the manager on the loading screen gets the report
+        first, and the scan (which nobody is waiting on yet) follows.
+        """
+        running = [
+            job.task
+            for k, job in list(app.state.analysis_jobs.items())
+            if k[0] == league_id and k[1] == season and not job.task.done()
+        ]
+        if running:
+            await asyncio.wait(running)
 
     def daily_job(key: TradeKey, creds: EspnCredentials | None, current: schemas.TradeOfTheDay | None):
         """One scan per league at a time, however many visitors ask."""

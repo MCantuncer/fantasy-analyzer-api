@@ -8,7 +8,7 @@ from app import main
 from app.analysis import daily as daily_module
 from app.analysis.daily import DailyTrade, fully_healthy, spotlight_index, trade_of_the_day
 from app.store import MemoryStore, PostgresStore
-from tests.conftest import LEAGUE_ID
+from tests.conftest import LEAGUE_ID, MY_TEAM
 
 DAY = date(2026, 10, 23)
 
@@ -201,3 +201,36 @@ def test_sides_carry_reasons_as_data(pick):
         assert [f.text for f in s.facts] == s.reasons
         assert all(f.kind not in ("sell_high", "buy_low") for f in s.facts)
         assert all(n.category in s.pitch for n in s.pitch_needs)
+
+
+def test_daily_scan_waits_for_the_leagues_analysis(client, fake_espn, monkeypatch):
+    """Analysis first, then the scan: run together on a small server, both would finish late."""
+    import asyncio
+
+    import httpx
+
+    monkeypatch.setattr(main, "today", lambda: DAY.isoformat())
+    monkeypatch.setattr(main, "DAILY_WAIT", 0.2)
+    headers = dict(client.headers)
+    app = client.app
+
+    async def run():
+        gate = asyncio.get_running_loop().create_future()
+        job = main.AnalysisProgress()
+        job.task = asyncio.ensure_future(gate)
+        app.state.analysis_jobs[(LEAGUE_ID, 2027, MY_TEAM, (), (), "")] = job
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t", headers=headers) as c:
+            body = {"league_id": LEAGUE_ID, "season": 2027}
+            first = (await c.post("/api/trade-of-the-day", json=body)).json()
+            assert first["status"] == "pending"
+            assert fake_espn.calls == 0  # the scan hasn't even loaded the league
+            gate.set_result(None)
+            for _ in range(200):
+                done = (await c.post("/api/trade-of-the-day", json=body)).json()
+                if done["status"] == "ready":
+                    return done
+                await asyncio.sleep(0.05)
+        raise AssertionError("the scan never ran after the analysis")
+
+    assert asyncio.run(run())["sides"]
