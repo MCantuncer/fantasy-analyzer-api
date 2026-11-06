@@ -46,8 +46,9 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 
 | | Feature | Endpoint |
 | --- | --- | --- |
-| 🔁 | **Trade finder:** 1-for-1, 2-for-1 and 1-for-2 deals that help both builds and look fair to the other owner | `/api/analyze` |
+| 🔁 | **Trade finder:** 1-for-1, 2-for-2, 2-for-1 and 1-for-2 deals that look fair to the other owner: Fair deals raise both teams' playoff odds, Worth a Try deals win on paper for them | `/api/analyze` |
 | 🔭 | **Vision trades:** buy players off to a slow start before they bounce back, for a stronger playoff run, checked on past seasons | `/api/analyze` |
+| 🛍️ | **Trade Park:** shop up to four of your players to every team at once, with each team's best deal | `/api/shop` |
 | 🎯 | **Trade for one player:** fit, his owner's needs and the best three offers | `/api/target` |
 | 🛒 | **FA Targets:** every healthy free agent against every possible drop | `/api/analyze` |
 | 🎲 | **Season simulation:** 4,000 runs of the remaining schedule in the league's real format | `/api/analyze` |
@@ -57,6 +58,8 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🏀 | **Live scores:** NBA scores and box scores tagged with fantasy teams | `/api/scores` |
 | 📰 | **Checked NBA news:** stories confirmed across sources before they show | `/api/news` |
 | 🩹 | **Injury impact:** which teammates gain while a player is out | `/api/injury-impact` |
+| 🃏 | **Player cards:** any player's latest games, health, news and every move of him in the league | `/api/player-card` |
+| 📝 | **Trade feedback and rules:** rate a trade idea and have it checked against today's league; your own rules hide ideas that break them | `/api/trade-feedback`, `/api/trade-check`, `/api/trade-rules` |
 | 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |
 | 💬 | **Moves feed and league chat:** transactions, posts, replies and reactions | `/api/feed`, `/api/posts` |
 | 🔐 | **Accounts and verified managers:** email or Google sign-in, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
@@ -144,6 +147,8 @@ All settings are optional for local development.
 | POST | `/api/league-overview` | `{league_id, season?}` | League-only view: this week's matchups, the MVP candidate, league pulse, which teams have a manager |
 | POST | `/api/league` | `{league_id, season?}` | League name, categories and teams |
 | POST | `/api/analyze` | `{league_id, team_id, season?, keep_player_ids?}` | Full analysis report, only for the team you verified |
+| POST | `/api/analyze/job` | `{league_id, team_id, season?, keep_player_ids?}` | Starts the same analysis in the background and answers at once with `status`, `progress` and `stage`; call again until `done` (the report is included) or `failed` |
+| POST | `/api/shop` | `{league_id, team_id, season?, offer_player_ids, faab_max?, keep_player_ids?}` | Trade Park: each team's best deal for 1 to 4 of your players |
 | POST | `/api/trade-of-the-day` | `{league_id, season?}` | Today's best win-win trade between any two teams, with poll votes |
 | POST | `/api/trade-of-the-day/vote` | `{league_id, season?, date, team_id, take, voter}` | Records a "Would you take it?" vote and returns the updated pick |
 | POST | `/api/team-link/start` | `{league_id, season?, team_id}` | A code to set as the team's ESPN abbreviation, and a signed challenge |
@@ -160,6 +165,8 @@ All settings are optional for local development.
 | POST | `/api/trade-rules` | `{league_id, team_id, season?, kind, value?, team_name?, why?}` | Adds one of your trade rules: `protect_category` (value: the category), `skip_team` (value: the team id) or `no_injury_prone`. A rule only hides ideas that break it; it never changes the model |
 | POST | `/api/trade-rules/mine` | `{league_id, team_id, season?}` | Your trade rules in the league |
 | POST | `/api/trade-rules/delete` | `{league_id, team_id, season?, rule_id}` | Removes a rule and returns the rest |
+| POST | `/api/player-card` | `{league_id, season?, player_id, core?}` | One player: latest games, health, news and every move of him in this league; `core` leaves out the slower parts |
+| POST | `/api/player-card/extras` | `{league_id, season?, player_id}` | The slower part of a card: his news and the names of players in his moves |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
 | POST | `/api/scores` | `{league_id, season?, day?, team_id?, with_sits?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
 | POST | `/api/scores/games` | `{league_id, season?, day?, team_id?}` | The same day at once from the NBA calendar, with no stats call: teams, tip-off and status, plus this week's fixtures. `complete` is false until the scores are in; ask `/api/scores` for them |
@@ -184,7 +191,7 @@ uv run python -m scripts.export_openapi openapi.json
 
 - **Projections:** ESPN's season projections, blended with this season's per-game stats as games are played (`app/espn/parse.py`).
 - **Weekly model:** each team starts its top healthy players (by z-score value) for about 3.4 games a week. Each category's weekly total is a normal distribution; counting stats use an over-dispersed Poisson variance, percentages use binomial variance on attempts (`app/analysis/model.py`).
-- **Trades:** every 1-for-1, 2-for-1 and 1-for-2 with every team (`app/analysis/trades.py`). A deal is kept only if it
+- **Trades:** every 1-for-1, 2-for-2, 2-for-1 and 1-for-2 with every team (`app/analysis/trades.py`). A deal is kept only if it
     - helps your categories,
     - helps theirs too, under their own build, and
     - gives them at least 85% of the value they send as owners see it: ESPN's rankings and auction values, this league's draft prices, and this season's rank as games are played (`app/analysis/perceived.py`).
