@@ -810,6 +810,25 @@ class ScoresRequest(LeagueRequest):
         default=None, ge=1, le=250, description="ESPN scoring period (a day). Default: the last day a game started"
     )
     team_id: int | None = Field(default=None, gt=0, description="Your team: this week's fixtures name your players")
+    with_sits: bool = Field(
+        default=True,
+        description="Work out who sits on crowded days (slow on a cold server). "
+        "False leaves ``sits`` empty; ask /api/scores/sits for them on their own",
+    )
+
+
+class SitsRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+
+
+class DaySits(BaseModel):
+    day: int
+    date: str | None = None
+    sits: list[int] = Field(description="Your players with a game that day whom the best lineup leaves out")
+
+
+class WeekSits(BaseModel):
+    days: list[DaySits] = Field(description="Each day left this week, as in ScoreDay.week")
 
 
 class GameLine(BaseModel):
@@ -892,6 +911,11 @@ class ScoreDay(BaseModel):
         description="Games still to tip off this week (Monday to Sunday), whatever day is shown"
     )
     updated_at: str
+    complete: bool = Field(
+        default=True,
+        description="Scores and box scores are in. False from /api/scores/games before the day's stats are "
+        "fetched: started games have no score or lines yet",
+    )
 
 
 class NewsRequest(BaseModel):

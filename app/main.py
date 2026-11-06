@@ -65,7 +65,7 @@ from app.playercard import Card as ParsedCard
 from app.playercard import parse_card
 from app.reader import DEEP_BATCH_MAX, DeepReader, NoteReader, Reading, create_deep_reader, create_reader
 from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
-from app.scores import build_day, needs_stats, parse_schedule, settled, week_fixtures
+from app.scores import Schedule, build_day, needs_stats, parse_schedule, settled, week_fixtures
 from app.social import (
     CHALLENGE_SECONDS,
     Challenge,
@@ -1591,53 +1591,26 @@ def create_app(
         app.state.week_sits.set(key, out)
         return out
 
-    @app.post("/api/scores", response_model=schemas.ScoreDay, responses={401: {"model": schemas.ErrorBody}})
-    async def scores(
-        body: schemas.ScoresRequest,
-        authorization: str | None = Header(default=None),
-        x_espn_s2: str | None = Header(default=None),
-        x_espn_swid: str | None = Header(default=None),
-    ) -> schemas.ScoreDay:
-        """A day of NBA games with scores and box scores, each player tagged with his fantasy team here."""
-        await current_user(authorization)
-        creds = read_credentials(x_espn_s2, x_espn_swid)
-        season = body.season or current_season()
-        lg = await load_league(body.league_id, season, creds, with_fa=False)
+    async def score_calendar(season: int) -> Schedule:
         raw = await pro_schedule(season)
         if raw is None:
             raise HTTPException(
                 502, detail={"code": "espn_unavailable", "message": "ESPN's NBA schedule is unavailable."}
             )
-        sched = parse_schedule(raw)
-        now = app.state.now()
-        day = body.day or sched.latest_started(now)
+        return parse_schedule(raw)
+
+    def score_day_of(sched: Schedule, day: int | None, now: datetime) -> int:
+        day = day or sched.latest_started(now)
         if day not in sched.games:
             raise HTTPException(404, detail={"code": "no_games", "message": "No NBA games that day."})
-        data = await score_day(season, day, body.league_id, creds, sched)
-        data = await with_clocks(data, sched.date_of(day))
-        owners = {p.id: t.id for t in lg.teams for p in t.roster}
-        games = [
-            schemas.Game(
-                **{
-                    **g,
-                    "lines": [schemas.GameLine(**ln, owner_team_id=owners.get(ln["player_id"])) for ln in g["lines"]],
-                }
-            )
-            for g in data["games"]
-        ]
-        days = [
-            schemas.ScoreDayRef(day=d, date=_iso_date(sched.date_of(d)), games=len(gs))
-            for d, gs in sorted(sched.games.items())
-        ]
-        team = lg.team(body.team_id) if body.team_id else None
-        roster = team.roster if team else []
+        return day
 
+    def week_days(sched: Schedule, now: datetime, roster: list, sits: dict[str, list[int]]) -> list[schemas.FixtureDay]:
         def fixture_side(pro_team_id: int) -> schemas.GameSide:
             abbrev, name = sched.teams.get(pro_team_id, ("", ""))
             return schemas.GameSide(pro_team_id=pro_team_id, abbrev=abbrev, name=name)
 
-        sits = await week_sits(body.league_id, season, creds, team.id) if team else {}
-        week = [
+        return [
             schemas.FixtureDay(
                 day=d,
                 date=_iso_date(sched.date_of(d)),
@@ -1661,16 +1634,133 @@ def create_app(
             )
             for d, gs in week_fixtures(sched, now)
         ]
+
+    def score_page(
+        league_id: int,
+        season: int,
+        sched: Schedule,
+        data: dict,
+        owners: dict[int, int],
+        week: list[schemas.FixtureDay],
+        now: datetime,
+        complete: bool,
+    ) -> schemas.ScoreDay:
+        games = [
+            schemas.Game(
+                **{
+                    **g,
+                    "lines": [schemas.GameLine(**ln, owner_team_id=owners.get(ln["player_id"])) for ln in g["lines"]],
+                }
+            )
+            for g in data["games"]
+        ]
+        days = [
+            schemas.ScoreDayRef(day=d, date=_iso_date(sched.date_of(d)), games=len(gs))
+            for d, gs in sorted(sched.games.items())
+        ]
         return schemas.ScoreDay(
-            league_id=body.league_id,
+            league_id=league_id,
             season=season,
-            day=day,
+            day=data["day"],
             date=data["date"],
             games=games,
             days=days,
             live=any(g.status == "live" for g in games),
             week=week,
             updated_at=iso(now),
+            complete=complete,
+        )
+
+    @app.post("/api/scores", response_model=schemas.ScoreDay, responses={401: {"model": schemas.ErrorBody}})
+    async def scores(
+        body: schemas.ScoresRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.ScoreDay:
+        """A day of NBA games with scores and box scores, each player tagged with his fantasy team here."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        lg = await load_league(body.league_id, season, creds, with_fa=False)
+        sched = await score_calendar(season)
+        now = app.state.now()
+        day = score_day_of(sched, body.day, now)
+        data = await score_day(season, day, body.league_id, creds, sched)
+        data = await with_clocks(data, sched.date_of(day))
+        owners = {p.id: t.id for t in lg.teams for p in t.roster}
+        team = lg.team(body.team_id) if body.team_id else None
+        sits = await week_sits(body.league_id, season, creds, team.id) if team and body.with_sits else {}
+        week = week_days(sched, now, team.roster if team else [], sits)
+        return score_page(body.league_id, season, sched, data, owners, week, now, complete=True)
+
+    @app.post("/api/scores/games", response_model=schemas.ScoreDay, responses={401: {"model": schemas.ErrorBody}})
+    async def score_games(
+        body: schemas.ScoresRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.ScoreDay:
+        """The day's games at once: teams, tip-off and status from the NBA calendar, with no stats call.
+
+        Scores and box scores come along only when the day is already in memory (``complete``);
+        otherwise ask ``/api/scores`` for them. Who sits on crowded days is ``/api/scores/sits``.
+        """
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        sched = await score_calendar(season)
+        now = app.state.now()
+        day = score_day_of(sched, body.day, now)
+        key = (season, day)
+        data = app.state.settled_days.get(key) or app.state.score_days.get(key)
+        complete = data is not None or not needs_stats(sched, day, now)
+        if data is None:
+            data = build_day(sched, day, [], now)
+            if not complete:  # started games: the scores aren't known yet, not zero
+                data = {
+                    **data,
+                    "games": [
+                        {
+                            **g,
+                            "lines": [],
+                            "away": {**g["away"], "score": None},
+                            "home": {**g["home"], "score": None},
+                        }
+                        for g in data["games"]
+                    ],
+                }
+        owners: dict[int, int] = {}
+        roster: list = []
+        if body.team_id or complete:
+            lg = await load_league(body.league_id, season, creds, with_fa=False)
+            owners = {p.id: t.id for t in lg.teams for p in t.roster}
+            team = lg.team(body.team_id) if body.team_id else None
+            roster = team.roster if team else []
+        week = week_days(sched, now, roster, {})
+        return score_page(body.league_id, season, sched, data, owners, week, now, complete=complete)
+
+    @app.post("/api/scores/sits", response_model=schemas.WeekSits, responses={401: {"model": schemas.ErrorBody}})
+    async def score_sits(
+        body: schemas.SitsRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.WeekSits:
+        """Who sits on each crowded day left this week: the slow part of the Scores page, on its own."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        sched = await score_calendar(season)
+        now = app.state.now()
+        sits = await week_sits(body.league_id, season, creds, body.team_id)
+        return schemas.WeekSits(
+            days=[
+                schemas.DaySits(
+                    day=d, date=_iso_date(sched.date_of(d)), sits=sits.get(_iso_date(sched.date_of(d)) or "", [])
+                )
+                for d, _ in week_fixtures(sched, now)
+            ]
         )
 
     @app.get("/api/news/refresh")

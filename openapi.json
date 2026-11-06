@@ -2427,6 +2427,204 @@
         }
       }
     },
+    "/api/scores/games": {
+      "post": {
+        "summary": "Score Games",
+        "description": "The day's games at once: teams, tip-off and status from the NBA calendar, with no stats call.\n\nScores and box scores come along only when the day is already in memory (``complete``);\notherwise ask ``/api/scores`` for them. Who sits on crowded days is ``/api/scores/sits``.",
+        "operationId": "score_games_api_scores_games_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoresRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreDay"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/scores/sits": {
+      "post": {
+        "summary": "Score Sits",
+        "description": "Who sits on each crowded day left this week: the slow part of the Scores page, on its own.",
+        "operationId": "score_sits_api_scores_sits_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SitsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeekSits"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/news/refresh": {
       "get": {
         "summary": "News Refresh",
@@ -3776,6 +3974,39 @@
           "sit"
         ],
         "title": "CrowdedDay"
+      },
+      "DaySits": {
+        "properties": {
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "sits": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Sits",
+            "description": "Your players with a game that day whom the best lineup leaves out"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day",
+          "sits"
+        ],
+        "title": "DaySits"
       },
       "DeletePostRequest": {
         "properties": {
@@ -7038,6 +7269,12 @@
           "updated_at": {
             "type": "string",
             "title": "Updated At"
+          },
+          "complete": {
+            "type": "boolean",
+            "title": "Complete",
+            "description": "Scores and box scores are in. False from /api/scores/games before the day's stats are fetched: started games have no score or lines yet",
+            "default": true
           }
         },
         "type": "object",
@@ -7127,6 +7364,12 @@
             ],
             "title": "Team Id",
             "description": "Your team: this week's fixtures name your players"
+          },
+          "with_sits": {
+            "type": "boolean",
+            "title": "With Sits",
+            "description": "Work out who sits on crowded days (slow on a cold server). False leaves ``sits`` empty; ask /api/scores/sits for them on their own",
+            "default": true
           }
         },
         "type": "object",
@@ -7701,6 +7944,38 @@
           "password"
         ],
         "title": "SignUpRequest"
+      },
+      "SitsRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id"
+        ],
+        "title": "SitsRequest"
       },
       "TargetFit": {
         "properties": {
@@ -9571,6 +9846,23 @@
         ],
         "title": "WeekMatchup",
         "description": "This week's matchup, for moves made in it."
+      },
+      "WeekSits": {
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/DaySits"
+            },
+            "type": "array",
+            "title": "Days",
+            "description": "Each day left this week, as in ScoreDay.week"
+          }
+        },
+        "type": "object",
+        "required": [
+          "days"
+        ],
+        "title": "WeekSits"
       }
     }
   }
