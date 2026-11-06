@@ -1187,3 +1187,111 @@ class TradeRuleListRequest(LeagueRequest):
 class TradeRuleDeleteRequest(LeagueRequest):
     team_id: int = Field(gt=0)
     rule_id: int = Field(gt=0)
+
+
+class RecapRequest(LeagueRequest):
+    period: int | None = Field(
+        default=None, ge=1, le=40, description="Matchup period (week). Default: the last week that has finished"
+    )
+
+
+class WeekTotals(BaseModel):
+    """A player's totals over the week, in the site's stat order."""
+
+    minutes: int
+    pts: int
+    fgm: int
+    fga: int
+    ftm: int
+    fta: int
+    tpm: int
+    reb: int
+    ast: int
+    stl: int
+    blk: int
+    to: int
+
+
+class RecapPlayer(BaseModel):
+    player_id: int
+    name: str
+    pro_team_id: int
+    games: int
+    value: float = Field(description="Sum of the week's category z-scores against the 200 busiest players")
+    rank: int = Field(description="Rank by value among every NBA player that week")
+    z: dict[str, float] = Field(description="Category name -> z-score; turnovers count against")
+    totals: WeekTotals
+
+
+class RecapTopPlayer(RecapPlayer):
+    owner_team_id: int | None = Field(default=None, description="Fantasy team on the week's last day; none = free")
+
+
+class RecapPickup(BaseModel):
+    team_id: int
+    day: int = Field(description="Scoring period he first appeared on that roster")
+    weekday: int = Field(description="0 = the week's first day (Monday), 6 = Sunday")
+
+
+class RecapFreeAgent(RecapPlayer):
+    picked_up: RecapPickup | None = Field(default=None, description="Who added him during the week, if anyone")
+    owner_now_team_id: int | None = Field(default=None, description="Fantasy team today; none = still free")
+
+
+class RecapAdd(RecapPlayer):
+    day: int
+    weekday: int
+
+
+class RecapBench(BaseModel):
+    games: int = 0
+    pts: int = 0
+    reb: int = 0
+    ast: int = 0
+    stl: int = 0
+    blk: int = 0
+    tpm: int = 0
+
+
+class RecapTeam(BaseModel):
+    team_id: int
+    abbrev: str = ""
+    name: str = ""
+    mvp: RecapPlayer | None = Field(default=None, description="Best player among the games the team started")
+    best_add: RecapAdd | None = Field(default=None, description="Best player the team added during the week")
+    bench: RecapBench = Field(description="Games played while on the bench or IR, and what they scored")
+
+
+class RecapSide(BaseModel):
+    team_id: int
+    wins: int
+    losses: int
+    ties: int
+    values: dict[str, float] = Field(description="Category name -> the week's total (ratios as fractions)")
+
+
+class RecapMatchup(BaseModel):
+    home: RecapSide
+    away: RecapSide
+    winner_team_id: int | None = Field(default=None, description="None = tied")
+    margin: int = Field(description="Category wins between the two sides")
+
+
+class RecapWeekRef(BaseModel):
+    period: int
+    start: str | None = None
+    end: str | None = None
+
+
+class WeekRecap(BaseModel):
+    league_id: int
+    season: int
+    period: int
+    start: str | None = Field(default=None, description="First day's US date")
+    end: str | None = Field(default=None, description="Last day's US date")
+    categories: list[str] = Field(description="The league's categories, in its order")
+    matchups: list[RecapMatchup] = Field(description="Biggest margin first")
+    players: list[RecapTopPlayer] = Field(description="Players of the week, best first")
+    free_agents: list[RecapFreeAgent] = Field(description="Best players who were free when the week began")
+    teams: list[RecapTeam]
+    weeks: list[RecapWeekRef] = Field(description="Every finished week, for a week picker")

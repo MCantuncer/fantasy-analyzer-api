@@ -47,6 +47,15 @@ create table if not exists nba_days (
     saved_at timestamptz not null default now(),
     primary key (season, day)
 );
+-- A finished matchup week's recap per league (app/recap.py). Final once saved.
+create table if not exists week_recaps (
+    league_id bigint not null,
+    season int not null,
+    period int not null,
+    body jsonb not null,
+    saved_at timestamptz not null default now(),
+    primary key (league_id, season, period)
+);
 create table if not exists news_items (
     id text primary key,
     published_at timestamptz not null,
@@ -71,6 +80,8 @@ class Store(Protocol):
     def tally(self, key: TradeKey, pick_id: str) -> dict[int, tuple[int, int]]: ...
     def get_day(self, season: int, day: int) -> dict | None: ...
     def save_day(self, season: int, day: int, body: dict) -> None: ...
+    def get_recap(self, league_id: int, season: int, period: int) -> dict | None: ...
+    def save_recap(self, league_id: int, season: int, period: int, body: dict) -> None: ...
     def save_news_items(self, items: list[dict]) -> None: ...
     def news_items(self, since: str) -> list[dict]: ...
     def get_news_state(self, key: str) -> dict | None: ...
@@ -82,6 +93,7 @@ class MemoryStore:
         self.trades: dict[TradeKey, dict] = {}
         self.votes: dict[TradeKey, dict[tuple[int, str], tuple[str, bool]]] = {}
         self.days: dict[tuple[int, int], dict] = {}
+        self.recaps: dict[tuple[int, int, int], dict] = {}
         self.news: dict[str, dict] = {}
         self.news_state: dict[str, dict] = {}
 
@@ -108,6 +120,12 @@ class MemoryStore:
 
     def save_day(self, season: int, day: int, body: dict) -> None:
         self.days[(season, day)] = body
+
+    def get_recap(self, league_id: int, season: int, period: int) -> dict | None:
+        return self.recaps.get((league_id, season, period))
+
+    def save_recap(self, league_id: int, season: int, period: int, body: dict) -> None:
+        self.recaps[(league_id, season, period)] = body
 
     def save_news_items(self, items: list[dict]) -> None:
         for item in items:
@@ -178,6 +196,22 @@ class PostgresStore:
                 "insert into nba_days (season, day, body) values (%s, %s, %s) "
                 "on conflict (season, day) do update set body = excluded.body, saved_at = now()",
                 (season, day, json.dumps(body)),
+            )
+
+    def get_recap(self, league_id: int, season: int, period: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "select body from week_recaps where league_id=%s and season=%s and period=%s",
+                (league_id, season, period),
+            ).fetchone()
+        return row[0] if row else None
+
+    def save_recap(self, league_id: int, season: int, period: int, body: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "insert into week_recaps (league_id, season, period, body) values (%s, %s, %s, %s) "
+                "on conflict (league_id, season, period) do update set body = excluded.body, saved_at = now()",
+                (league_id, season, period, json.dumps(body)),
             )
 
     def save_news_items(self, items: list[dict]) -> None:

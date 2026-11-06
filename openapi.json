@@ -2625,6 +2625,115 @@
         }
       }
     },
+    "/api/recap": {
+      "post": {
+        "summary": "Week Recap",
+        "description": "A finished week in review: matchup results, players of the week, the free agents who stood\nout and each team's MVP, best add and bench. Built once per league and week, then stored.",
+        "operationId": "week_recap_api_recap_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecapRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeekRecap"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/news/refresh": {
       "get": {
         "summary": "News Refresh",
@@ -7159,6 +7268,525 @@
         "title": "ReasonFact",
         "description": "One reason as data, so the page can draw it (bars, chips) instead of printing a sentence."
       },
+      "RecapAdd": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pro_team_id": {
+            "type": "integer",
+            "title": "Pro Team Id"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "Sum of the week's category z-scores against the 200 busiest players"
+          },
+          "rank": {
+            "type": "integer",
+            "title": "Rank",
+            "description": "Rank by value among every NBA player that week"
+          },
+          "z": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Z",
+            "description": "Category name -> z-score; turnovers count against"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/WeekTotals"
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pro_team_id",
+          "games",
+          "value",
+          "rank",
+          "z",
+          "totals",
+          "day",
+          "weekday"
+        ],
+        "title": "RecapAdd"
+      },
+      "RecapBench": {
+        "properties": {
+          "games": {
+            "type": "integer",
+            "title": "Games",
+            "default": 0
+          },
+          "pts": {
+            "type": "integer",
+            "title": "Pts",
+            "default": 0
+          },
+          "reb": {
+            "type": "integer",
+            "title": "Reb",
+            "default": 0
+          },
+          "ast": {
+            "type": "integer",
+            "title": "Ast",
+            "default": 0
+          },
+          "stl": {
+            "type": "integer",
+            "title": "Stl",
+            "default": 0
+          },
+          "blk": {
+            "type": "integer",
+            "title": "Blk",
+            "default": 0
+          },
+          "tpm": {
+            "type": "integer",
+            "title": "Tpm",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "RecapBench"
+      },
+      "RecapFreeAgent": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pro_team_id": {
+            "type": "integer",
+            "title": "Pro Team Id"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "Sum of the week's category z-scores against the 200 busiest players"
+          },
+          "rank": {
+            "type": "integer",
+            "title": "Rank",
+            "description": "Rank by value among every NBA player that week"
+          },
+          "z": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Z",
+            "description": "Category name -> z-score; turnovers count against"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/WeekTotals"
+          },
+          "picked_up": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecapPickup"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who added him during the week, if anyone"
+          },
+          "owner_now_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Now Team Id",
+            "description": "Fantasy team today; none = still free"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pro_team_id",
+          "games",
+          "value",
+          "rank",
+          "z",
+          "totals"
+        ],
+        "title": "RecapFreeAgent"
+      },
+      "RecapMatchup": {
+        "properties": {
+          "home": {
+            "$ref": "#/components/schemas/RecapSide"
+          },
+          "away": {
+            "$ref": "#/components/schemas/RecapSide"
+          },
+          "winner_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winner Team Id",
+            "description": "None = tied"
+          },
+          "margin": {
+            "type": "integer",
+            "title": "Margin",
+            "description": "Category wins between the two sides"
+          }
+        },
+        "type": "object",
+        "required": [
+          "home",
+          "away",
+          "margin"
+        ],
+        "title": "RecapMatchup"
+      },
+      "RecapPickup": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day",
+            "description": "Scoring period he first appeared on that roster"
+          },
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday",
+            "description": "0 = the week's first day (Monday), 6 = Sunday"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "day",
+          "weekday"
+        ],
+        "title": "RecapPickup"
+      },
+      "RecapPlayer": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pro_team_id": {
+            "type": "integer",
+            "title": "Pro Team Id"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "Sum of the week's category z-scores against the 200 busiest players"
+          },
+          "rank": {
+            "type": "integer",
+            "title": "Rank",
+            "description": "Rank by value among every NBA player that week"
+          },
+          "z": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Z",
+            "description": "Category name -> z-score; turnovers count against"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/WeekTotals"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pro_team_id",
+          "games",
+          "value",
+          "rank",
+          "z",
+          "totals"
+        ],
+        "title": "RecapPlayer"
+      },
+      "RecapRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "period": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 40.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period",
+            "description": "Matchup period (week). Default: the last week that has finished"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id"
+        ],
+        "title": "RecapRequest"
+      },
+      "RecapSide": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "wins": {
+            "type": "integer",
+            "title": "Wins"
+          },
+          "losses": {
+            "type": "integer",
+            "title": "Losses"
+          },
+          "ties": {
+            "type": "integer",
+            "title": "Ties"
+          },
+          "values": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Values",
+            "description": "Category name -> the week's total (ratios as fractions)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "wins",
+          "losses",
+          "ties",
+          "values"
+        ],
+        "title": "RecapSide"
+      },
+      "RecapTeam": {
+        "properties": {
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "abbrev": {
+            "type": "string",
+            "title": "Abbrev",
+            "default": ""
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "mvp": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecapPlayer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Best player among the games the team started"
+          },
+          "best_add": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecapAdd"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Best player the team added during the week"
+          },
+          "bench": {
+            "$ref": "#/components/schemas/RecapBench",
+            "description": "Games played while on the bench or IR, and what they scored"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team_id",
+          "bench"
+        ],
+        "title": "RecapTeam"
+      },
+      "RecapTopPlayer": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pro_team_id": {
+            "type": "integer",
+            "title": "Pro Team Id"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "Sum of the week's category z-scores against the 200 busiest players"
+          },
+          "rank": {
+            "type": "integer",
+            "title": "Rank",
+            "description": "Rank by value among every NBA player that week"
+          },
+          "z": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Z",
+            "description": "Category name -> z-score; turnovers count against"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/WeekTotals"
+          },
+          "owner_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team Id",
+            "description": "Fantasy team on the week's last day; none = free"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pro_team_id",
+          "games",
+          "value",
+          "rank",
+          "z",
+          "totals"
+        ],
+        "title": "RecapTopPlayer"
+      },
+      "RecapWeekRef": {
+        "properties": {
+          "period": {
+            "type": "integer",
+            "title": "Period"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period"
+        ],
+        "title": "RecapWeekRef"
+      },
       "RepliesPage": {
         "properties": {
           "target": {
@@ -9847,6 +10475,106 @@
         "title": "WeekMatchup",
         "description": "This week's matchup, for moves made in it."
       },
+      "WeekRecap": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "title": "League Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "period": {
+            "type": "integer",
+            "title": "Period"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start",
+            "description": "First day's US date"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End",
+            "description": "Last day's US date"
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories",
+            "description": "The league's categories, in its order"
+          },
+          "matchups": {
+            "items": {
+              "$ref": "#/components/schemas/RecapMatchup"
+            },
+            "type": "array",
+            "title": "Matchups",
+            "description": "Biggest margin first"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/RecapTopPlayer"
+            },
+            "type": "array",
+            "title": "Players",
+            "description": "Players of the week, best first"
+          },
+          "free_agents": {
+            "items": {
+              "$ref": "#/components/schemas/RecapFreeAgent"
+            },
+            "type": "array",
+            "title": "Free Agents",
+            "description": "Best players who were free when the week began"
+          },
+          "teams": {
+            "items": {
+              "$ref": "#/components/schemas/RecapTeam"
+            },
+            "type": "array",
+            "title": "Teams"
+          },
+          "weeks": {
+            "items": {
+              "$ref": "#/components/schemas/RecapWeekRef"
+            },
+            "type": "array",
+            "title": "Weeks",
+            "description": "Every finished week, for a week picker"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "season",
+          "period",
+          "categories",
+          "matchups",
+          "players",
+          "free_agents",
+          "teams",
+          "weeks"
+        ],
+        "title": "WeekRecap"
+      },
       "WeekSits": {
         "properties": {
           "days": {
@@ -9863,6 +10591,75 @@
           "days"
         ],
         "title": "WeekSits"
+      },
+      "WeekTotals": {
+        "properties": {
+          "minutes": {
+            "type": "integer",
+            "title": "Minutes"
+          },
+          "pts": {
+            "type": "integer",
+            "title": "Pts"
+          },
+          "fgm": {
+            "type": "integer",
+            "title": "Fgm"
+          },
+          "fga": {
+            "type": "integer",
+            "title": "Fga"
+          },
+          "ftm": {
+            "type": "integer",
+            "title": "Ftm"
+          },
+          "fta": {
+            "type": "integer",
+            "title": "Fta"
+          },
+          "tpm": {
+            "type": "integer",
+            "title": "Tpm"
+          },
+          "reb": {
+            "type": "integer",
+            "title": "Reb"
+          },
+          "ast": {
+            "type": "integer",
+            "title": "Ast"
+          },
+          "stl": {
+            "type": "integer",
+            "title": "Stl"
+          },
+          "blk": {
+            "type": "integer",
+            "title": "Blk"
+          },
+          "to": {
+            "type": "integer",
+            "title": "To"
+          }
+        },
+        "type": "object",
+        "required": [
+          "minutes",
+          "pts",
+          "fgm",
+          "fga",
+          "ftm",
+          "fta",
+          "tpm",
+          "reb",
+          "ast",
+          "stl",
+          "blk",
+          "to"
+        ],
+        "title": "WeekTotals",
+        "description": "A player's totals over the week, in the site's stat order."
       }
     }
   }
