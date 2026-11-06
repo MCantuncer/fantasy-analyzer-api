@@ -3,7 +3,7 @@ services:
   - type: web
     name: fantasy-analyzer-api
     runtime: python
-    plan: free # change to "starter" for an always-on server
+    plan: starter # always on, 0.5 CPU / 512 MB (upgraded 2026-11-06)
     buildCommand: pip install uv && uv sync --locked --no-dev
     startCommand: uv run --no-dev uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log
     healthCheckPath: /api/health
