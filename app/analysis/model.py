@@ -15,6 +15,9 @@ Without it, every starter plays GAMES_PER_WEEK games.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+from itertools import chain
+from operator import itemgetter
 
 import numpy as np
 
@@ -81,6 +84,7 @@ class CategoryModel:
         self._plays: dict[tuple[int, object], np.ndarray] = {}
         self._game_index: dict[int, dict[int, int]] = {}
         self._fills: dict[tuple[int, ...], tuple[int, ...]] = {}
+        self._fits: dict[tuple[int, ...], bool] = {}
         self._dists: dict[tuple[tuple[int, ...], object], Dist] = {}
         self._masks: dict[int, int] = {}
         self.seats = [slot for slot, n in sorted(self.slot_counts.items()) for _ in range(n)]
@@ -282,15 +286,54 @@ class CategoryModel:
         out = np.zeros(len(roster))
         if not m.size:
             return out
+        masks = tuple([self._seat_mask(roster[i]) for i in order])
+        in_order = np.zeros(len(order))
+        if self.seats:
+            # Most days everyone with a game has a seat: they all start. Checked for every day
+            # at once (Hall's condition), so only the crowded days need a lineup worked out.
+            fit = self._everyone_fits(masks, m)
+            in_order += m[:, fit].sum(1)
+            m = m[:, ~fit]
+            if not m.shape[1]:
+                out[order] = in_order
+                return out
         # Days with the same players available share one lineup: solve each pattern once.
         bits = (m.astype(np.int64) << np.arange(len(order), dtype=np.int64)[:, None]).sum(0)
         patterns, counts = np.unique(bits, return_counts=True)
-        masks = [self._seat_mask(roster[i]) for i in order]
-        for mask, n in zip(patterns.tolist(), counts.tolist(), strict=True):
-            idx = [k for k in range(len(order)) if mask >> k & 1]
-            for k in self._fill(tuple([masks[k] for k in idx])):
-                out[order[idx[k]]] += n
+        fills = self._fills
+        started: list[tuple[int, ...]] = []
+        # This runs for every roster a trade scan tries, so the loop stays in C where it can:
+        # the pattern's players and their starters are picked with cached itemgetters.
+        for pattern in patterns.tolist():
+            pos, take = _picker(pattern)
+            key = take(masks)
+            res = fills.get(key)
+            if res is None:
+                res = self._fill(key)
+            started.append(_pick(res)(pos))
+        days = np.repeat(counts, [len(s) for s in started])
+        in_order += np.bincount(
+            np.fromiter(chain.from_iterable(started), dtype=np.int64, count=len(days)),
+            weights=days,
+            minlength=len(order),
+        )
+        out[order] = in_order
         return out
+
+    def _everyone_fits(self, masks: tuple[int, ...], m: np.ndarray) -> np.ndarray:
+        """(D,) bool: days every available player (rows of ``m``) can have a seat at once.
+
+        Hall's condition: no group of seats is wanted by more players than it has seats.
+        Only unions of the players' seat masks need checking."""
+        types = sorted(set(masks))
+        unions, caps = _seat_unions(tuple(types))
+        # (K, P): player i counts against union k when all his seats are in it.
+        kind = np.array([types.index(x) for x in masks])
+        within = unions[:, kind]
+        tight = within.sum(1) > caps  # a union with room for all its players never blocks
+        if not tight.any():
+            return np.ones(m.shape[1], dtype=bool)
+        return (within[tight].astype(np.int64) @ m.astype(np.int64) <= caps[tight][:, None]).all(0)
 
     def _seat_mask(self, p: Player) -> int:
         """Bit k set when he can sit in lineup seat k."""
@@ -312,37 +355,27 @@ class CategoryModel:
             return cached
         if not self.seats:
             res = tuple(range(min(len(masks), self.n_starters)))
-            self._fills[masks] = res
-            return res
-        holder = [-1] * len(self.seats)  # seat -> index into masks
-        seen = 0  # seats already tried in this augmenting search
-
-        def seat(i: int) -> bool:
-            """Seat player i, moving others along an augmenting path."""
-            nonlocal seen
-            free = masks[i] & ~seen
-            while free:
-                bit = free & -free
-                free ^= bit
-                seen |= bit
-                k = bit.bit_length() - 1
-                if holder[k] < 0 or seat(holder[k]):
-                    holder[k] = i
-                    return True
-            return False
-
-        started = []
-        for i in range(len(masks)):
-            if len(started) == len(self.seats):
-                break
-            seen = 0
-            if seat(i):
-                started.append(i)
-        res = tuple(started)
+        elif len(masks) <= len(self.seats) and self._all_fit(masks):
+            # Most days everyone with a game fits: then they all start, whatever the order.
+            res = tuple(range(len(masks)))
+        else:
+            res = _seat_in_order(masks, len(self.seats))
         if len(self._fills) >= FILL_CACHE_SIZE:
             self._fills.clear()
         self._fills[masks] = res
         return res
+
+    def _all_fit(self, masks: tuple[int, ...]) -> bool:
+        """Whether every one of these players can have a seat at once. Order doesn't matter,
+        so the answer is shared by every lineup with the same position mix."""
+        key = tuple(sorted(masks))
+        fits = self._fits.get(key)
+        if fits is None:
+            fits = len(_seat_in_order(key, len(self.seats))) == len(key)
+            if len(self._fits) >= FILL_CACHE_SIZE:
+                self._fits.clear()
+            self._fits[key] = fits
+        return fits
 
     # ---- win probabilities --------------------------------------------------------------
 
@@ -371,3 +404,64 @@ class CategoryModel:
         sd = np.array([d.sd for j, d in enumerate(dists) if j != idx])
         p = norm_cdf((me.mu - mu) / np.sqrt(me.sd**2 + sd**2))
         return np.where(self.reverse, 1.0 - p, p).mean(0)
+
+
+@lru_cache(maxsize=1 << 15)
+def _pick(idx: tuple[int, ...]):
+    """A function taking the items at ``idx`` from a tuple, always as a tuple."""
+    if not idx:
+        return lambda t: ()
+    if len(idx) == 1:
+        k = idx[0]
+        return lambda t: (t[k],)
+    return itemgetter(*idx)
+
+
+@lru_cache(maxsize=1 << 15)
+def _picker(pattern: int) -> tuple[tuple[int, ...], object]:
+    """The positions of the set bits of ``pattern`` (a day's available players), and a getter for them."""
+    pos = tuple(k for k in range(pattern.bit_length()) if pattern >> k & 1)
+    return pos, _pick(pos)
+
+
+def _seat_in_order(masks: tuple[int, ...], n_seats: int) -> tuple[int, ...]:
+    """Seat players in order (bit k of a mask: he can sit in seat k), each along an augmenting
+    path that may move earlier players to other seats; returns the indices that got a seat."""
+    holder = [-1] * n_seats  # seat -> index into masks
+    seen = 0  # seats already tried in this augmenting search
+
+    def seat(i: int) -> bool:
+        """Seat player i, moving others along an augmenting path."""
+        nonlocal seen
+        free = masks[i] & ~seen
+        while free:
+            bit = free & -free
+            free ^= bit
+            seen |= bit
+            k = bit.bit_length() - 1
+            if holder[k] < 0 or seat(holder[k]):
+                holder[k] = i
+                return True
+        return False
+
+    started = []
+    for i in range(len(masks)):
+        if len(started) == n_seats:
+            break
+        seen = 0
+        if seat(i):
+            started.append(i)
+    return tuple(started)
+
+
+@lru_cache(maxsize=4096)
+def _seat_unions(types: tuple[int, ...]) -> tuple[np.ndarray, np.ndarray]:
+    """Every distinct union of these seat masks: (K, T) bool, whether type t's seats all lie in
+    union k, and (K,) the number of seats in each union."""
+    unions: set[int] = set()
+    for t in types:
+        unions |= {u | t for u in unions} | {t}
+    ordered = sorted(unions)
+    inside = np.array([[t & ~u == 0 for t in types] for u in ordered], dtype=bool).reshape(len(ordered), len(types))
+    caps = np.array([u.bit_count() for u in ordered], dtype=np.int64)
+    return inside, caps
