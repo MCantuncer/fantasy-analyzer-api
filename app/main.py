@@ -34,7 +34,7 @@ from app.accounts import (
     team_of,
     verify_google,
 )
-from app.analysis import absence, teammates
+from app.analysis import absence
 from app.analysis.checks import REASON_CHECKS, IdeaChecker, StaleIdea, focus_order
 from app.analysis.checks import TITLES as CHECK_TITLES
 from app.analysis.daily import trade_of_the_day
@@ -325,23 +325,6 @@ def create_app(
             return  # the flat days-out guess stays
         absence.attach(league, {pid: played.get(pid, set()) for pid in out}, last_run, reported_timelines(league, out))
 
-    async def attach_teammate_minutes(league: League) -> None:
-        """Teammates of players out for a while get the minutes they gain while he's out (teammates.py)."""
-        season, moved = league.season, []
-        for x in teammates.absent_regulars(league):
-            try:
-                lines, info = parse_gamelogs(await team_gamelogs(season, x.pro_team_id, past=False), season)
-                last, _ = parse_gamelogs(await team_gamelogs(season - 1, x.pro_team_id, past=True), season - 1)
-            except EspnError:
-                continue  # his teammates keep the plain blend
-            now = Season(lines)
-            roster = [p for p in info.values() if p.team == x.pro_team_id]
-            impact = await run_in_threadpool(
-                analyze_absence, [now, Season(last, LAST_SEASON_WEIGHT)], x.pro_team_id, x.id, roster
-            )
-            moved += teammates.shifts(league, x, impact, now)
-        teammates.apply(league, moved)
-
     def reported_timelines(league: League, ids: list[int]) -> dict[int, absence.Report]:
         """The latest stored news item giving a timeline for each of these players."""
         cal = league.calendar
@@ -417,7 +400,6 @@ def create_app(
                 past = await past_games(season)
                 attach_durability(league, past, await past_absences(league, past) if past else None)
                 await attach_absences(league)
-                await attach_teammate_minutes(league)
             app.state.leagues.set(key, league)
         return league
 
