@@ -8,6 +8,7 @@ from app.analysis.report import Analyzer, league_summary
 from app.analysis.tiers import droppable
 from app.analysis.tiers import droppable as no_trade_value
 from app.analysis.trades import (
+    MAX_PER_GIVE,
     MAX_PER_PARTNER,
     MAX_PER_TARGET,
     MAX_VALUE_RATIO,
@@ -198,6 +199,8 @@ def test_picks_limit_repeats_and_uneven_deals(league):
     assert all(partners.count(p) <= MAX_PER_PARTNER for p in set(partners))
     targets = [max(d.get, key=finder.perceived.value).id for d in picked]
     assert all(targets.count(t) <= MAX_PER_TARGET for t in set(targets))
+    gives = [p.id for d in picked for p in d.give]
+    assert all(gives.count(g) <= MAX_PER_GIVE for g in set(gives))
     assert sum(len(d.give) != len(d.get) for d in picked) <= 2
     assert len(picked) <= 10
 

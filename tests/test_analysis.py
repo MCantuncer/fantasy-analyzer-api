@@ -3,7 +3,7 @@ import pytest
 
 import app.analysis.sim as sim
 from app.analysis.model import CategoryModel, norm_cdf
-from app.analysis.report import Analyzer, i_gain, partner_gains
+from app.analysis.report import PAPER_MAX_PARTNER_DROP, Analyzer, i_gain, partner_gains, worth_a_try
 from app.analysis.sim import SeasonSim, category_links, simulate_season
 from app.analysis.trades import SCREEN_MIN_THEIR_GAIN
 
@@ -109,6 +109,26 @@ def test_partner_gains_needs_a_visible_rise():
     assert partner_gains(0.40, 0.41)
     assert partner_gains(0.99, 0.99)  # a near-lock can't rise a point: it just must not drop
     assert not partner_gains(0.99, 0.985)
+
+
+def test_worth_a_try_is_a_paper_win_that_costs_them_little():
+    from types import SimpleNamespace
+
+    paper = SimpleNamespace(give_value=12.0, get_value=10.0)  # they get more trade value than they send
+    short = SimpleNamespace(give_value=9.0, get_value=10.0)
+    assert worth_a_try(short, 0.40, 0.41)  # their odds go up: a reason to say yes on its own
+    assert worth_a_try(paper, 0.40, 0.40 - PAPER_MAX_PARTNER_DROP)
+    assert not worth_a_try(paper, 0.40, 0.40 - PAPER_MAX_PARTNER_DROP - 0.005)  # sinks their team
+    assert not worth_a_try(short, 0.40, 0.39)  # no paper win and their odds drop
+
+
+def test_edge_trades_win_on_paper_and_cost_them_little(league):
+    for t in Analyzer(league, 3).trades("edge"):
+        assert t.playoff_pct_after - t.playoff_pct_before >= 0.0099
+        partner = t.partner_playoff_pct_after - t.partner_playoff_pct_before
+        assert partner >= 0.0099 or (
+            t.value_they_get >= t.value_they_give - 0.05 and partner >= -PAPER_MAX_PARTNER_DROP - 0.001
+        )
 
 
 def test_my_side_needs_a_visible_rise_too():

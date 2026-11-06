@@ -5,9 +5,9 @@ the other team's players, so nobody has to cut more than one player. A deal must
   * look even or better for the other owner on paper (trade value),
   * leave their build at least about even in the categories they compete in, and
   * help you at least as much as it helps them.
-Deals where their build improves too are "win-win"; the rest are "paper wins" for them
-that you win on the court. Ranked like the trade finder: playoff-odds gain weighted by
-the chance the owner accepts.
+Deals that raise their playoff odds too are "win-win"; the rest are "paper wins" for them
+that you win on the court, shown only when they cost their odds a little at most. Ranked
+like the trade finder: playoff-odds gain weighted by the chance the owner accepts.
 
 In leagues with a FAAB budget, a few FAAB dollars can sweeten a package: they count as
 trade value for the other owner at FAAB_RATE per dollar. FAAB spent never comes back,
@@ -24,8 +24,8 @@ from datetime import UTC, datetime
 from itertools import combinations
 
 from app import schemas
-from app.analysis.report import Analyzer, partner_gains, record
-from app.analysis.trades import MIN_THEIR_GAIN, Deal, TradeFinder
+from app.analysis.report import Analyzer, partner_gains, record, worth_a_try
+from app.analysis.trades import Deal, TradeFinder
 from app.espn.parse import League, Player
 
 MAX_GIVE = 3
@@ -211,7 +211,8 @@ class ShopAnalyzer(Analyzer):
             before, base_cats = self.baseline(d)
             after, theirs = self.deal_odds(d)
             # Small category gains can vanish in the full simulation; only keep moves that hold up there.
-            if after - before < MIN_ODDS_GAIN or not partner_gains(*theirs):
+            # The other owner needs a reason to say yes: better odds, or a paper win that costs them little.
+            if after - before < MIN_ODDS_GAIN or not worth_a_try(d, *theirs):
                 continue
             idea = self.trade_idea(self.finder, d, before, after, base_cats, theirs)
             if d.faab:
@@ -224,7 +225,7 @@ class ShopAnalyzer(Analyzer):
             shown.append(
                 schemas.ShopDeal(
                     **idea.model_dump(),
-                    kind="win_win" if d.their_gain >= MIN_THEIR_GAIN else "paper_win",
+                    kind="win_win" if partner_gains(*theirs) else "paper_win",
                     uses_all={p.id for p in d.give} == offered_ids,
                     faab=d.faab,
                     target_gain=round(self.target_gain(d), 3),
