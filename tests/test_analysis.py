@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import pytest
 
@@ -73,6 +75,29 @@ def test_what_if_matches_a_full_simulation(league):
     assert np.allclose(fast.playoff_pct, slow.playoff_pct, atol=0.015)
     assert np.allclose(fast.wins, slow.wins, atol=0.1)
     assert base.what_if(set(), changed) is base.base
+
+
+@pytest.mark.parametrize("scoring", ["H2H_CATEGORY", "H2H_MOST_CATEGORIES"])
+def test_what_if_takes_old_matchups_out_exactly(league, scoring):
+    # A what-if takes each re-scored matchup's stored baseline result out and scores it again, so
+    # "changing" two teams to what they already were gives back the baseline exactly: the current
+    # week's banked stats, and the weeks the two teams meet each other, included.
+    lg = copy.copy(league)
+    lg.scoring_type = scoring
+    model = CategoryModel(lg)
+    dists = [model.dist(t.roster) for t in lg.teams]
+    undecided = sorted({m.period for m in lg.schedule if m.winner == "UNDECIDED"})
+    periods = {p: [model.dist(t.roster, p) for t in lg.teams] for p in undecided}
+    s = SeasonSim(lg, dists, model.reverse, n_sims=300, period_dists=periods)
+    first = next(m for m in lg.schedule if m.winner == "UNDECIDED")
+    pair = {s.index[first.home], s.index[first.away]}
+    same = s.what_if(pair, dists, periods)
+    for got, want in ((same.wins, s.base.wins), (same.losses, s.base.losses), (same.ties, s.base.ties)):
+        assert np.array_equal(got, want)
+    assert np.array_equal(same.playoff_pct, s.base.playoff_pct)
+    full = simulate_season(lg, dists, model.reverse, n_sims=300, period_dists=periods)
+    assert np.allclose(s.base.wins, full.wins, atol=0.05)
+    assert np.allclose(s.base.playoff_pct, full.playoff_pct, atol=0.01)
 
 
 def test_category_links_are_a_valid_correlation_matrix():
