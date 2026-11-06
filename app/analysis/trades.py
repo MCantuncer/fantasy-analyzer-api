@@ -643,17 +643,25 @@ class TradeFinder:
         return out
 
     def candidates(
-        self, partners: Iterable[int] | None = None, two_for_two: bool = True, uneven: bool = True
+        self,
+        partners: Iterable[int] | None = None,
+        two_for_two: bool = True,
+        uneven: bool = True,
+        on_partner: Callable[[int, int], None] | None = None,
     ) -> list[Deal]:
-        """Every deal that passes the checks. ``uneven=False`` leaves out 2-for-1s and 1-for-2s."""
+        """Every deal that passes the checks. ``uneven=False`` leaves out 2-for-1s and 1-for-2s.
+
+        ``on_partner(done, total)`` is called after each partner team, for a progress bar.
+        """
         me = self.teams[self.me_idx]
         mine = [p for p in me.roster if p.id not in self.keep and not self.premium.not_for_sale(p)]
         deals: list[Deal] = []
         if self.mode == "vision":
-            return self._vision_candidates(mine, partners)
-        for j in range(len(self.teams)) if partners is None else partners:
-            if j == self.me_idx:
-                continue
+            return self._vision_candidates(mine, partners, on_partner)
+        teams = [j for j in (range(len(self.teams)) if partners is None else partners) if j != self.me_idx]
+        for n, j in enumerate(teams):
+            if on_partner is not None:
+                on_partner(n, len(teams))
             theirs = [p for p in self.teams[j].roster if not self.premium.not_for_sale(p)]
             for give in mine:
                 for get in theirs:
@@ -707,13 +715,19 @@ class TradeFinder:
                     out.append(d)
         return out
 
-    def _vision_candidates(self, mine: list[Player], partners: Iterable[int] | None) -> list[Deal]:
+    def _vision_candidates(
+        self,
+        mine: list[Player],
+        partners: Iterable[int] | None,
+        on_partner: Callable[[int, int], None] | None = None,
+    ) -> list[Deal]:
         """One target with a vision signal for one or two of my healthy players: they get production now."""
         healthy = [p for p in mine if p.available]
         deals: list[Deal] = []
-        for j in range(len(self.teams)) if partners is None else partners:
-            if j == self.me_idx:
-                continue
+        teams = [j for j in (range(len(self.teams)) if partners is None else partners) if j != self.me_idx]
+        for n, j in enumerate(teams):
+            if on_partner is not None:
+                on_partner(n, len(teams))
             targets = [p for p in self.teams[j].roster if not self.premium.not_for_sale(p) and self.vision_signals(p)]
             for get in targets:
                 for give in healthy:
@@ -749,9 +763,9 @@ class TradeFinder:
             return self.rank_key(d)
         return min(d.my_gain, d.their_strength)
 
-    def queue(self) -> list[Deal]:
+    def queue(self, on_partner: Callable[[int, int], None] | None = None) -> list[Deal]:
         """Every deal worth simulating, the likeliest to help both teams' playoff odds first."""
-        deals = self.candidates()
+        deals = self.candidates(on_partner=on_partner)
         bar = self.spectacular(deals)
         deals = [d for d in deals if d.my_gain >= bar or not any(self.premium.is_attached(p) for p in d.give)]
         return sorted(deals, key=self.sim_key, reverse=True)

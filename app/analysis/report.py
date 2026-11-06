@@ -47,6 +47,9 @@ VISION_ODDS_SLACK = 0.02
 PARTNER_MIN_ODDS_GAIN = 0.01
 LOCK_ODDS = 0.98  # a team this sure of the playoffs can't rise a point: it only must not drop
 PICKUP_SPAN = ("Screening pickups", 0.80, 0.94)
+# Within a trade step: pairing up players with every team takes about half the time (League A,
+# 2026-11-06: 10 s of 17.5 s for fair trades), simulating the best deals the other half.
+PAIRING_SHARE = 0.5
 
 Progress = Callable[[str, float], None]
 
@@ -355,12 +358,18 @@ class Analyzer:
         picks = finder.picks(TRADE_RESULTS)
         budget = TRADE_SIMS[mode]
         sims = 0
-        for d in finder.queue():
+        pairing = sim_span = None
+        if span is not None:
+            stage, lo, hi = span
+            mid = lo + (hi - lo) * PAIRING_SHARE
+            pairing, sim_span = (stage, lo, mid), (stage, mid, hi)
+        queue = finder.queue(on_partner=lambda done, total: self._tick(pairing, done, total))
+        for d in queue:
             if picks.full or sims >= budget:
                 break
             if not picks.room(d):
                 continue
-            self._tick(span, sims, budget)
+            self._tick(sim_span, sims, budget)
             sims += 1
             before, base_cats = self.baseline(d)
             after, theirs = self.deal_odds(d)

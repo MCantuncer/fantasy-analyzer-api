@@ -239,3 +239,17 @@ def test_season_sim_projects_category_ties(league):
     # League A's real weeks, 2022-2027: 0.13 tied categories a matchup.
     per_matchup = (res.ties.sum() - sum(t.ties for t in league.teams)) / 2 / len(left)
     assert 0.05 < per_matchup < 0.25
+
+
+def test_trade_screen_reports_progress_while_pairing_players(league):
+    """Pairing players with every team is half the step: the bar moves before the first simulation."""
+    from app.analysis.report import FAIR_SPAN, PAIRING_SHARE
+
+    seen: list[float] = []
+    analyzer = Analyzer(league, 3, progress=lambda stage, frac: seen.append(frac))
+    analyzer.trades(span=FAIR_SPAN)
+    _, lo, hi = FAIR_SPAN
+    mid = lo + (hi - lo) * PAIRING_SHARE
+    pairing = [f for f in seen if lo < f <= mid]
+    assert len(pairing) >= len(league.teams) - 2  # one step per partner team
+    assert seen == sorted(seen)
