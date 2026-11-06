@@ -11,7 +11,8 @@ the chance the owner accepts.
 
 In leagues with a FAAB budget, a few FAAB dollars can sweeten a package: they count as
 trade value for the other owner at FAAB_RATE per dollar. FAAB spent never comes back,
-so it is added only when it gets a deal over the line or makes a yes clearly likelier,
+so it is added only when it gets a deal over the line on paper (real offers show extra
+value beyond that doesn't make a yes likelier, see trades.ACCEPT_BY_SHAPE),
 always the smallest amount that does it, capped at a share of your budget, and every
 dollar lowers the deal's rank.
 """

@@ -19,8 +19,8 @@ from app.analysis.trades import (
     TradeFinder,
     acceptance_label,
     acceptance_odds,
+    keystone_odds,
     mix_shapes,
-    shape_odds,
 )
 from app.espn.parse import parse_league
 
@@ -104,20 +104,20 @@ def test_dollars_at_rank_is_non_increasing(league):
     assert all(a >= b for a, b in zip(values, values[1:], strict=False))
 
 
-def test_acceptance_odds_follow_value_and_need():
-    assert acceptance_odds(1.2, 0.2) > acceptance_odds(0.9, 0.2)
-    assert acceptance_odds(1.0, 0.2) > acceptance_odds(1.0, 0.03)
-    assert acceptance_label(0.7) == "likely" and acceptance_label(0.45) == "possible"
-    assert acceptance_label(0.2) == "long_shot"
+def test_acceptance_odds_come_from_real_offers_by_shape():
+    # Real offers (scripts/acceptance_fit.py): about 1 in 3 for a 1-for-1, lower for a 2-for-2,
+    # lowest for a 2-for-1 that makes the other owner cut someone.
+    one = acceptance_odds(1, 1)
+    assert 0.2 <= one <= 0.4
+    assert acceptance_odds(2, 1) < acceptance_odds(2, 2) < one
+    assert acceptance_odds(3, 3) == acceptance_odds(2, 2) and acceptance_odds(3, 1) == acceptance_odds(2, 1)
+    assert acceptance_label(one) == "possible" and acceptance_label(acceptance_odds(2, 2)) == "possible"
+    assert acceptance_label(acceptance_odds(2, 1)) == "long_shot"
 
 
-def test_shape_odds_follow_real_offers():
-    # At the same value: 1-for-1 and 1-for-2 as is, 2-for-2 a bit lower, and a 2-for-1 that makes
-    # the other owner cut someone the lowest (scripts/trade_shape_backtest.py).
-    p = 0.5
-    assert shape_odds(p, 1, 1) == shape_odds(p, 1, 2) == pytest.approx(p)
-    assert shape_odds(p, 2, 1) < shape_odds(p, 2, 2) < p
-    assert 0.05 <= shape_odds(0.05, 2, 1) and shape_odds(0.9, 2, 2) <= 0.9
+def test_losing_a_keystone_lowers_the_odds():
+    p = acceptance_odds(1, 1)
+    assert 0.0 < keystone_odds(p) < p
 
 
 def test_two_for_one_odds_are_lower_than_the_same_deal_would_get_as_a_one_for_one(league):
@@ -128,7 +128,7 @@ def test_two_for_one_odds_are_lower_than_the_same_deal_would_get_as_a_one_for_on
     assert deals
     for d in deals:
         assert any("cut a player to fit two of yours" in r for r in d.reasons)
-        assert d.acceptance <= shape_odds(0.9, 2, 1)
+        assert d.acceptance <= acceptance_odds(2, 1)
 
 
 def test_two_for_two_ideas_are_real_two_for_twos(league):
@@ -217,10 +217,6 @@ def test_their_gain_ignores_their_punts(league):
         change = finder._avg_win(j, d.dists) - base
         assert d.their_gain == pytest.approx(change[~finder.punts[d.partner_idx]].sum())
         assert all(r.endswith(".") for r in d.reasons)
-
-
-def test_struggling_teams_are_more_open():
-    assert acceptance_odds(1.0, 0.1, struggling=True) > acceptance_odds(1.0, 0.1)
 
 
 def test_draft_dollars_fade_as_games_are_played(league):
