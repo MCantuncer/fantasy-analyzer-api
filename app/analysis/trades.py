@@ -99,14 +99,16 @@ VISION_SLOW_GAP = 1.0  # projected value above his season so far (z-scores summe
 VISION_MIN_PLAYOFF_GAIN = 0.10  # expected categories won per playoff week
 VISION_MIN_SEASON_GAIN = -0.15  # what the deal may cost before the playoffs, per week on average
 
-# Chance the other owner accepts, by shape (players I send-for-get), from 3,356 real offers
-# (accepted vs withdrawn) in 15 category leagues, every league weighted the same
-# (scripts/acceptance_fit.py). Checked league by league on leagues left out of the fit, only
-# the shape predicts anything: the offer's trade value ratio, the 9-category value the other
-# owner gains and their place in the standings rank accepted offers no better than chance
-# (AUC 0.50-0.53) and make the odds worse. So among deals that pass the finder's checks
-# (fair on paper, good for their build) the odds come from the shape alone.
-ACCEPT_BY_SHAPE = {(1, 1): 0.30, (2, 2): 0.20, (2, 1): 0.13, (1, 2): 0.33}
+# Chance the other owner accepts: a logistic regression on 2,833 real offers (accepted vs
+# withdrawn) in 13 category leagues, each replayed through this finder on the league as it
+# stood that day (scripts/offer_replay.py), every league weighted the same
+# (scripts/acceptance_fit.py). Checked league by league on leagues left out of the fit, the
+# paper value ratio and the shape predict; the gains in categories won do not (they make the
+# odds worse on held-out leagues). A fair 1-for-1 lands near 31%, a 2-for-1 near 21%; the
+# hand-tuned odds this replaced showed about 75% for offers accepted 35% of the time.
+# Coefficients: intercept, log(paper ratio), 2-for-2, 2-for-1, 1-for-2 (1-for-1 = 0).
+ACCEPT_COEF = (-0.782, 0.374, -0.320, -0.810, 0.010)
+PAPER_CLIP = 1.5  # log paper ratio, about 0.22x to 4.5x
 MIN_ODDS = 0.02
 # A deal that takes away their keystone category: odds of acceptance multiplied by this.
 # Not in the offer data (it has no badges); set so a 1-for-1 drops from 30% to about 20%.
@@ -156,17 +158,21 @@ class Deal:
         return self.acceptance * self.my_gain
 
 
-def acceptance_odds(n_give: int = 1, n_get: int = 1) -> float:
-    """Chance the other owner says yes to a deal that passed the finder's checks, from real offers.
+def acceptance_odds(ratio: float, n_give: int = 1, n_get: int = 1) -> float:
+    """Chance the other owner says yes, fitted on real offers (see ACCEPT_COEF).
 
-    ``n_give``/``n_get`` count the players I send and get: a 2-for-1 makes them cut someone.
-    Shapes the data doesn't have take the closest even or uneven one.
+    ``ratio`` is the trade value they get over what they send, owner premium included, so
+    stars and keystones need a bigger offer for the same odds. ``n_give``/``n_get`` count the
+    players I send and get: a 2-for-1 makes them cut someone. Shapes the data doesn't have
+    take the closest even or uneven one.
     """
-    if (n_give, n_get) in ACCEPT_BY_SHAPE:
-        return ACCEPT_BY_SHAPE[(n_give, n_get)]
+    c0, c_paper, c22, c21, c12 = ACCEPT_COEF
     if n_give == n_get:
-        return ACCEPT_BY_SHAPE[(2, 2)]
-    return ACCEPT_BY_SHAPE[(2, 1) if n_give > n_get else (1, 2)]
+        shape = 0.0 if n_give == 1 else c22
+    else:
+        shape = c21 if n_give > n_get else c12
+    x = c0 + c_paper * float(np.clip(np.log(max(ratio, 1e-6)), -PAPER_CLIP, PAPER_CLIP)) + shape
+    return max(float(1 / (1 + np.exp(-x))), MIN_ODDS)
 
 
 def keystone_odds(p: float) -> float:
@@ -473,7 +479,7 @@ class TradeFinder:
                 return None
         struggling = j in self.struggling
         facts = self._reasons(j, give, get, dists, struggling)
-        acceptance = acceptance_odds(len(give), len(get))
+        acceptance = acceptance_odds(ratio, len(give), len(get))
         if len(give) > len(get):
             facts.append(
                 _fact(

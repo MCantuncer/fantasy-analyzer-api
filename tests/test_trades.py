@@ -104,19 +104,22 @@ def test_dollars_at_rank_is_non_increasing(league):
     assert all(a >= b for a, b in zip(values, values[1:], strict=False))
 
 
-def test_acceptance_odds_come_from_real_offers_by_shape():
-    # Real offers (scripts/acceptance_fit.py): about 1 in 3 for a 1-for-1, lower for a 2-for-2,
-    # lowest for a 2-for-1 that makes the other owner cut someone.
-    one = acceptance_odds(1, 1)
+def test_acceptance_odds_come_from_real_offers():
+    # Fitted on replayed real offers (scripts/acceptance_fit.py): about 1 in 3 for a fair 1-for-1,
+    # more value on paper helps, and a 2-for-1 that makes the other owner cut someone is lowest.
+    one = acceptance_odds(1.0, 1, 1)
     assert 0.2 <= one <= 0.4
-    assert acceptance_odds(2, 1) < acceptance_odds(2, 2) < one
-    assert acceptance_odds(3, 3) == acceptance_odds(2, 2) and acceptance_odds(3, 1) == acceptance_odds(2, 1)
-    assert acceptance_label(one) == "possible" and acceptance_label(acceptance_odds(2, 2)) == "possible"
-    assert acceptance_label(acceptance_odds(2, 1)) == "long_shot"
+    assert acceptance_odds(1.3, 1, 1) > one > acceptance_odds(0.9, 1, 1)
+    assert acceptance_odds(1.0, 2, 1) < acceptance_odds(1.0, 2, 2) < one
+    assert acceptance_odds(1.0, 3, 3) == acceptance_odds(1.0, 2, 2)
+    assert acceptance_odds(1.0, 3, 1) == acceptance_odds(1.0, 2, 1)
+    assert acceptance_odds(1e-9, 2, 1) > 0
+    assert acceptance_label(one) == "possible" and acceptance_label(0.1) == "long_shot"
+    assert acceptance_label(0.6) == "likely"
 
 
 def test_losing_a_keystone_lowers_the_odds():
-    p = acceptance_odds(1, 1)
+    p = acceptance_odds(1.0, 1, 1)
     assert 0.0 < keystone_odds(p) < p
 
 
@@ -128,7 +131,7 @@ def test_two_for_one_odds_are_lower_than_the_same_deal_would_get_as_a_one_for_on
     assert deals
     for d in deals:
         assert any("cut a player to fit two of yours" in r for r in d.reasons)
-        assert d.acceptance <= acceptance_odds(2, 1)
+        assert d.acceptance <= acceptance_odds(MAX_VALUE_RATIO, 2, 1)
 
 
 def test_two_for_two_ideas_are_real_two_for_twos(league):
