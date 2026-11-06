@@ -49,7 +49,7 @@ from app.analysis.shop import ShopAnalyzer, ShopError
 from app.analysis.target import TargetAnalyzer, TargetError
 from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
-from app.espn.parse import League, parse_league
+from app.espn.parse import League, parse_calendar, parse_league
 from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.gameclock import apply_clocks, fetch_clocks
@@ -64,6 +64,8 @@ from app.news.verify import FACT_SOURCE, describe_fact
 from app.playercard import Card as ParsedCard
 from app.playercard import parse_card
 from app.reader import DEEP_BATCH_MAX, DeepReader, NoteReader, Reading, create_deep_reader, create_reader
+from app.recap import Week as RecapWeek
+from app.recap import build_recap, is_final
 from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
 from app.scores import Schedule, build_day, needs_stats, parse_schedule, settled, week_fixtures
 from app.social import (
@@ -225,6 +227,9 @@ def create_app(
     app.state.clock_transport = clock_transport
     app.state.settled_days = TTLCache(7 * 24 * 3600, max_items=512)
     app.state.score_locks = defaultdict(asyncio.Lock)
+    # Finished weeks never change: (league, season, period) -> recap, backed by the store.
+    app.state.recaps = TTLCache(7 * 24 * 3600, max_items=64)
+    app.state.recap_locks = defaultdict(asyncio.Lock)
     app.state.now = lambda: datetime.now(UTC)
     app.state.gamelogs = TTLCache(GAMELOG_TTL, max_items=64)
     app.state.past_gamelogs = TTLCache(PAST_GAMELOG_TTL, max_items=64)
@@ -1869,6 +1874,123 @@ def create_app(
                 )
                 for d, _ in week_fixtures(sched, now)
             ]
+        )
+
+    async def rosters_by_day(
+        league_id: int, season: int, days: list[int], creds: EspnCredentials | None
+    ) -> dict[int, dict[int, tuple[int, int]]]:
+        """Each day's rosters as (team, lineup slot) per player. Two calls at a time; each reply is
+        about 1.5 MB of JSON, so it is boiled down at once and dropped."""
+        gate = asyncio.Semaphore(2)
+
+        async def one(day: int) -> tuple[int, dict[int, tuple[int, int]]]:
+            async with gate:
+                raw = await app.state.espn.rosters_on_day(season, league_id, day, creds)
+            seats = {
+                int(e["playerId"]): (int(t["id"]), int(e.get("lineupSlotId", 0)))
+                for t in raw.get("teams", [])
+                for e in (t.get("roster") or {}).get("entries", [])
+            }
+            return day, seats
+
+        return dict(await asyncio.gather(*(one(d) for d in days)))
+
+    async def recap_body(
+        league_id: int, season: int, period: int, days: list[int], lg: League, raw: dict, creds
+    ) -> dict:
+        """The league's recap of one finished week: from memory, the store, or built once and saved."""
+        key = (league_id, season, period)
+        body = app.state.recaps.get(key)
+        if body is not None:
+            return body
+        async with app.state.recap_locks[key]:
+            body = app.state.recaps.get(key) or await run_in_threadpool(
+                app.state.store.get_recap, league_id, season, period
+            )
+            if body is None:
+                sched = await score_calendar(season)
+                day_lines = {
+                    d: [ln for g in (await score_day(season, d, league_id, creds, sched))["games"] for ln in g["lines"]]
+                    for d in days
+                }
+                week = RecapWeek(
+                    period=period,
+                    days=days,
+                    day_lines=day_lines,
+                    rosters=await rosters_by_day(league_id, season, days, creds),
+                    owners_now={p.id: t.id for t in lg.teams for p in t.roster},
+                    categories=[c.stat_id for c in lg.categories],
+                    matchups=[m for m in raw.get("schedule", []) if int(m.get("matchupPeriodId", 0)) == period],
+                )
+                body = await run_in_threadpool(build_recap, week)
+                await run_in_threadpool(app.state.store.save_recap, league_id, season, period, body)
+            app.state.recaps.set(key, body)
+            return body
+
+    @app.post(
+        "/api/recap",
+        response_model=schemas.WeekRecap,
+        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+    )
+    async def week_recap(
+        body: schemas.RecapRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.WeekRecap:
+        """A finished week in review: matchup results, players of the week, the free agents who stood
+        out and each team's MVP, best add and bench. Built once per league and week, then stored."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        # Loading the league first checks this caller can see it (private leagues need cookies),
+        # because a stored recap is served without asking ESPN again.
+        lg = await load_league(body.league_id, season, creds, with_fa=False)
+        key = (body.league_id, season, credentials_key(creds))
+        raw = app.state.overviews.get(key)
+        if raw is None:
+            raw = await app.state.espn.overview(season, body.league_id, creds)
+            app.state.overviews.set(key, raw)
+        sched_raw = await pro_schedule(season)
+        cal = parse_calendar(sched_raw, raw) if sched_raw else None
+        if cal is None:
+            raise HTTPException(
+                502, detail={"code": "espn_unavailable", "message": "ESPN's NBA schedule is unavailable."}
+            )
+        by_period: dict[int, list[dict]] = defaultdict(list)
+        for m in raw.get("schedule", []):
+            by_period[int(m.get("matchupPeriodId", 0))].append(m)
+        finished = [p for p in sorted(cal.period_days) if is_final(by_period.get(p, []))]
+        period = body.period or (finished[-1] if finished else None)
+        if period is None or period not in finished:
+            raise HTTPException(
+                404, detail={"code": "week_not_finished", "message": "No finished week to look back on yet."}
+            )
+
+        def bounds(p: int) -> tuple[str | None, str | None]:
+            days = cal.period_days[p]
+            return _iso_date(cal.date_of(days[0])), _iso_date(cal.date_of(days[-1]))
+
+        days = cal.period_days[period]
+        recap = await recap_body(body.league_id, season, period, days, lg, raw, creds)
+        names = {t.id: t for t in lg.teams}
+        start, end = bounds(period)
+        return schemas.WeekRecap(
+            league_id=body.league_id,
+            season=season,
+            start=start,
+            end=end,
+            categories=[c.name for c in lg.categories],
+            **{k: v for k, v in recap.items() if k not in ("days", "teams")},
+            teams=[
+                schemas.RecapTeam(
+                    **t,
+                    abbrev=names[t["team_id"]].abbrev if t["team_id"] in names else "",
+                    name=names[t["team_id"]].name if t["team_id"] in names else "",
+                )
+                for t in recap["teams"]
+            ],
+            weeks=[schemas.RecapWeekRef(period=p, start=bounds(p)[0], end=bounds(p)[1]) for p in finished],
         )
 
     @app.get("/api/news/refresh")
