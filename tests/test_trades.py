@@ -304,7 +304,7 @@ def test_two_for_one_is_measured_against_the_free_pickup(league):
 
 def test_trade_odds_start_from_the_free_pickup_when_the_deal_uses_it(league):
     a = Analyzer(league, 3)
-    today = a.playoff_pct(a.dists)
+    today = a.playoff_pct(a.dists, fine=True)  # listed odds come from the finer run
     ideas = a.trades("fair") + a.trades("edge")
     assert ideas
     for t in ideas:
