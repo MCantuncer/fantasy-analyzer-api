@@ -19,8 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from app.analysis.durability import keep_share, kept
-from app.analysis.teammates import MAX_MINUTES
-from app.espn.parse import IR_SLOT, MINUTES, UTIL_SLOT, Category, League, Player, with_minutes
+from app.espn.parse import IR_SLOT, UTIL_SLOT, Category, League, Player
 
 GAMES_PER_WEEK = 3.4
 # Per-game variance as a multiple of the per-game mean, by stat id.
@@ -72,7 +71,6 @@ class CategoryModel:
         self.g = games_per_week
         self.n_starters = league.starter_slots or 10
         self._rows: dict[int, np.ndarray] = {}
-        self._horizon_rows: dict[tuple[int, object], np.ndarray] = {}
         self._values: dict[int, float] = {}
         pool = [p for t in league.teams for p in t.roster]
         self._fit_values(pool)
@@ -99,28 +97,6 @@ class CategoryModel:
         cached = self._rows.get(p.id)
         if cached is None:
             cached = self._rows[p.id] = self._row_of(p.per_game)
-        return cached
-
-    def horizon_row(self, p: Player, horizon: object) -> np.ndarray:
-        """``row`` over one horizon: a player whose minutes move while a teammate is out
-        (teammates.py) gets the share of that horizon's games the teammate misses, not the
-        rest-of-season share ``per_game`` holds. Everyone else gets ``row``."""
-        if not p.minute_shifts or horizon == "season" or not self.cal or horizon not in self.horizon:
-            return self.row(p)
-        key = (p.id, horizon)
-        cached = self._horizon_rows.get(key)
-        if cached is None:
-            games = self.cal.team_days.get(p.pro_team_id, frozenset())
-            here = [d for d in self.horizon[horizon][0] if d in games]
-            season = [d for d in self.horizon["season"][0] if d in games] if "season" in self.horizon else here
-            extra = 0.0
-            for change, back in p.minute_shifts:
-                share_here = sum(d < back for d in here) / len(here) if here else 0.0
-                share_season = sum(d < back for d in season) / len(season) if season else 0.0
-                extra += change * (share_here - share_season)
-            minutes = p.per_game.get(MINUTES, 0.0)
-            line = with_minutes(p.per_game, min(max(minutes + extra, 0.0), MAX_MINUTES)) if minutes > 0 else p.per_game
-            cached = self._horizon_rows[key] = self._row_of(line)
         return cached
 
     def _row_of(self, per_game: dict[int, float]) -> np.ndarray:
@@ -203,8 +179,7 @@ class CategoryModel:
         if not starts.any():
             return self._empty()
         # row() is one week at self.g games; scale each player to his starts per week.
-        rows = np.array([self.horizon_row(p, horizon) for p in roster])
-        rows = rows * (AVAILABILITY * starts / (self.g * weeks))[:, None, None]
+        rows = np.array([self.row(p) for p in roster]) * (AVAILABILITY * starts / (self.g * weeks))[:, None, None]
         total, att, var = rows.sum(0)
         return self._dist(total, att, var, KNOWN_SCHEDULE_CV)
 

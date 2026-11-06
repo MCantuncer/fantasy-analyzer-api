@@ -100,9 +100,6 @@ class Player:
     games_out: float | None = None  # expected team games he still misses while listed out (analysis/absence.py)
     out_report: str | None = None  # the news headline games_out rests on, when it reported a timeline
     season_line: dict[int, float] = field(default_factory=dict)  # this season's actual per-game stats
-    # Minutes a game he gains while an injured teammate is out, and the day that teammate is
-    # expected back (analysis/teammates.py). ``per_game`` already holds the rest-of-season average.
-    minute_shifts: tuple[tuple[float, int], ...] = ()
 
     @property
     def available(self) -> bool:
@@ -268,7 +265,7 @@ def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int, bool
     prior = proj or (last if has_last else {})
     if proj and has_last and last.get(MINUTES):
         minutes = (1 - LAST_MINUTES_WEIGHT) * proj.get(MINUTES, 0.0) + LAST_MINUTES_WEIGHT * last[MINUTES]
-        prior = with_minutes(proj, minutes)
+        prior = _with_minutes(proj, minutes)
     gp = int(actual.get(GAMES_PLAYED, 0) or 0)
     if not prior:
         return actual, gp, False
@@ -281,11 +278,11 @@ def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int, bool
         out[k] = (1 - w) * prior.get(k, 0.0) + w * actual.get(k, prior.get(k, 0.0))
     if prior.get(MINUTES) and MINUTES in actual:
         w = gp / (gp + MINUTES_WEIGHT_GAMES)
-        out = with_minutes(out, (1 - w) * prior[MINUTES] + w * actual[MINUTES])
+        out = _with_minutes(out, (1 - w) * prior[MINUTES] + w * actual[MINUTES])
     return out, gp, True
 
 
-def with_minutes(per_game: dict[int, float], minutes: float) -> dict[int, float]:
+def _with_minutes(per_game: dict[int, float], minutes: float) -> dict[int, float]:
     """The line with its minutes set to ``minutes`` and its counting stats scaled along."""
     current = per_game.get(MINUTES, 0.0)
     if current <= 0:
