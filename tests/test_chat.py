@@ -12,7 +12,15 @@ from app.accounts import MemoryAccountStore, PostgresAccountStore
 from app.espn.client import EspnClient
 from app.feed import parse_transactions
 from app.main import create_app
-from app.social import Challenge, MemorySocialStore, PostgresSocialStore, read_challenge, sign_challenge
+from app.social import (
+    CODE_ALPHABET,
+    Challenge,
+    MemorySocialStore,
+    PostgresSocialStore,
+    new_code,
+    read_challenge,
+    sign_challenge,
+)
 from app.store import MemoryStore
 from tests.conftest import LEAGUE_ID, MY_TEAM
 
@@ -202,6 +210,23 @@ def test_challenges_are_signed_and_expire():
     forged = sign_challenge(Challenge(LEAGUE_ID, SEASON, OTHER_TEAM, "K7QX", c.expires, 1)).split(".")[0]
     assert read_challenge(f"{forged}.{mac}") is None
     assert read_challenge("garbage") is None
+
+
+def test_codes_cannot_spell_a_word():
+    """ESPN refuses an abbreviation with a banned word in it, and filters read leet (4=A, 3=E,
+    7=T). Codes are consonants only, so no word can form."""
+    assert CODE_ALPHABET.isalpha() and CODE_ALPHABET.isupper()
+    assert not set("AEIOUY") & set(CODE_ALPHABET)
+    assert not set("FGKNX") & set(CODE_ALPHABET)
+    for _ in range(500):
+        code = new_code("KEA")
+        assert len(code) == 4 and set(code) <= set(CODE_ALPHABET)
+
+
+def test_a_code_is_never_the_current_abbreviation(monkeypatch):
+    picks = iter("CTDH" + "MPRQ")
+    monkeypatch.setattr("app.social.secrets.choice", lambda _seq: next(picks))
+    assert new_code(" ctdh ") == "MPRQ"
 
 
 def test_expired_challenge_is_refused(client):
