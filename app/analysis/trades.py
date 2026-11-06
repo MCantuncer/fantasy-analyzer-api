@@ -104,7 +104,7 @@ VISION_MIN_SEASON_GAIN = -0.15  # what the deal may cost before the playoffs, pe
 # stood that day (scripts/offer_replay.py), every league weighted the same
 # (scripts/acceptance_fit.py). Checked league by league on leagues left out of the fit, the
 # paper value ratio and the shape predict; the gains in categories won do not (they make the
-# odds worse on held-out leagues). A fair 1-for-1 lands near 31%, a 2-for-1 near 21%; the
+# odds worse on held-out leagues). A fair 1-for-1 lands near 31%, a 2-for-1 near 17%; the
 # hand-tuned odds this replaced showed about 75% for offers accepted 35% of the time.
 # Coefficients: intercept, log(paper ratio), 2-for-2, 2-for-1, 1-for-2 (1-for-1 = 0).
 ACCEPT_COEF = (-0.782, 0.374, -0.320, -0.810, 0.010)
