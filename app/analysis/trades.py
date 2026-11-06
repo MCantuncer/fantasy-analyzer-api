@@ -27,11 +27,13 @@ rarely gets accepted, however good it looks on paper.
 Each surviving deal gets an acceptance estimate and a list of reasons to use when
 pitching it. Deals are ranked by playoff-odds gain weighted by that estimate.
 
-The final word is the season simulation: a deal is shown only if it raises both teams'
-playoff odds by a point (report.py). Early in the season most deals that help me cost the
-partner, because I become a tougher rival for the same playoff spots, so few pass. The finder
-screens loosely and hands over a queue ordered by how likely a deal is to pass that check,
-and the report simulates down the queue until the list is full.
+The final word is the season simulation (report.py). A fair deal is shown only if it raises
+both teams' playoff odds by a point. Early in the season most deals that help me cost the
+partner, because I become a tougher rival for the same playoff spots, so few pass. An edge
+deal ("worth a try") raises my odds a point and wins on paper for them, as long as it costs
+their playoff odds only a little: owners judge on paper, but a deal that sinks their team
+isn't one to send. The finder screens loosely and hands over a queue ordered by how likely a
+deal is to pass, and the report simulates down the queue until the list is full.
 """
 
 from __future__ import annotations
@@ -60,6 +62,7 @@ MIN_VALUE_RATIO = 0.85  # they must get back at least this share of perceived va
 MAX_VALUE_RATIO = 1.4  # never overpay by more than this on paper
 MAX_PER_TARGET = 2
 MAX_PER_PARTNER = 4
+MAX_PER_GIVE = 3  # each of my players goes in at most this many deals on a list, so it isn't one idea ten times
 # Uneven trades (2-for-1, 1-for-2) are only a small part of any list: they look good on paper
 # but rarely get done. Even trades (1-for-1, 2-for-2) fill the rest. When there aren't enough
 # even ones the list is shorter, not padded with uneven ones. A display rule only: it never
@@ -181,7 +184,7 @@ def keystone_odds(p: float) -> float:
 
 
 class Picks:
-    """Deals picked so far, within the per-target, per-partner and shape limits of a list of ``n``.
+    """Deals picked so far, within the per-target, per-partner, per-player and shape limits of a list of ``n``.
 
     Used while simulating down the queue: a deal that couldn't make the list isn't simulated.
     """
@@ -193,6 +196,7 @@ class Picks:
         self.even = self.uneven = 0
         self.per_target: dict[int, int] = {}
         self.per_partner: dict[int, int] = {}
+        self.per_give: dict[int, int] = {}
 
     def _target(self, d: Deal) -> int:
         return max(d.get, key=self.value).id
@@ -203,6 +207,7 @@ class Picks:
         return (
             self.per_target.get(self._target(d), 0) < MAX_PER_TARGET
             and self.per_partner.get(d.partner_idx, 0) < MAX_PER_PARTNER
+            and all(self.per_give.get(p.id, 0) < MAX_PER_GIVE for p in d.give)
         )
 
     def add(self, d: Deal) -> None:
@@ -213,6 +218,8 @@ class Picks:
         t = self._target(d)
         self.per_target[t] = self.per_target.get(t, 0) + 1
         self.per_partner[d.partner_idx] = self.per_partner.get(d.partner_idx, 0) + 1
+        for p in d.give:
+            self.per_give[p.id] = self.per_give.get(p.id, 0) + 1
 
     @property
     def full(self) -> bool:

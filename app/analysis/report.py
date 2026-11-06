@@ -42,10 +42,15 @@ EDGE_SPAN = ("Screening edge trades", 0.50, 0.65)
 VISION_SPAN = ("Screening vision trades", 0.65, 0.80)
 # A vision trade can cost a little now for a stronger playoff run: playoff odds may dip this much.
 VISION_ODDS_SLACK = 0.02
-# No trade is suggested unless the other team's playoff odds visibly go up too: the deal has to
-# be one their owner can see is good for them, never one that only looks good on paper.
+# A fair trade raises the other team's playoff odds visibly too: their owner can see it's good for them.
 PARTNER_MIN_ODDS_GAIN = 0.01
 LOCK_ODDS = 0.98  # a team this sure of the playoffs can't rise a point: it only must not drop
+# A trade worth a try (edge lists, Trade for, Trade Park) may instead be a win on paper for them:
+# they get at least the trade value they send, and their playoff odds drop by no more than this.
+# On League A (2026-11-06) only 2 of ~1,600 deals raised both teams' odds a point; the median deal
+# that helps me costs them 4.7 points, so this keeps the deals that cost them least, not lopsided ones.
+PAPER_WIN_RATIO = 1.0
+PAPER_MAX_PARTNER_DROP = 0.03
 PICKUP_SPAN = ("Screening pickups", 0.80, 0.94)
 # Within a trade step: pairing up players with every team takes about half the time (League A,
 # 2026-11-06: 10 s of 17.5 s for fair trades), simulating the best deals the other half.
@@ -62,6 +67,19 @@ def partner_gains(before: float, after: float) -> bool:
     if before >= LOCK_ODDS:
         return after >= before
     return after - before >= PARTNER_MIN_ODDS_GAIN - 1e-9
+
+
+def paper_win(d: Deal) -> bool:
+    """Whether the other owner gets at least the trade value they send (owner premium included)."""
+    return d.give_value >= PAPER_WIN_RATIO * d.get_value - 1e-9
+
+
+def worth_a_try(d: Deal, before: float, after: float) -> bool:
+    """Whether the other owner has a reason to say yes: their odds go up, or they win on paper
+    and their odds drop by no more than PAPER_MAX_PARTNER_DROP."""
+    if partner_gains(before, after):
+        return True
+    return paper_win(d) and after - before >= -PAPER_MAX_PARTNER_DROP - 1e-9
 
 
 def i_gain(before: float, after: float) -> bool:
@@ -381,7 +399,8 @@ class Analyzer:
                     continue
             elif not i_gain(before, after):
                 continue
-            if not partner_gains(*theirs):
+            # Fair trades help both teams; edge trades may instead be a paper win for them that costs them little.
+            if not (worth_a_try(d, *theirs) if mode == "edge" else partner_gains(*theirs)):
                 continue
             picks.add(d)
             ideas.append(self.trade_idea(finder, d, before, after, base_cats, theirs))
@@ -626,8 +645,9 @@ class Analyzer:
                     "Every category counts as a win or loss in the standings."
                     if each_cat
                     else "Each matchup counts as one win, loss or tie in the standings.",
-                    "Trades are shown only if they also help the other team in the categories it competes in "
-                    "(its punts are ignored) and give it close to equal trade value. Trade value starts from ESPN "
+                    "Fair trades are shown only if they raise both teams' playoff odds. Edge trades raise yours "
+                    "and give the other team at least equal trade value, costing its playoff odds at most "
+                    f"{round(PAPER_MAX_PARTNER_DROP * 100)} points. Trade value starts from ESPN "
                     "rankings and draft prices (draft positions in snake leagues), which fade as games are "
                     "played, and blends % owned, "
                     "rest-of-season value in your categories, this season's rank and the last 15 days. "

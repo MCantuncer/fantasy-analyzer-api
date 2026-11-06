@@ -9,6 +9,8 @@ Packages are one or two of your players for him, or two or three for him plus on
 the owner's low-value players, so nobody has to cut more than one player.
 Players marked not for sale are never offered or asked for. Your own jewels and keystones
 can be offered, since you picked the target, and each offer warns when it includes one.
+An offer must raise your playoff odds a point and give the owner a reason to say yes: their
+odds go up too, or they win on paper and their odds barely drop (report.worth_a_try).
 The best offer has the highest playoff-odds gain weighted by acceptance; the fallbacks
 are the likeliest to be accepted and the one that costs you least on paper.
 """
@@ -22,7 +24,7 @@ from itertools import combinations
 import numpy as np
 
 from app import schemas
-from app.analysis.report import WHAT_IF_SIMS, Analyzer, i_gain, partner_gains, record
+from app.analysis.report import WHAT_IF_SIMS, Analyzer, i_gain, paper_win, record, worth_a_try
 from app.analysis.sim import simulate_season
 from app.analysis.trades import MIN_VALUE_RATIO, PUNT_WIN, Deal, TradeFinder
 from app.espn.parse import League, Player
@@ -162,7 +164,9 @@ class TargetAnalyzer(Analyzer):
     def offers(self, min_their_gain: float = MIN_THEIR_GAIN) -> list[schemas.TargetOffer]:
         deals = sorted(self.deals(min_their_gain), key=lambda d: d.score, reverse=True)
         # Keep the best package for each core (the players that carry value, ignoring throw-ins),
-        # so fallbacks are real alternatives, then simulate the top ones.
+        # so fallbacks are real alternatives, then simulate the top ones. Paper wins go first:
+        # early in the season they are most of what passes, since few deals raise both teams' odds.
+        deals.sort(key=paper_win, reverse=True)
         seen, unique = set(), []
         for d in deals:
             key = (self._core(d.give), self._core(d.get))
@@ -173,7 +177,7 @@ class TargetAnalyzer(Analyzer):
         for d in unique[:SIM_TOP]:
             before, base_cats = self.baseline(d)
             after, theirs = self.deal_odds(d)
-            if i_gain(before, after) and partner_gains(*theirs):
+            if i_gain(before, after) and worth_a_try(d, *theirs):
                 ideas.append(self.trade_idea(self.finder, d, before, after, base_cats, theirs))
         if not ideas:
             return []
@@ -213,14 +217,21 @@ class TargetAnalyzer(Analyzer):
         if self.perceived.package(mine[:3]) < MIN_VALUE_RATIO * self.premium.price(self.target):
             return f"Owners value {name} far above anything you can send without hurting your own team."
         tail = " Try freeing up players you've kept." if self.keep else ""
-        return f"No package for {name} helps both you and his owner's playoff odds.{tail}"
+        if not self.deals(float("-inf")):
+            # Every package his owner would take on paper costs you more than he adds.
+            hot = (
+                " He's hot right now, so his owner wants what his current form is worth: check back when he cools off."
+                if self.premium.is_hot(self.target)
+                else ""
+            )
+            return f"Every package his owner would take for {name} costs you more than he adds.{hot}{tail}"
+        return f"No package for {name} helps you and looks like a win for his owner.{tail}"
 
     def target_report(self) -> schemas.TargetReport:
         started = time.perf_counter()
         fit = self.fit()
         for_sale = not self.premium.not_for_sale(self.target)
         offers = self.offers() if for_sale else []
-        # No long shots that only look fair on paper: an offer must help their team too.
         report = schemas.TargetReport(
             team_id=self.me.id,
             team_name=self.me.name,
