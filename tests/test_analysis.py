@@ -230,7 +230,7 @@ def test_lineup_caches_stay_bounded(league, monkeypatch):
     for r, want in zip(rosters, expected, strict=True):
         got = small.dist(r)
         assert np.allclose(got.mu, want.mu) and np.allclose(got.sd, want.sd)
-        assert len(small._fills) <= 20 and len(small._dists) <= 3
+        assert len(small._fills) <= 20 and len(small._fits) <= 20 and len(small._dists) <= 3
 
 
 def test_trades_simulate_down_the_queue_within_budget(league, monkeypatch):
@@ -273,3 +273,25 @@ def test_trade_screen_reports_progress_while_pairing_players(league):
     pairing = [f for f in seen if lo < f <= mid]
     assert len(pairing) >= len(league.teams) - 2  # one step per partner team
     assert seen == sorted(seen)
+
+
+def test_lineup_starts_match_seating_day_by_day(league):
+    """The fast paths (every day at once when all fit, cached lineups otherwise) give the same
+    starts as seating each day's players one by one in value order."""
+    from app.analysis.model import _seat_in_order
+
+    model = CategoryModel(league)
+    rosters = [t.roster for t in league.teams]
+    rosters += [t.roster[:k] + t.roster[k + 1 :] + league.free_agents[:2] for t in league.teams for k in (0, 3)]
+    # A crowded roster: more players with games than seats on most days.
+    rosters.append([p for t in league.teams[:2] for p in t.roster])
+    for roster in rosters:
+        order = sorted(range(len(roster)), key=lambda i: model.value(roster[i]), reverse=True)
+        plays = np.array([model.plays(roster[i], "season") for i in order])
+        want = np.zeros(len(roster))
+        for day in plays.T:
+            here = [k for k in range(len(order)) if day[k]]
+            masks = tuple(model._seat_mask(roster[order[k]]) for k in here)
+            for r in _seat_in_order(masks, len(model.seats)):
+                want[order[here[r]]] += 1
+        assert np.array_equal(model.starts(roster), want)
