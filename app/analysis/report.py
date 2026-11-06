@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -20,8 +21,15 @@ from app.analysis.timing import MatchupTiming, Timing
 from app.analysis.trades import SCREEN_MIN_THEIR_GAIN, Deal, Mode, TradeFinder, acceptance_label, mix_shapes
 from app.espn.parse import PRO_TEAM_ABBREV, League, Player, Team
 
-SEASON_SIMS = 4000
 WHAT_IF_SIMS = 4000  # what-if gains are paired differences: ~0.5 point noise at 4000, ~1 at 2000
+# What the report shows is re-run on more seasons: ~0.3 point noise. A trade that passed its checks on
+# 4,000 seasons is checked again here, so one that passed on luck drops out. Costs ~0.17s a move and
+# ~120 MB while the report runs (League A, 2026-11-06); 32,000 would need ~390 MB of a 512 MB server.
+FINE_SIMS = 12000
+SEASON_SIMS = FINE_SIMS
+# One report runs at a time: each holds a FINE_SIMS run, and two at once could take a 512 MB server
+# down (2026-11-02). On half a CPU two at once would each take twice as long anyway.
+REPORT_LOCK = threading.Lock()
 TRADE_RESULTS = 10
 # Most deals fail the both-teams-gain check early in the season, so the report simulates down
 # the finder's queue until the list is full. Each simulation takes ~0.04s locally (more on the
@@ -153,9 +161,11 @@ class Analyzer:
         not_for_sale = {pid for pid in not_for_sale_player_ids or [] if pid not in mine}
         self.premium = OwnerPremium(league, self.model, self.perceived, not_for_sale)
         self._sim: SeasonSim | None = None  # drawn on the first what-if, shared by every later one
+        self._fine_sim: SeasonSim | None = None  # the same on FINE_SIMS seasons, for what the report shows
         self._today: tuple[float, np.ndarray] | None = None
         self._league_today: np.ndarray | None = None  # every team's playoff odds today
         self._after_pickup: dict[tuple[int, int], tuple[float, np.ndarray]] = {}
+        self._fine_cache: dict[tuple[int, int] | None, np.ndarray] = {}  # league odds today / after a pickup
         self._timing: MatchupTiming | None = None
 
     # ---- helpers -----------------------------------------------------------------------
@@ -222,9 +232,11 @@ class Analyzer:
         changed: dict[int, list[Player]] | None = None,
         sims: int = WHAT_IF_SIMS,
         week: Dist | None = None,
+        fine: bool = False,
     ) -> np.ndarray:
         """Every team's playoff odds with these projections. ``changed`` holds the rosters that differ from today's;
-        ``week`` replaces my days left in the current matchup (a move made later this week, or only for it)."""
+        ``week`` replaces my days left in the current matchup (a move made later this week, or only for it).
+        ``fine`` runs it on FINE_SIMS seasons, for odds the report shows."""
         period_dists = self.period_dists(changed)
         cur = self.league.current_period
         if week is not None and period_dists and cur in period_dists:
@@ -233,14 +245,40 @@ class Analyzer:
         if sims != WHAT_IF_SIMS:
             res = simulate_season(self.league, dists, self.model.reverse, n_sims=sims, period_dists=period_dists)
             return res.playoff_pct
-        if self._sim is None:
-            self._sim = SeasonSim(
-                self.league, self.dists, self.model.reverse, n_sims=WHAT_IF_SIMS, period_dists=self.period_dists()
-            )
+        if fine:
+            sim = self.fine_sim()
+        else:
+            if self._sim is None:
+                self._sim = SeasonSim(
+                    self.league, self.dists, self.model.reverse, n_sims=WHAT_IF_SIMS, period_dists=self.period_dists()
+                )
+            sim = self._sim
         moved = set(changed or {}) | {i for i, d in enumerate(dists) if not same_dist(d, self.dists[i])}
         if week is not None:
             moved.add(self.idx)
-        return self._sim.what_if(moved, dists, period_dists if moved else None).playoff_pct
+        return sim.what_if(moved, dists, period_dists if moved else None).playoff_pct
+
+    def fine_sim(self) -> SeasonSim:
+        """Today's season on FINE_SIMS seasons, drawn once: shown odds and the season table share it."""
+        if self._fine_sim is None:
+            self._fine_sim = SeasonSim(
+                self.league, self.dists, self.model.reverse, n_sims=FINE_SIMS, period_dists=self.period_dists()
+            )
+        return self._fine_sim
+
+    def recheck(self, d: Deal) -> tuple[float, float, tuple[float, float]]:
+        """A deal's odds on FINE_SIMS seasons: my baseline, mine after it, and the partner's before and after."""
+        key = None if d.vs_pickup is None else (d.vs_pickup[0].id, d.vs_pickup[1].id)
+        if None not in self._fine_cache:
+            self._fine_cache[None] = self.playoff_odds(self.dists, fine=True)
+        if key not in self._fine_cache:
+            add, drop = d.vs_pickup
+            roster = [p for p in self.me.roster if p.id != drop.id] + [add]
+            dists = list(self.dists)
+            dists[self.idx] = self.model.dist(roster)
+            self._fine_cache[key] = self.playoff_odds(dists, {self.idx: roster}, fine=True)
+        today, odds, j = self._fine_cache[None], self.playoff_odds(d.dists, d.rosters, fine=True), d.partner_idx
+        return float(self._fine_cache[key][self.idx]), float(odds[self.idx]), (float(today[j]), float(odds[j]))
 
     def playoff_pct(
         self,
@@ -248,9 +286,10 @@ class Analyzer:
         changed: dict[int, list[Player]] | None = None,
         sims: int = WHAT_IF_SIMS,
         week: Dist | None = None,
+        fine: bool = False,
     ) -> float:
         """My playoff odds with these projections (see ``playoff_odds``)."""
-        return float(self.playoff_odds(dists, changed, sims, week)[self.idx])
+        return float(self.playoff_odds(dists, changed, sims, week, fine)[self.idx])
 
     def deal_odds(self, d: Deal) -> tuple[float, tuple[float, float]]:
         """My playoff odds after the deal, and the partner's before and after it."""
@@ -391,16 +430,11 @@ class Analyzer:
             sims += 1
             before, base_cats = self.baseline(d)
             after, theirs = self.deal_odds(d)
-            # Small category gains can vanish in the full simulation; only keep moves that hold up there.
-            # A vision trade may cost a little now for a stronger playoff run; any other trade must
-            # raise my odds by a point, as it must theirs.
-            if mode == "vision":
-                if after < before - VISION_ODDS_SLACK:
-                    continue
-            elif not i_gain(before, after):
+            if not self._holds_up(mode, d, before, after, theirs):
                 continue
-            # Fair trades help both teams; edge trades may instead be a paper win for them that costs them little.
-            if not (worth_a_try(d, *theirs) if mode == "edge" else partner_gains(*theirs)):
+            # Checked again on more seasons, which also gives the odds the list shows.
+            before, after, theirs = self.recheck(d)
+            if not self._holds_up(mode, d, before, after, theirs):
                 continue
             picks.add(d)
             ideas.append(self.trade_idea(finder, d, before, after, base_cats, theirs))
@@ -411,6 +445,21 @@ class Analyzer:
             # Expected payoff: playoff gain weighted by the chance the deal actually happens.
             ideas.sort(key=lambda t: t.acceptance * (t.playoff_pct_after - t.playoff_pct_before), reverse=True)
         return mix_shapes(ideas, TRADE_RESULTS, lambda t: len(t.give) != len(t.get))
+
+    @staticmethod
+    def _holds_up(mode: Mode, d: Deal, before: float, after: float, theirs: tuple[float, float]) -> bool:
+        """Small category gains can vanish in the full simulation; only keep moves that hold up there.
+
+        A vision trade may cost a little now for a stronger playoff run; any other trade must raise my
+        odds by a point, as it must theirs. Fair trades help both teams; edge trades may instead be a
+        paper win for them that costs them little.
+        """
+        if mode == "vision":
+            if after < before - VISION_ODDS_SLACK:
+                return False
+        elif not i_gain(before, after):
+            return False
+        return worth_a_try(d, *theirs) if mode == "edge" else partner_gains(*theirs)
 
     def matchup_timing(self) -> MatchupTiming:
         if self._timing is None:
@@ -503,7 +552,7 @@ class Analyzer:
         top_release = max((c[0] for c in released), default=0.0)
         traded = [c for c in traded if c[0] > top_release + 0.05][:PICKUP_VIA_TRADE]
         streams = sorted(streams, key=lambda s: s[0].cats_best, reverse=True)[:PICKUP_STREAMS]
-        before = self.playoff_pct(self.dists)
+        before = self.playoff_pct(self.dists, fine=True)
         # With no pickups left this matchup, a move only counts from next week.
         this_week = None if can_add else self.model.dist(self.me.roster, self.league.current_period)
         ideas = []
@@ -520,7 +569,7 @@ class Analyzer:
                     availability=fa.status,
                     my_cats_gain=round(gain, 3),
                     playoff_pct_before=round(before, 3),
-                    playoff_pct_after=round(self.playoff_pct(dists, {self.idx: roster}, week=week), 3),
+                    playoff_pct_after=round(self.playoff_pct(dists, {self.idx: roster}, week=week, fine=True), 3),
                     category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
                     timing=self.move_timing(t),
                 )
@@ -536,7 +585,7 @@ class Analyzer:
                     availability=fa.status,
                     my_cats_gain=round(t.cats_best, 3),
                     playoff_pct_before=round(before, 3),
-                    playoff_pct_after=round(self.playoff_pct(self.dists, week=t.rest), 3),
+                    playoff_pct_after=round(self.playoff_pct(self.dists, week=t.rest, fine=True), 3),
                     category_changes={n: round(float(t.cat_changes[c]), 3) for c, n in enumerate(self.cat_names)},
                     timing=self.move_timing(t),
                 )
@@ -568,9 +617,7 @@ class Analyzer:
         )
 
     def season(self) -> list[schemas.SeasonRow]:
-        res = simulate_season(
-            self.league, self.dists, self.model.reverse, n_sims=SEASON_SIMS, period_dists=self.period_dists()
-        )
+        res = self.fine_sim().base
         rows = [
             schemas.SeasonRow(
                 team_id=t.id,
@@ -614,6 +661,17 @@ class Analyzer:
         return out
 
     def report(self) -> schemas.AnalysisReport:
+        if not REPORT_LOCK.acquire(blocking=False):
+            if self.progress is not None:
+                self.progress("Waiting for another analysis", 0.02)
+            REPORT_LOCK.acquire()
+        try:
+            return self._report()
+        finally:
+            self._fine_sim = None  # the big run's memory goes back before the next report starts
+            REPORT_LOCK.release()
+
+    def _report(self) -> schemas.AnalysisReport:
         started = time.perf_counter()
         each_cat = self.league.scoring_type == EACH_CATEGORY
         roster = sorted(self.me.roster, key=self.model.value, reverse=True)
