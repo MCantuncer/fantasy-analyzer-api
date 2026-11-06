@@ -229,3 +229,47 @@ def test_a_game_espn_calls_final_ends_right_away(recorded, schedule_raw, day4_pl
     game = next(g for g in body["games"] if g["id"] == live["id"])
     assert game["status"] == "final" and game["clock"] is None
     assert body["live"] is False
+
+
+def test_games_first_needs_no_stats_call(recorded, schedule_raw, day4_players):
+    client, fake, _ = scores_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
+    r = client.post("/api/scores/games", json={"league_id": LEAGUE_ID, "season": 2027, "team_id": MY_TEAM})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["day"] == 4 and body["complete"] is False and len(body["games"]) == 12
+    assert all(g["status"] == "final" for g in body["games"])
+    # Unknown, not zero: the scores come with /api/scores.
+    assert all(g["away"]["score"] is None and g["home"]["score"] is None and not g["lines"] for g in body["games"])
+    assert {d["day"] for d in body["days"]} >= {4, 5}
+    assert any(p for d in body["week"] for g in d["games"] for p in g["my_players"])
+    assert all(not d["sits"] for d in body["week"])
+    assert fake.stat_calls == 0
+
+
+def test_games_first_sends_scores_already_in_memory(recorded, schedule_raw, day4_players):
+    client, fake, _ = scores_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
+    full = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()
+    body = client.post("/api/scores/games", json={"league_id": LEAGUE_ID, "season": 2027}).json()
+    assert body["complete"] is True and body["games"] == full["games"]
+    assert fake.stat_calls == 1
+
+
+def test_games_first_for_a_day_not_started_is_complete(recorded, schedule_raw, day4_players):
+    client, fake, _ = scores_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
+    body = client.post("/api/scores/games", json={"league_id": LEAGUE_ID, "season": 2027, "day": 5}).json()
+    assert body["complete"] is True and {g["status"] for g in body["games"]} == {"scheduled"}
+    assert fake.stat_calls == 0
+    r = client.post("/api/scores/games", json={"league_id": LEAGUE_ID, "season": 2027, "day": 2})
+    assert r.status_code == 404
+
+
+def test_sits_on_their_own(recorded, schedule_raw, day4_players):
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
+    full = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027, "team_id": MY_TEAM}).json()
+    sits = client.post("/api/scores/sits", json={"league_id": LEAGUE_ID, "season": 2027, "team_id": MY_TEAM}).json()
+    assert [(d["day"], d["sits"]) for d in sits["days"]] == [(d["day"], d["sits"]) for d in full["week"]]
+    quick = client.post(
+        "/api/scores", json={"league_id": LEAGUE_ID, "season": 2027, "team_id": MY_TEAM, "with_sits": False}
+    ).json()
+    assert all(not d["sits"] for d in quick["week"])
+    assert [d["day"] for d in quick["week"]] == [d["day"] for d in full["week"]]

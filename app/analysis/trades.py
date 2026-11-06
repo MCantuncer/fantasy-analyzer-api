@@ -68,7 +68,6 @@ MAX_UNEVEN_SHARE = 0.2
 
 PUNT_WIN = 0.3  # a category an owner wins less often than this is treated as punted
 MISPRICED = 5.0  # dollars between owner value and our projection that count as sell-high / buy-low
-STRUGGLING_BONUS = 0.05  # teams outside the playoff spots are more open to shaking things up
 
 # Edge mode: they win on paper, you win on the court. Their build may stay flat or
 # lose a little, as long as they get at least equal trade value and you gain clearly more.
@@ -85,7 +84,6 @@ SPECTACULAR_PERCENTILE = 90
 SPECTACULAR_FLOOR = 2 * MIN_MY_GAIN
 # A deal that takes a team's keystone category away without giving it back.
 KEYSTONE_LOSS = 0.10  # weekly win rate lost in that category
-KEYSTONE_PENALTY = 0.10  # acceptance
 
 # Vision mode: buy a player for what he'll be worth later, while his owner sees what he's
 # worth now. Targets are off to a slow start the projection expects to fade: on League A's
@@ -101,14 +99,23 @@ VISION_SLOW_GAP = 1.0  # projected value above his season so far (z-scores summe
 VISION_MIN_PLAYOFF_GAIN = 0.10  # expected categories won per playoff week
 VISION_MIN_SEASON_GAIN = -0.15  # what the deal may cost before the playoffs, per week on average
 
-# Odds of acceptance against a 1-for-1 of the same value for the other owner, keyed by
-# (players I send, players I get). Fitted on 3,392 real offers in 15 category leagues
-# (scripts/trade_shape_backtest.py, every league weighted the same, 90% intervals from
-# resampling leagues): 2-for-2 x0.63 (0.47-0.84), 2-for-1 x0.40 (0.26-0.77). A 1-for-2 came
-# out at x1.26 (0.72-2.28): no clear difference from a 1-for-1, so it keeps the 1-for-1 odds.
-SHAPE_ODDS = {(2, 2): 0.63, (2, 1): 0.40}
+# Chance the other owner accepts: a logistic regression on 2,833 real offers (accepted vs
+# withdrawn) in 13 category leagues, each replayed through this finder on the league as it
+# stood that day (scripts/offer_replay.py), every league weighted the same
+# (scripts/acceptance_fit.py). Checked league by league on leagues left out of the fit, the
+# paper value ratio and the shape predict; the gains in categories won do not (they make the
+# odds worse on held-out leagues). A fair 1-for-1 lands near 31%, a 2-for-1 near 17%; the
+# hand-tuned odds this replaced showed about 75% for offers accepted 35% of the time.
+# Coefficients: intercept, log(paper ratio), 2-for-2, 2-for-1, 1-for-2 (1-for-1 = 0).
+ACCEPT_COEF = (-0.782, 0.374, -0.320, -0.810, 0.010)
+PAPER_CLIP = 1.5  # log paper ratio, about 0.22x to 4.5x
+MIN_ODDS = 0.02
+# A deal that takes away their keystone category: odds of acceptance multiplied by this.
+# Not in the offer data (it has no badges); set so a 1-for-1 drops from 30% to about 20%.
+KEYSTONE_ODDS = 0.6
 
-LIKELY, POSSIBLE = 0.6, 0.4
+# Labels on the real scale: about 1 in 3 offers like a 1-for-1 gets accepted, a 2-for-1 1 in 8.
+LIKELY, POSSIBLE = 0.5, 0.18
 
 Mode = Literal["fair", "edge", "vision"]
 
@@ -151,20 +158,26 @@ class Deal:
         return self.acceptance * self.my_gain
 
 
-def acceptance_odds(ratio: float, their_gain: float, struggling: bool = False) -> float:
-    """Rough chance the other owner says yes. A heuristic, not a fitted model.
+def acceptance_odds(ratio: float, n_give: int = 1, n_get: int = 1) -> float:
+    """Chance the other owner says yes, fitted on real offers (see ACCEPT_COEF).
 
-    ``ratio`` already counts the owner premium on what they send, so stars and
-    keystones need a bigger offer for the same odds.
+    ``ratio`` is the trade value they get over what they send, owner premium included, so
+    stars and keystones need a bigger offer for the same odds. ``n_give``/``n_get`` count the
+    players I send and get: a 2-for-1 makes them cut someone. Shapes the data doesn't have
+    take the closest even or uneven one.
     """
-    p = float(np.interp(ratio, [0.85, 0.95, 1.05, 1.2, 1.4], [0.2, 0.4, 0.55, 0.7, 0.8]))
-    if their_gain >= 0.15:
-        p += 0.1
-    elif their_gain < 0.05:
-        p -= 0.1
-    if struggling:
-        p += STRUGGLING_BONUS
-    return float(np.clip(p, 0.05, 0.9))
+    c0, c_paper, c22, c21, c12 = ACCEPT_COEF
+    if n_give == n_get:
+        shape = 0.0 if n_give == 1 else c22
+    else:
+        shape = c21 if n_give > n_get else c12
+    x = c0 + c_paper * float(np.clip(np.log(max(ratio, 1e-6)), -PAPER_CLIP, PAPER_CLIP)) + shape
+    return max(float(1 / (1 + np.exp(-x))), MIN_ODDS)
+
+
+def keystone_odds(p: float) -> float:
+    """Acceptance ``p`` for a deal that takes away their keystone category, on the odds scale."""
+    return max(p * KEYSTONE_ODDS / (1 - p + p * KEYSTONE_ODDS), MIN_ODDS)
 
 
 class Picks:
@@ -220,12 +233,6 @@ def mix_shapes[T](ranked: list[T], n: int, uneven: Callable[[T], bool]) -> list[
         if len(out) == n:
             break
     return out
-
-
-def shape_odds(p: float, n_give: int, n_get: int) -> float:
-    """Acceptance ``p`` adjusted for the trade's shape, on the odds scale."""
-    k = SHAPE_ODDS.get((n_give, n_get), 1.0)
-    return float(np.clip(p * k / (1 - p + p * k), 0.05, 0.9))
 
 
 def acceptance_label(p: float) -> str:
@@ -472,7 +479,7 @@ class TradeFinder:
                 return None
         struggling = j in self.struggling
         facts = self._reasons(j, give, get, dists, struggling)
-        acceptance = shape_odds(acceptance_odds(ratio, their_gain, struggling), len(give), len(get))
+        acceptance = acceptance_odds(ratio, len(give), len(get))
         if len(give) > len(get):
             facts.append(
                 _fact(
@@ -485,7 +492,7 @@ class TradeFinder:
             )
         lost = self._keystones_lost(j, get, dists)
         if lost:
-            acceptance = max(acceptance - KEYSTONE_PENALTY, 0.05)
+            acceptance = keystone_odds(acceptance)
             facts.append(
                 _fact(
                     "keystone_lost",

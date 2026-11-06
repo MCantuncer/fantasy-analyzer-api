@@ -131,9 +131,14 @@ class Replay:
                     rec[tid][2 if w == "TIE" else 0 if won else 1] += 1
         return rec
 
-    def snapshot(self, period: int) -> League:
-        """The league on the first day of `period`, knowing only what had happened by then."""
-        day = self.first_day(period)
+    def period_of(self, day: int) -> int:
+        """The matchup period a scoring day belongs to (the last one that started by then)."""
+        started = [p for p, days in self.calendar.period_days.items() if days and days[0] <= day]
+        return max(started, default=1)
+
+    def snapshot(self, period: int, day: int | None = None) -> League:
+        """The league on the first day of `period` (or on `day` in it), knowing only what had happened by then."""
+        day = self.first_day(period) if day is None else day
         rosters = self.h.rosters.get(day) or self.h.rosters[min(self.h.rosters, key=lambda d: abs(d - day))]
         records = self._records(period)
         teams = []
