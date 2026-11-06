@@ -9,8 +9,8 @@ Packages are one or two of your players for him, or two or three for him plus on
 the owner's low-value players, so nobody has to cut more than one player.
 Players marked not for sale are never offered or asked for. Your own jewels and keystones
 can be offered, since you picked the target, and each offer warns when it includes one.
-An offer must raise your playoff odds a point and give the owner a reason to say yes: his
-odds go up too, or he wins on paper and his odds barely drop (report.worth_a_try).
+An offer must raise your playoff odds a point and give the owner a reason to say yes: their
+odds go up too, or they win on paper and their odds barely drop (report.worth_a_try).
 The best offer has the highest playoff-odds gain weighted by acceptance; the fallbacks
 are the likeliest to be accepted and the one that costs you least on paper.
 """
