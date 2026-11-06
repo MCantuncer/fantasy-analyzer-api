@@ -75,6 +75,20 @@ def category_links(names: list[str]) -> np.ndarray:
     return m / d[:, None] / d[None, :]
 
 
+def _whole_counts(draws: np.ndarray, counts: np.ndarray) -> None:
+    """Round the counting categories of ``draws`` (last axis) to whole numbers, in place.
+
+    A week's blocks, steals or threes are whole numbers, so two teams can end level and the
+    category is a tie. Continuous draws never tie, which left ties out of every projection.
+    With whole numbers the chance of a tie comes from the spread alone: on League A's 2022-2027
+    weeks (536 matchups) that predicts 0.15 category ties a matchup against 0.13 real ones
+    (BLK 3.6% vs 3.2%, STL 3.7% vs 3.5%, TO 2.0% vs 2.4%, PTS 0.3% vs 0). FG% and FT% stay
+    continuous: none of those 536 matchups tied on them.
+    """
+    if counts.any():
+        draws[..., counts] = np.rint(draws[..., counts])
+
+
 def _add_banked(draws: np.ndarray, i: int, banked: dict[int, float], league: League, rest: Dist) -> None:
     """Turn team i's draws for the days left into full-week totals."""
     for k, c in enumerate(league.categories):
@@ -136,8 +150,10 @@ def simulate_season(
     losses = np.tile(np.array([t.losses for t in league.teams], float), (n_sims, 1))
     ties = np.tile(np.array([t.ties for t in league.teams], float), (n_sims, 1))
     each_cat = league.scoring_type == EACH_CATEGORY
+    n_cats = len(league.categories)
+    counts = np.array([c.ratio is None for c in league.categories], bool)
     chol = np.linalg.cholesky(category_links([c.name for c in league.categories]))
-    drift = rng.normal(0.0, TEAM_DRIFT, size=(n_sims, n_teams, len(league.categories)))
+    drift = rng.normal(0.0, TEAM_DRIFT, size=(n_sims, n_teams, n_cats))
 
     periods = sorted({m.period for m in league.schedule if m.winner == "UNDECIDED"})
     for period in periods:
@@ -156,6 +172,7 @@ def simulate_season(
                 for tid, banked in ((m.home, m.home_totals), (m.away, m.away_totals)):
                     if banked and tid in index:
                         _add_banked(draws, index[tid], banked, league, week[index[tid]])
+        _whole_counts(draws, counts)
         draws = draws * sign
         for m in games:
             h, a = index.get(m.home), index.get(m.away)
@@ -164,10 +181,13 @@ def simulate_season(
             h_cats = (draws[:, h, :] > draws[:, a, :]).sum(1)
             a_cats = (draws[:, a, :] > draws[:, h, :]).sum(1)
             if each_cat:
+                level = n_cats - h_cats - a_cats
                 wins[:, h] += h_cats
                 losses[:, h] += a_cats
                 wins[:, a] += a_cats
                 losses[:, a] += h_cats
+                ties[:, h] += level
+                ties[:, a] += level
             else:
                 hw, aw, tie = h_cats > a_cats, a_cats > h_cats, h_cats == a_cats
                 wins[:, h] += hw
@@ -229,6 +249,8 @@ class SeasonSim:
         n_teams = len(self.ids)
         self.sign = np.where(reverse, -1.0, 1.0)
         self.each_cat = league.scoring_type == EACH_CATEGORY
+        self.n_cats = len(league.categories)
+        self.counts = np.array([c.ratio is None for c in league.categories], bool)
         self.base_dists = list(dists)
         self.base_periods = period_dists or {}
         chol = np.linalg.cholesky(category_links([c.name for c in league.categories]))
@@ -289,16 +311,20 @@ class SeasonSim:
             wrapped = draws[:, None, :]
             _add_banked(wrapped, 0, banked, self.league, d)
             draws = wrapped[:, 0, :]
+        _whole_counts(draws, self.counts)
         return draws * self.sign
 
     def _score(self, wins, losses, ties, h: int, a: int, hd: np.ndarray, ad: np.ndarray, weight: float) -> None:
         h_cats = (hd > ad).sum(1)
         a_cats = (ad > hd).sum(1)
         if self.each_cat:
+            level = self.n_cats - h_cats - a_cats
             wins[:, h] += weight * h_cats
             losses[:, h] += weight * a_cats
             wins[:, a] += weight * a_cats
             losses[:, a] += weight * h_cats
+            ties[:, h] += weight * level
+            ties[:, a] += weight * level
         else:
             hw, aw, tie = h_cats > a_cats, a_cats > h_cats, h_cats == a_cats
             wins[:, h] += weight * hw
