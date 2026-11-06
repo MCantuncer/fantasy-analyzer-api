@@ -226,11 +226,12 @@ def test_daily_scan_waits_for_the_leagues_analysis(client, fake_espn, monkeypatc
             assert first["status"] == "pending"
             assert fake_espn.calls == 0  # the scan hasn't even loaded the league
             gate.set_result(None)
-            for _ in range(200):
-                done = (await c.post("/api/trade-of-the-day", json=body)).json()
-                if done["status"] == "ready":
-                    return done
-                await asyncio.sleep(0.05)
-        raise AssertionError("the scan never ran after the analysis")
+            # The scan itself takes a while on a slow runner: wait for it, not a fixed number of polls.
+            (scan,) = app.state.daily_jobs.values()
+            await asyncio.wait_for(asyncio.shield(scan), timeout=600)
+            assert fake_espn.calls > 0
+            done = (await c.post("/api/trade-of-the-day", json=body)).json()
+            assert done["status"] == "ready"
+            return done
 
     assert asyncio.run(run())["sides"]
