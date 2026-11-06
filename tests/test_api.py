@@ -162,3 +162,42 @@ def test_matchup_projection_needs_a_verified_team(client, fake_espn):
     assert {c["winner"] for c in body["categories"]} <= {"me", "them"}
     unverified = signed_in(client.app, team_id=None)
     assert unverified.post("/api/matchup-projection", json={"league_id": LEAGUE_ID}).status_code == 403
+
+
+def test_projection_reuses_the_analysis_league(client, fake_espn):
+    body = {"league_id": LEAGUE_ID, "team_id": MY_TEAM, "season": 2027}
+    assert client.post("/api/analyze", json=body).status_code == 200
+    calls = fake_espn.calls
+    res = client.post("/api/matchup-projection", json={"league_id": LEAGUE_ID, "season": 2027})
+    assert res.status_code == 200 and res.json()["categories"]
+    assert fake_espn.calls == calls  # no second league load
+
+
+def test_one_league_load_at_a_time(fake_espn):
+    """Two pages asking for the same league at once share one load from ESPN."""
+    import asyncio
+
+    from app.accounts import MemoryAccountStore
+    from app.store import MemoryStore
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.05)  # like the real network: the second request arrives mid-load
+        return fake_espn.handler(request)
+
+    app = create_app(
+        EspnClient(transport=httpx.MockTransport(slow)), store=MemoryStore(), accounts=MemoryAccountStore()
+    )
+    headers = dict(signed_in(app).headers)
+
+    async def both():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t", headers=headers) as c:
+            body = {"league_id": LEAGUE_ID, "season": 2027}
+            return await asyncio.gather(
+                c.post("/api/matchup-projection", json=body), c.post("/api/matchup-projection", json=body)
+            )
+
+    a, b = asyncio.run(both())
+    assert a.status_code == b.status_code == 200 and a.json() == b.json()
+    league_calls = [u for u in fake_espn.seen_urls if f"/leagues/{LEAGUE_ID}" in u and "kona_player_info" not in u]
+    assert len(league_calls) == 1
