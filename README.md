@@ -53,6 +53,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🎲 | **Season simulation:** 4,000 runs of the remaining schedule in the league's real format | `/api/analyze` |
 | ⭐ | **Trade of the day:** one league-wide win-win deal a day, with a poll | `/api/trade-of-the-day` |
 | 📅 | **Matchup projection:** who takes each category by Sunday, starting the best lineup each day and benching the rest on crowded days | `/api/matchup-projection` |
+| 🗓️ | **Week post-mortem:** each finished week's matchup results, players of the week, the free agents who stood out and who grabbed them, and every team's MVP, best add and bench | `/api/recap` |
 | 🏀 | **Live scores:** NBA scores and box scores tagged with fantasy teams | `/api/scores` |
 | 📰 | **Checked NBA news:** stories confirmed across sources before they show | `/api/news` |
 | 🩹 | **Injury impact:** which teammates gain while a player is out | `/api/injury-impact` |
@@ -82,6 +83,7 @@ app/
 ├── accounts.py    Sign-up, sessions and team verification
 ├── feed.py        Moves feed from ESPN transactions
 ├── feedback.py    Feedback on trade ideas, with the idea as it was shown
+├── recap.py       A finished week in review: results, players of the week, free agents who stood out
 ├── reader.py      Reads a manager's note on a trade idea to pick which checks run first (Haiku), and unclear ones again in batches (Opus)
 ├── rules.py       A manager's own trade rules (protect a category, skip a team, no injury-prone players)
 ├── social.py      Posts, replies and reactions
@@ -116,7 +118,7 @@ All settings are optional for local development.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated web origins allowed to call the API |
-| `DATABASE_URL` | none (in memory) | Postgres connection string for accounts, chat, the trade of the day, finished NBA days and news |
+| `DATABASE_URL` | none (in memory) | Postgres connection string for accounts, chat, the trade of the day, finished NBA days, week recaps and news |
 | `DB_POOL_SIZE` | `4` | Postgres connections kept open and shared by every store |
 | `DB_POOL_IDLE_SECONDS` | `240` | An idle pooled connection closes after this, so a hosted database can suspend |
 | `SECRET_KEY` | random per start | Signs team verification challenges; set it so they survive a restart |
@@ -161,6 +163,7 @@ All settings are optional for local development.
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
 | POST | `/api/scores` | `{league_id, season?, day?, team_id?, with_sits?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
 | POST | `/api/scores/games` | `{league_id, season?, day?, team_id?}` | The same day at once from the NBA calendar, with no stats call: teams, tip-off and status, plus this week's fixtures. `complete` is false until the scores are in; ask `/api/scores` for them |
+| POST | `/api/recap` | `{league_id, season?, period?}` | A finished week in review (default: the last one): matchups by category, top players by 9-cat value with their owner, free agents who stood out (who added them, which day, still free?), each team's MVP, best add and bench, and `weeks` for a picker. Built once per league and week, then stored; 404 `week_not_finished` before any week is over |
 | POST | `/api/scores/sits` | `{league_id, season?, team_id}` | Who sits on each crowded day left this week, on its own (the slow part of the Scores page) |
 | POST | `/api/injury-impact` | `{player_id, league_id?, season?}` | Teammates who gain while a player is out, from games his team played without him, each tagged with his fantasy team in `league_id` |
 | POST | `/api/news` | `{league_id?, season?, include_held?}` | Checked NBA news from every source, each player tagged with his fantasy team in `league_id`; source health; today's most-added players |
