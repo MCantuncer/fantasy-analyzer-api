@@ -3,7 +3,7 @@ import pytest
 
 import app.analysis.sim as sim
 from app.analysis.model import CategoryModel, norm_cdf
-from app.analysis.report import PAPER_MAX_PARTNER_DROP, Analyzer, i_gain, partner_gains, worth_a_try
+from app.analysis.report import FINE_SIMS, PAPER_MAX_PARTNER_DROP, Analyzer, i_gain, partner_gains, worth_a_try
 from app.analysis.sim import SeasonSim, category_links, simulate_season
 from app.analysis.trades import SCREEN_MIN_THEIR_GAIN
 
@@ -295,3 +295,59 @@ def test_lineup_starts_match_seating_day_by_day(league):
             for r in _seat_in_order(masks, len(model.seats)):
                 want[order[here[r]]] += 1
         assert np.array_equal(model.starts(roster), want)
+
+
+def test_listed_trades_are_rechecked_on_more_seasons(league, monkeypatch):
+    """A deal that passes on the screening run is run again on FINE_SIMS seasons, and those odds are shown."""
+    analyzer = Analyzer(league, 3)
+    checked = []
+    real = analyzer.recheck
+    monkeypatch.setattr(analyzer, "recheck", lambda d: checked.append(d) or real(d))
+    ideas = analyzer.trades("edge")
+    assert ideas and len(checked) >= len(ideas)
+    today = analyzer.fine_sim().base.playoff_pct
+    for t in ideas:
+        if t.my_add is None:
+            assert t.playoff_pct_before == pytest.approx(float(today[analyzer.idx]), abs=1e-3)
+    assert analyzer.fine_sim().n_sims == FINE_SIMS
+
+
+def test_listed_trade_that_fails_the_recheck_is_dropped(league, monkeypatch):
+    analyzer = Analyzer(league, 3)
+    monkeypatch.setattr(analyzer, "recheck", lambda d: (0.5, 0.5, (0.5, 0.5)))
+    assert analyzer.trades("edge") == []
+
+
+def test_season_table_uses_the_fine_run(league):
+    analyzer = Analyzer(league, 3)
+    rows = {r.team_id: r.playoff_pct for r in analyzer.season()}
+    fine = analyzer.fine_sim().base.playoff_pct
+    assert all(rows[t.id] == pytest.approx(float(fine[i]), abs=1e-3) for i, t in enumerate(league.teams))
+
+
+def test_reports_run_one_at_a_time(league, monkeypatch):
+    """Each report holds a big simulation: a second one waits for the first instead of doubling memory."""
+    import threading
+    import time
+
+    from app.analysis import report as report_module
+
+    running, most = [0], [0]
+
+    def slow(self):
+        running[0] += 1
+        most[0] = max(most[0], running[0])
+        time.sleep(0.2)
+        running[0] -= 1
+        return None
+
+    monkeypatch.setattr(Analyzer, "_report", slow)
+    stages = []
+    first = threading.Thread(target=lambda: Analyzer(league, 3).report())
+    first.start()
+    time.sleep(0.05)
+    Analyzer(league, 3, progress=lambda stage, _: stages.append(stage)).report()
+    first.join()
+    assert most[0] == 1
+    assert stages == ["Waiting for another analysis"]
+    assert not report_module.REPORT_LOCK.locked()
