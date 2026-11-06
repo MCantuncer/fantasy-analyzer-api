@@ -190,6 +190,8 @@ def create_app(
     app = FastAPI(title="Fantasy Analyzer API", version="0.1.0")
     app.state.espn = espn or EspnClient()
     app.state.leagues = TTLCache(LEAGUE_TTL)
+    # League loads under way, so a second request for the same league waits for the first.
+    app.state.league_loads: dict[tuple, asyncio.Future] = {}
     app.state.reports = TTLCache(LEAGUE_TTL)
     app.state.store = store or create_store()
     app.state.daily = TTLCache(36 * 3600)
@@ -357,6 +359,34 @@ def create_app(
         """The league, parsed. ``with_fa`` adds free agents and everything the analysis needs;
         ``with_calendar`` only the NBA calendar, durability and absences, for projections."""
         full = with_fa or with_calendar
+        key = (league_id, season, credentials_key(creds), with_fa, full)
+        # The analysis's league (free agents and all) has everything a projection needs:
+        # reuse it, or the load already under way, instead of fetching the league again.
+        wider = (league_id, season, credentials_key(creds), True, True) if full and not with_fa else None
+        for k in (key, wider):
+            if k is None:
+                continue
+            league = app.state.leagues.get(k)
+            if league is not None:
+                return league
+            loading = app.state.league_loads.get(k)
+            if loading is not None:
+                return await asyncio.shield(loading)
+        task = asyncio.ensure_future(fetch_league(league_id, season, creds, with_fa, full))
+        app.state.league_loads[key] = task
+        task.add_done_callback(
+            lambda t: t.cancelled() or t.exception()
+        )  # a failure nobody waits for isn't logged as lost
+        try:
+            league = await asyncio.shield(task)
+        finally:
+            if app.state.league_loads.get(key) is task:
+                del app.state.league_loads[key]
+        return league
+
+    async def fetch_league(
+        league_id: int, season: int, creds: EspnCredentials | None, with_fa: bool, full: bool
+    ) -> League:
         key = (league_id, season, credentials_key(creds), with_fa, full)
         league = app.state.leagues.get(key)
         if league is None:

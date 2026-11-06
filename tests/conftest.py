@@ -53,9 +53,11 @@ class FakeEspn:
         self.private = private
         self.seen_cookies: list[str] = []
         self.calls = 0
+        self.seen_urls: list[str] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.calls += 1
+        self.seen_urls.append(str(request.url))
         cookie = request.headers.get("cookie", "")
         self.seen_cookies.append(cookie)
         if self.private and "espn_s2=" not in cookie:
