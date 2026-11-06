@@ -314,7 +314,7 @@ def test_listed_trades_are_rechecked_on_more_seasons(league, monkeypatch):
 
 def test_listed_trade_that_fails_the_recheck_is_dropped(league, monkeypatch):
     analyzer = Analyzer(league, 3)
-    monkeypatch.setattr(analyzer, "recheck", lambda d: (0.5, 0.5, (0.5, 0.5)))
+    monkeypatch.setattr(analyzer, "recheck", lambda d: (0.5, 0.5, (0.5, 0.5), ((5.0, 5.0), (5.0, 5.0))))
     assert analyzer.trades("edge") == []
 
 
@@ -351,3 +351,33 @@ def test_reports_run_one_at_a_time(league, monkeypatch):
     assert most[0] == 1
     assert stages == ["Waiting for another analysis"]
     assert not report_module.REPORT_LOCK.locked()
+
+
+def test_listed_trades_carry_category_detail_for_both_teams(league):
+    analyzer = Analyzer(league, 3)
+    ideas = analyzer.trades("edge")
+    assert ideas
+    names = [c.name for c in league.categories]
+    for t in ideas:
+        assert [c.category for c in t.category_detail] == names
+        for c in t.category_detail:
+            assert 0 <= c.my_win_before <= 1 and 0 <= c.their_win_after <= 1
+            # My win-chance change matches the existing summary when the deal isn't measured against a pickup.
+            if t.my_add is None:
+                assert c.my_win_after - c.my_win_before == pytest.approx(t.category_changes[c.category], abs=2e-3)
+        # Something changes on their side too: they get my players.
+        assert any(c.theirs_after != c.theirs_before for c in t.category_detail)
+        assert t.finish_before is not None and 1 <= t.finish_after <= len(league.teams)
+        assert t.partner_finish_before is not None and t.partner_finish_after is not None
+
+
+def test_listed_trades_break_out_each_playoff_week(league):
+    analyzer = Analyzer(league, 3)
+    ideas = analyzer.trades("edge")
+    periods = analyzer.playoff_periods()
+    assert periods and ideas
+    for t in ideas:
+        assert [w.period for w in t.playoff_weeks] == periods
+        assert all(w.starts_on <= w.ends_on for w in t.playoff_weeks)
+        mean_after = sum(w.my_cats_after for w in t.playoff_weeks) / len(t.playoff_weeks)
+        assert mean_after == pytest.approx(t.playoff_week_cats_after, abs=0.02)
