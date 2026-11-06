@@ -34,7 +34,7 @@ from app.accounts import (
     team_of,
     verify_google,
 )
-from app.analysis import absence
+from app.analysis import absence, teammates
 from app.analysis.checks import REASON_CHECKS, IdeaChecker, StaleIdea, focus_order
 from app.analysis.checks import TITLES as CHECK_TITLES
 from app.analysis.daily import trade_of_the_day
@@ -228,6 +228,9 @@ def create_app(
     app.state.now = lambda: datetime.now(UTC)
     app.state.gamelogs = TTLCache(GAMELOG_TTL, max_items=64)
     app.state.past_gamelogs = TTLCache(PAST_GAMELOG_TTL, max_items=64)
+    # (season, player id) -> teammates.Measured: what his absence does to his teammates' minutes.
+    app.state.absence_minutes = TTLCache(GAMELOG_TTL, max_items=2048)
+    app.state.absence_jobs: dict[int, asyncio.Task] = {}
     app.state.cards = TTLCache(PLAYER_CARD_TTL, max_items=2048)
     app.state.card_stories = TTLCache(CARD_NEWS_TTL, max_items=4)
     app.state.news = NewsService(app.state.espn, app.state.store, transport=news_transport)
@@ -325,6 +328,57 @@ def create_app(
             return  # the flat days-out guess stays
         absence.attach(league, {pid: played.get(pid, set()) for pid in out}, last_run, reported_timelines(league, out))
 
+    def attach_teammate_minutes(league: League) -> None:
+        """Teammates of players out for a while get the minutes they gain while he's out (teammates.py).
+
+        Measuring an absence takes two team game logs from ESPN and a regression, far too slow for
+        a league load on a small server. So a load never waits for it: it uses the absences already
+        measured (cached by player, shared by every league) and starts one background job for the
+        rest, which the next load of the league picks up.
+        """
+        season, moved, missing = league.season, [], []
+        for x in teammates.absent_regulars(league):
+            measured = app.state.absence_minutes.get((season, x.id))
+            if measured is None:
+                missing.append((x.pro_team_id, x.id))
+            else:
+                moved += teammates.shifts(league, x, measured)
+        teammates.apply(league, moved)
+        if missing:
+            start_measuring(league.id, season, missing)
+
+    def start_measuring(league_id: int, season: int, wanted: list[tuple[int, int]]) -> None:
+        """One measuring job per season at a time; absences it doesn't cover wait for the next load."""
+        job = app.state.absence_jobs.get(season)
+        if job is not None and not job.done():
+            return
+        app.state.absence_jobs[season] = asyncio.create_task(measure_absences(league_id, season, wanted))
+
+    async def measure_absences(league_id: int, season: int, wanted: list[tuple[int, int]]) -> None:
+        """Measures each absence in the background, a team at a time, keeping only the small result."""
+        await analyses_done(league_id, season)  # the manager waiting on a report goes first
+        by_team: dict[int, list[int]] = defaultdict(list)
+        for team, pid in wanted:
+            by_team[team].append(pid)
+        for team, ids in by_team.items():
+            try:
+                await measure_team(season, team, ids)
+            except EspnError:
+                continue  # these teammates keep the plain blend; a later load tries again
+            except Exception:
+                logging.getLogger(__name__).exception("measuring absences failed for NBA team %s", team)
+
+    async def measure_team(season: int, team: int, ids: list[int]) -> None:
+        """One team's game logs, parsed, measured for each of its absences, then dropped."""
+        lines, info = parse_gamelogs(await peek_gamelogs(season, team, past=False), season)
+        last, _ = parse_gamelogs(await peek_gamelogs(season - 1, team, past=True), season - 1)
+        now = Season(lines)
+        seasons = [now, Season(last, LAST_SEASON_WEIGHT)]
+        roster = [p for p in info.values() if p.team == team]
+        for pid in ids:
+            impact = await run_in_threadpool(analyze_absence, seasons, team, pid, roster)
+            app.state.absence_minutes.set((season, pid), teammates.measure(impact, now, team, pid))
+
     def reported_timelines(league: League, ids: list[int]) -> dict[int, absence.Report]:
         """The latest stored news item giving a timeline for each of these players."""
         cal = league.calendar
@@ -400,12 +454,20 @@ def create_app(
                 past = await past_games(season)
                 attach_durability(league, past, await past_absences(league, past) if past else None)
                 await attach_absences(league)
+                attach_teammate_minutes(league)
             app.state.leagues.set(key, league)
         return league
 
     @app.get("/api/health")
     async def health() -> dict:
         return {"ok": True}
+
+    async def peek_gamelogs(season: int, pro_team_id: int, past: bool) -> list[dict]:
+        """A team's game logs from the cache if they're there, else from ESPN without caching them:
+        background jobs walk many teams, and the cache keeps up to 64 of these big lists."""
+        cache = app.state.past_gamelogs if past else app.state.gamelogs
+        raw = cache.get((season, pro_team_id))
+        return raw if raw is not None else await app.state.espn.team_gamelogs(season, pro_team_id)
 
     async def team_gamelogs(season: int, pro_team_id: int, past: bool) -> list[dict]:
         cache = app.state.past_gamelogs if past else app.state.gamelogs
