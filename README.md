@@ -54,7 +54,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🎲 | **Season simulation:** 12,000 runs of the remaining schedule in the league's real format | `/api/analyze` |
 | ⭐ | **Trade of the day:** one league-wide win-win deal a day, with a poll | `/api/trade-of-the-day` |
 | 📅 | **Matchup projection:** who takes each category by Sunday, starting the best lineup each day and benching the rest on crowded days | `/api/matchup-projection` |
-| 🎬 | **Film Room:** each finished week in review:'s matchup results, players of the week, the free agents who stood out and who grabbed them, and every team's MVP, best add and bench | `/api/recap` |
+| 🎬 | **Film Room:** each finished week in review, with its matchup results, players of the week, the free agents who stood out and who grabbed them, and every team's MVP, best add and bench | `/api/recap` |
 | 🏀 | **Live scores:** NBA scores and box scores tagged with fantasy teams | `/api/scores` |
 | 📰 | **Checked NBA news:** stories confirmed across sources before they show | `/api/news` |
 | 🩹 | **Injury impact:** which teammates gain while a player is out | `/api/injury-impact` |
