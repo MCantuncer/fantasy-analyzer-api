@@ -179,9 +179,9 @@ class PostgresFeedbackStore:
     )
 
     def __init__(self, url: str):
-        import psycopg
+        from app.db import connector
 
-        self._connect = lambda: psycopg.connect(url, autocommit=True)
+        self._connect = connector(url)
         with self._connect() as conn:
             conn.execute(SCHEMA)
 

@@ -117,6 +117,8 @@ All settings are optional for local development.
 | --- | --- | --- |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated web origins allowed to call the API |
 | `DATABASE_URL` | none (in memory) | Postgres connection string for accounts, chat, the trade of the day, finished NBA days and news |
+| `DB_POOL_SIZE` | `4` | Postgres connections kept open and shared by every store |
+| `DB_POOL_IDLE_SECONDS` | `240` | An idle pooled connection closes after this, so a hosted database can suspend |
 | `SECRET_KEY` | random per start | Signs team verification challenges; set it so they survive a restart |
 | `GOOGLE_CLIENT_ID` | none | Google OAuth web client ID; Google sign-in stays off until it is set |
 | `ANTHROPIC_API_KEY` | none | Lets Claude Haiku read managers' notes on trade ideas so the checks start where the note points; notes are kept unread without it |
