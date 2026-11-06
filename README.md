@@ -46,7 +46,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 
 | | Feature | Endpoint |
 | --- | --- | --- |
-| 🔁 | **Trade finder:** 1-for-1, 2-for-2, 2-for-1 and 1-for-2 deals that look fair to the other owner: Fair deals raise both teams' playoff odds, Worth a Try deals win on paper for them | `/api/analyze` |
+| 🔁 | **Trade finder:** 1-for-1, 2-for-2, 2-for-1 and 1-for-2 deals (plus 3-for-3 and 2-for-3 in Worth a Try) that look fair to the other owner: Fair deals raise both teams' playoff odds, Worth a Try deals win on paper for them | `/api/analyze` |
 | 🔭 | **Vision trades:** buy players off to a slow start before they bounce back, for a stronger playoff run, checked on past seasons | `/api/analyze` |
 | 🛍️ | **Trade Park:** shop up to four of your players to every team at once, with each team's best deal | `/api/shop` |
 | 🎯 | **Trade for one player:** fit, his owner's needs and the best three offers | `/api/target` |
@@ -191,7 +191,7 @@ uv run python -m scripts.export_openapi openapi.json
 
 - **Projections:** ESPN's season projections, blended with this season's per-game stats as games are played (`app/espn/parse.py`).
 - **Weekly model:** each team starts its top healthy players (by z-score value) for about 3.4 games a week. Each category's weekly total is a normal distribution; counting stats use an over-dispersed Poisson variance, percentages use binomial variance on attempts (`app/analysis/model.py`).
-- **Trades:** every 1-for-1, 2-for-2, 2-for-1 and 1-for-2 with every team (`app/analysis/trades.py`). A deal is kept only if it
+- **Trades:** every 1-for-1, 2-for-2, 2-for-1 and 1-for-2 with every team (`app/analysis/trades.py`). Worth a Try lists also try 3-for-3s and 2-for-3s (you get the extra player), grown from the best 2-for-2s with each team and kept only when they do more for you than that 2-for-2; in real category-league offers a 3-for-3 is accepted about as often as a 1-for-1. A deal is kept only if it
     - helps your categories,
     - helps theirs too, under their own build, and
     - gives them at least 85% of the value they send as owners see it: ESPN's rankings and auction values, this league's draft prices, and this season's rank as games are played (`app/analysis/perceived.py`).

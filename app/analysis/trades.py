@@ -68,6 +68,11 @@ MAX_PER_GIVE = 3  # each of my players goes in at most this many deals on a list
 # even ones the list is shorter, not padded with uneven ones. A display rule only: it never
 # changes a deal's odds or gains.
 MAX_UNEVEN_SHARE = 0.2
+# Worth a Try lists also try 3-player deals (3-for-3, and 2-for-3 where I get the extra player), grown
+# from the best 2-for-2s with each team: trying every 3-for-3 took 36 s on League A and passed nothing.
+# In 4,000 real category-league offers a 3-for-3 was accepted 15% of the time, like a 1-for-1, and was
+# 7% of accepted trades; a 3-for-2 that makes them cut a player, 6% (as poor as a 2-for-1), so it's left out.
+THREE_PLAYER_CORES = 4
 
 PUNT_WIN = 0.3  # a category an owner wins less often than this is treated as punted
 MISPRICED = 5.0  # dollars between owner value and our projection that count as sell-high / buy-low
@@ -689,8 +694,36 @@ class TradeFinder:
                         if d:
                             deals.append(d)
             if two_for_two:
-                deals += self._two_for_two(j, mine, theirs)
+                pairs = self._two_for_two(j, mine, theirs)
+                deals += pairs
+                if self.mode == "edge":
+                    deals += self._three_player(j, mine, theirs, pairs)
         return deals
+
+    def _three_player(self, j: int, mine: list[Player], theirs: list[Player], cores: list[Deal]) -> list[Deal]:
+        """3-for-3s and 2-for-3s grown from the best 2-for-2s with team ``j``: one more player on their
+        side, and maybe one more on mine. A deal is kept only when it does more for me than its core."""
+        mine = [p for p in mine if p not in droppable(mine, self.keep)]
+        theirs = [p for p in theirs if p not in droppable(theirs)]
+        out: list[Deal] = []
+        seen: set[tuple[frozenset[int], frozenset[int]]] = set()
+        for core in sorted(cores, key=self.sim_key, reverse=True)[:THREE_PLAYER_CORES]:
+            for extra_get in theirs:
+                if extra_get in core.get:
+                    continue
+                get = core.get + [extra_get]
+                for extra_give in [None, *mine]:
+                    if extra_give is not None and extra_give in core.give:
+                        continue
+                    give = core.give + ([extra_give] if extra_give is not None else [])
+                    key = (frozenset(p.id for p in give), frozenset(p.id for p in get))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    d = self._evaluate(j, give, get)
+                    if d is not None and d.my_gain > core.my_gain:
+                        out.append(d)
+        return out
 
     def _two_for_two(self, j: int, mine: list[Player], theirs: list[Player]) -> list[Deal]:
         """Two of mine for two of theirs.
