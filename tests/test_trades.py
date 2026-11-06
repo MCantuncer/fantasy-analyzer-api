@@ -14,6 +14,7 @@ from app.analysis.trades import (
     MAX_VALUE_RATIO,
     MIN_THEIR_GAIN,
     MIN_VALUE_RATIO,
+    THREE_PLAYER_CORES,
     VISION_MIN_GAMES,
     VISION_MIN_PLAYOFF_GAIN,
     VISION_MIN_SEASON_GAIN,
@@ -153,6 +154,39 @@ def test_two_for_two_ideas_are_real_two_for_twos(league):
         inside = [finder._gains.get((d.partner_idx, g.id, t.id)) for g in d.give for t in d.get]
         assert all(g is None or d.my_gain > g for g in inside)
     assert not [d for d in finder.candidates(two_for_two=False) if len(d.give) == len(d.get) == 2]
+
+
+def test_worth_a_try_lists_grow_three_player_deals_from_the_best_two_for_twos(league):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set(), mode="edge")
+    deals = finder.candidates()
+    threes = [d for d in deals if len(d.get) == 3]
+    assert threes
+    assert {(len(d.give), len(d.get)) for d in threes} <= {(3, 3), (2, 3)}
+    assert not [d for d in deals if len(d.give) == 3 and len(d.get) < 3]  # never makes them cut a player
+    mine = finder.teams[me].roster
+    by_partner = {}
+    for d in deals:
+        if len(d.give) == len(d.get) == 2:
+            by_partner.setdefault(d.partner_idx, []).append(d)
+    for d in threes:
+        theirs = finder.teams[d.partner_idx].roster
+        assert not set(map(id, d.give)) & set(map(id, no_trade_value(mine)))
+        assert not set(map(id, d.get)) & set(map(id, no_trade_value(theirs)))
+        cores = sorted(by_partner[d.partner_idx], key=finder.sim_key, reverse=True)[:THREE_PLAYER_CORES]
+        # Grown from one of the best 2-for-2s with that team, and doing more for me than it.
+        grown = [
+            c
+            for c in cores
+            if set(map(id, c.give)) <= set(map(id, d.give)) and set(map(id, c.get)) <= set(map(id, d.get))
+        ]
+        assert grown and d.my_gain > min(c.my_gain for c in grown)
+        if len(d.give) == 2:
+            assert d.my_drop is not None
+    for mode in ("fair", "vision"):
+        other = TradeFinder(league, model, me, keep=set(), mode=mode)
+        assert not [d for d in other.candidates() if len(d.get) == 3 or len(d.give) == 3]
 
 
 def test_every_candidate_is_fair_on_paper_and_helps_both(league):
