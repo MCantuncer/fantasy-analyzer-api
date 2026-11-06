@@ -15,7 +15,7 @@ from app.analysis.durability import injury_prone
 from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.projection import CLOSE
-from app.analysis.sim import EACH_CATEGORY, SeasonSim, simulate_season
+from app.analysis.sim import EACH_CATEGORY, SeasonResult, SeasonSim, simulate_season
 from app.analysis.tiers import droppable, has_market, tier
 from app.analysis.timing import MatchupTiming, Timing
 from app.analysis.trades import SCREEN_MIN_THEIR_GAIN, Deal, Mode, TradeFinder, acceptance_label, mix_shapes
@@ -67,6 +67,8 @@ PICKUP_SPAN = ("Screening pickups", 0.80, 0.94)
 PAIRING_SHARE = 0.5
 
 Progress = Callable[[str, float], None]
+# Projected final places, averaged over simulated seasons: (mine before, after), (theirs before, after).
+Finish = tuple[tuple[float, float], tuple[float, float]]
 
 
 def partner_gains(before: float, after: float) -> bool:
@@ -167,7 +169,7 @@ class Analyzer:
         self._today: tuple[float, np.ndarray] | None = None
         self._league_today: np.ndarray | None = None  # every team's playoff odds today
         self._after_pickup: dict[tuple[int, int], tuple[float, np.ndarray]] = {}
-        self._fine_cache: dict[tuple[int, int] | None, np.ndarray] = {}  # league odds today / after a pickup
+        self._fine_cache: dict[tuple[int, int] | None, SeasonResult] = {}  # the league today / after a pickup
         self._timing: MatchupTiming | None = None
 
     # ---- helpers -----------------------------------------------------------------------
@@ -239,14 +241,24 @@ class Analyzer:
         """Every team's playoff odds with these projections. ``changed`` holds the rosters that differ from today's;
         ``week`` replaces my days left in the current matchup (a move made later this week, or only for it).
         ``fine`` runs it on FINE_SIMS seasons, for odds the report shows."""
+        return self.season_result(dists, changed, sims, week, fine).playoff_pct
+
+    def season_result(
+        self,
+        dists: list[Dist],
+        changed: dict[int, list[Player]] | None = None,
+        sims: int = WHAT_IF_SIMS,
+        week: Dist | None = None,
+        fine: bool = False,
+    ) -> SeasonResult:
+        """The simulated season behind ``playoff_odds``: odds, records and finishing places."""
         period_dists = self.period_dists(changed)
         cur = self.league.current_period
         if week is not None and period_dists and cur in period_dists:
             period_dists[cur] = list(period_dists[cur])
             period_dists[cur][self.idx] = week
         if sims != WHAT_IF_SIMS:
-            res = simulate_season(self.league, dists, self.model.reverse, n_sims=sims, period_dists=period_dists)
-            return res.playoff_pct
+            return simulate_season(self.league, dists, self.model.reverse, n_sims=sims, period_dists=period_dists)
         if fine:
             sim = self.fine_sim()
         else:
@@ -258,7 +270,7 @@ class Analyzer:
         moved = set(changed or {}) | {i for i, d in enumerate(dists) if not same_dist(d, self.dists[i])}
         if week is not None:
             moved.add(self.idx)
-        return sim.what_if(moved, dists, period_dists if moved else None).playoff_pct
+        return sim.what_if(moved, dists, period_dists if moved else None)
 
     def fine_sim(self) -> SeasonSim:
         """Today's season on FINE_SIMS seasons, drawn once: shown odds and the season table share it."""
@@ -268,19 +280,27 @@ class Analyzer:
             )
         return self._fine_sim
 
-    def recheck(self, d: Deal) -> tuple[float, float, tuple[float, float]]:
-        """A deal's odds on FINE_SIMS seasons: my baseline, mine after it, and the partner's before and after."""
+    def recheck(self, d: Deal) -> tuple[float, float, tuple[float, float], Finish]:
+        """A deal's odds on FINE_SIMS seasons: my baseline, mine after it, the partner's before and after,
+        and where both teams are projected to finish (mine before and after, then theirs)."""
         key = None if d.vs_pickup is None else (d.vs_pickup[0].id, d.vs_pickup[1].id)
         if None not in self._fine_cache:
-            self._fine_cache[None] = self.playoff_odds(self.dists, fine=True)
+            self._fine_cache[None] = self.season_result(self.dists, fine=True)
         if key not in self._fine_cache:
             add, drop = d.vs_pickup
             roster = [p for p in self.me.roster if p.id != drop.id] + [add]
             dists = list(self.dists)
             dists[self.idx] = self.model.dist(roster)
-            self._fine_cache[key] = self.playoff_odds(dists, {self.idx: roster}, fine=True)
-        today, odds, j = self._fine_cache[None], self.playoff_odds(d.dists, d.rosters, fine=True), d.partner_idx
-        return float(self._fine_cache[key][self.idx]), float(odds[self.idx]), (float(today[j]), float(odds[j]))
+            self._fine_cache[key] = self.season_result(dists, {self.idx: roster}, fine=True)
+        base, today, j = self._fine_cache[key], self._fine_cache[None], d.partner_idx
+        after = self.season_result(d.dists, d.rosters, fine=True)
+        finish = (
+            (float(base.mean_rank[self.idx]), float(after.mean_rank[self.idx])),
+            (float(today.mean_rank[j]), float(after.mean_rank[j])),
+        )
+        odds = after.playoff_pct
+        mine, theirs = float(base.playoff_pct[self.idx]), (float(today.playoff_pct[j]), float(odds[j]))
+        return mine, float(odds[self.idx]), theirs, finish
 
     def playoff_pct(
         self,
@@ -327,6 +347,7 @@ class Analyzer:
         after: float,
         base_cats: np.ndarray,
         theirs: tuple[float, float] | None = None,
+        finish: Finish | None = None,
     ) -> schemas.TradeIdea:
         cats = self.avg_cat_win(self.idx, d.dists) - base_cats
         return schemas.TradeIdea(
@@ -358,7 +379,62 @@ class Analyzer:
             playoff_week_cats_after=_round(self.playoff_strength(self.idx, d.rosters)),
             category_changes={n: round(float(cats[c]), 3) for c, n in enumerate(self.cat_names)},
             vision=d.vision,
+            category_detail=self.category_detail(d),
+            playoff_weeks=self.playoff_weeks(d),
+            finish_before=_round(finish[0][0]) if finish else None,
+            finish_after=_round(finish[0][1]) if finish else None,
+            partner_finish_before=_round(finish[1][0]) if finish else None,
+            partner_finish_after=_round(finish[1][1]) if finish else None,
         )
+
+    def category_detail(self, d: Deal) -> list[schemas.CategoryDetail]:
+        """Both teams' weekly projection and weekly win chance in each category, before and after a deal.
+
+        Measured against today's rosters, so it shows what the trade itself changes on each side.
+        """
+        j = d.partner_idx
+        mine = (self.avg_cat_win(self.idx, self.dists), self.avg_cat_win(self.idx, d.dists))
+        theirs = (self.avg_cat_win(j, self.dists), self.avg_cat_win(j, d.dists))
+        return [
+            schemas.CategoryDetail(
+                category=n,
+                mine_before=round(float(self.dists[self.idx].mu[c]), 4),
+                mine_after=round(float(d.dists[self.idx].mu[c]), 4),
+                my_win_before=round(float(mine[0][c]), 3),
+                my_win_after=round(float(mine[1][c]), 3),
+                theirs_before=round(float(self.dists[j].mu[c]), 4),
+                theirs_after=round(float(d.dists[j].mu[c]), 4),
+                their_win_before=round(float(theirs[0][c]), 3),
+                their_win_after=round(float(theirs[1][c]), 3),
+            )
+            for c, n in enumerate(self.cat_names)
+        ]
+
+    def playoff_weeks(self, d: Deal) -> list[schemas.PlayoffWeek]:
+        """Each fantasy playoff week on its real schedule: both teams' expected categories won against an
+        average team, before and after the deal."""
+        cal = self.model.cal
+        out = []
+        today = [t.roster for t in self.teams]
+        after = [d.rosters.get(i, r) for i, r in enumerate(today)]
+        for p in self.playoff_periods():
+            days = cal.period_days.get(p) or []
+            if not days:
+                continue
+            before_d = [self.model.dist(r, p) for r in today]
+            after_d = [self.model.dist(r, p) for r in after]
+            out.append(
+                schemas.PlayoffWeek(
+                    period=p,
+                    starts_on=cal.date_of(days[0]).isoformat(),
+                    ends_on=cal.date_of(days[-1]).isoformat(),
+                    my_cats_before=round(self.model.strength(self.idx, before_d), 2),
+                    my_cats_after=round(self.model.strength(self.idx, after_d), 2),
+                    their_cats_before=round(self.model.strength(d.partner_idx, before_d), 2),
+                    their_cats_after=round(self.model.strength(d.partner_idx, after_d), 2),
+                )
+            )
+        return out
 
     # ---- sections ----------------------------------------------------------------------
 
@@ -435,11 +511,11 @@ class Analyzer:
             if not self._holds_up(mode, d, before, after, theirs):
                 continue
             # Checked again on more seasons, which also gives the odds the list shows.
-            before, after, theirs = self.recheck(d)
+            before, after, theirs, finish = self.recheck(d)
             if not self._holds_up(mode, d, before, after, theirs):
                 continue
             picks.add(d)
-            ideas.append(self.trade_idea(finder, d, before, after, base_cats, theirs))
+            ideas.append(self.trade_idea(finder, d, before, after, base_cats, theirs, finish))
         if mode == "vision":
             # Expected playoff payoff: the chance to be there times how strong I am once there.
             ideas.sort(key=lambda t: t.acceptance * _playoff_payoff(t), reverse=True)

@@ -167,6 +167,30 @@ class PitchNeed(BaseModel):
     per_game: float | None = Field(default=None, description="What the deal adds a game, counting stats only")
 
 
+class CategoryDetail(BaseModel):
+    category: str
+    mine_before: float = Field(description="My weekly projection in this category today (a percentage as 0-1)")
+    mine_after: float = Field(description="The same after the deal")
+    my_win_before: float = Field(description="My chance to win this category in a week against an average team")
+    my_win_after: float
+    theirs_before: float = Field(description="The other team's weekly projection today")
+    theirs_after: float
+    their_win_before: float = Field(description="The other team's weekly chance to win this category")
+    their_win_after: float
+
+
+class PlayoffWeek(BaseModel):
+    period: int = Field(description="Matchup period")
+    starts_on: str = Field(description="First day, ISO date")
+    ends_on: str = Field(description="Last day, ISO date")
+    my_cats_before: float = Field(
+        description="My expected categories won that week against an average team, on its real games, today"
+    )
+    my_cats_after: float
+    their_cats_before: float
+    their_cats_after: float
+
+
 class TradeIdea(BaseModel):
     partner_team_id: int
     partner_team_name: str
@@ -212,6 +236,19 @@ class TradeIdea(BaseModel):
         description="Vision trades: why the players you get are worth more later than their owner sees now",
     )
     category_changes: dict[str, float] = Field(description="Change in my weekly win % per category")
+    category_detail: list[CategoryDetail] = Field(
+        default_factory=list,
+        description="Both teams, every category: weekly projection and win chance, before and after",
+    )
+    playoff_weeks: list[PlayoffWeek] = Field(
+        default_factory=list, description="Each fantasy playoff week, both teams, before and after"
+    )
+    finish_before: float | None = Field(
+        default=None, description="My projected final place in the standings (average over simulated seasons)"
+    )
+    finish_after: float | None = None
+    partner_finish_before: float | None = None
+    partner_finish_after: float | None = None
 
 
 class MoveDay(BaseModel):
