@@ -35,7 +35,9 @@ TRADE_RESULTS = 10
 # the finder's queue until the list is full. Each simulation takes ~0.04s locally (more on the
 # free plan); these caps bound the run.
 TRADE_SIMS = {"fair": 120, "edge": 50, "vision": 50}
-PICKUP_SIM_TOP = 8
+# Free agents simulated as keepers. The quick category screen misses some good ones: on League A
+# (2026-11-06) going from 8 to 25 found Cam Spencer (+3.9 pt) and John Collins (+3.5 pt) for about 1 s.
+PICKUP_SIM_TOP = 25
 PICKUP_STREAMS = 3  # at most this many this-week-only streams
 KEEPER_MIN_GAIN = 0.02  # expected categories a week a pickup must add to be worth keeping
 # Expected categories this matchup a stream must add: about one close category moved by 5 points.
