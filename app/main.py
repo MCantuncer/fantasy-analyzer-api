@@ -64,6 +64,7 @@ from app.news.verify import FACT_SOURCE, describe_fact
 from app.playercard import Card as ParsedCard
 from app.playercard import parse_card
 from app.reader import DEEP_BATCH_MAX, DeepReader, NoteReader, Reading, create_deep_reader, create_reader
+from app.recap import VERSION as RECAP_VERSION
 from app.recap import Week as RecapWeek
 from app.recap import build_recap, is_final
 from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
@@ -1907,7 +1908,7 @@ def create_app(
             body = app.state.recaps.get(key) or await run_in_threadpool(
                 app.state.store.get_recap, league_id, season, period
             )
-            if body is None:
+            if body is None or body.get("version") != RECAP_VERSION:
                 sched = await score_calendar(season)
                 day_lines = {
                     d: [ln for g in (await score_day(season, d, league_id, creds, sched))["games"] for ln in g["lines"]]
@@ -1981,7 +1982,7 @@ def create_app(
             start=start,
             end=end,
             categories=[c.name for c in lg.categories],
-            **{k: v for k, v in recap.items() if k not in ("days", "teams")},
+            **{k: v for k, v in recap.items() if k not in ("days", "teams", "version")},
             teams=[
                 schemas.RecapTeam(
                     **t,

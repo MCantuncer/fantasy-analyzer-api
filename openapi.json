@@ -7314,6 +7314,10 @@
           "weekday": {
             "type": "integer",
             "title": "Weekday"
+          },
+          "after": {
+            "$ref": "#/components/schemas/RecapAfter",
+            "description": "His games for this team after the pickup, which is what ranks the adds"
           }
         },
         "type": "object",
@@ -7327,9 +7331,40 @@
           "z",
           "totals",
           "day",
-          "weekday"
+          "weekday",
+          "after"
         ],
         "title": "RecapAdd"
+      },
+      "RecapAfter": {
+        "properties": {
+          "games": {
+            "type": "integer",
+            "title": "Games"
+          },
+          "started": {
+            "type": "integer",
+            "title": "Started",
+            "description": "Of those games, how many he started (not on the bench or IR)"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "The same 9-cat value as the week's, for these games only"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/WeekTotals"
+          }
+        },
+        "type": "object",
+        "required": [
+          "games",
+          "started",
+          "value",
+          "totals"
+        ],
+        "title": "RecapAfter",
+        "description": "What a player did for the team that added him, from the day it added him to the week's end."
       },
       "RecapBench": {
         "properties": {
@@ -7497,13 +7532,18 @@
             "type": "integer",
             "title": "Weekday",
             "description": "0 = the week's first day (Monday), 6 = Sunday"
+          },
+          "after": {
+            "$ref": "#/components/schemas/RecapAfter",
+            "description": "His games for that team after the pickup; his week's rank counts all of them"
           }
         },
         "type": "object",
         "required": [
           "team_id",
           "day",
-          "weekday"
+          "weekday",
+          "after"
         ],
         "title": "RecapPickup"
       },
@@ -7673,7 +7713,7 @@
                 "type": "null"
               }
             ],
-            "description": "Best player the team added during the week"
+            "description": "The add who did the most for the team after it added him, this week"
           },
           "bench": {
             "$ref": "#/components/schemas/RecapBench",

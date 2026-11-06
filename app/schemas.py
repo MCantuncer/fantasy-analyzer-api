@@ -1227,10 +1227,22 @@ class RecapTopPlayer(RecapPlayer):
     owner_team_id: int | None = Field(default=None, description="Fantasy team on the week's last day; none = free")
 
 
+class RecapAfter(BaseModel):
+    """What a player did for the team that added him, from the day it added him to the week's end."""
+
+    games: int
+    started: int = Field(description="Of those games, how many he started (not on the bench or IR)")
+    value: float = Field(description="The same 9-cat value as the week's, for these games only")
+    totals: WeekTotals
+
+
 class RecapPickup(BaseModel):
     team_id: int
     day: int = Field(description="Scoring period he first appeared on that roster")
     weekday: int = Field(description="0 = the week's first day (Monday), 6 = Sunday")
+    after: RecapAfter = Field(
+        description="His games for that team after the pickup; his week's rank counts all of them"
+    )
 
 
 class RecapFreeAgent(RecapPlayer):
@@ -1241,6 +1253,7 @@ class RecapFreeAgent(RecapPlayer):
 class RecapAdd(RecapPlayer):
     day: int
     weekday: int
+    after: RecapAfter = Field(description="His games for this team after the pickup, which is what ranks the adds")
 
 
 class RecapBench(BaseModel):
@@ -1258,7 +1271,9 @@ class RecapTeam(BaseModel):
     abbrev: str = ""
     name: str = ""
     mvp: RecapPlayer | None = Field(default=None, description="Best player among the games the team started")
-    best_add: RecapAdd | None = Field(default=None, description="Best player the team added during the week")
+    best_add: RecapAdd | None = Field(
+        default=None, description="The add who did the most for the team after it added him, this week"
+    )
     bench: RecapBench = Field(description="Games played while on the bench or IR, and what they scored")
 
 

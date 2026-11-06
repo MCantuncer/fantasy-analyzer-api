@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 
 from app.espn.parse import BENCH_SLOT, IR_SLOT, STAT_NAMES
 
+# Bump when the recap's shape or method changes: stored recaps of another version are rebuilt.
+VERSION = 2
 # Players of the week and free agents shown.
 TOP_PLAYERS = 10
 TOP_FREE_AGENTS = 8
@@ -60,29 +62,31 @@ def _totals(week: Week) -> tuple[dict[int, dict[str, float]], dict[int, tuple[st
     return tot, who
 
 
-def _values(
-    tot: dict[int, dict[str, float]], categories: list[int]
-) -> tuple[dict[int, float], dict[int, dict[str, float]]]:
-    """Each player's week value (sum of category z-scores) and the z-score per category."""
-    cats = [c for c in categories if c in COUNTING or c in RATIOS] or [*COUNTING, *RATIOS]
-    pool = sorted(tot, key=lambda p: (-tot[p]["minutes"], p))[:POOL_SIZE]
-    rate = {}
-    for sid, (made, att) in RATIOS.items():
-        attempts = sum(tot[p][att] for p in pool)
-        rate[sid] = sum(tot[p][made] for p in pool) / attempts if attempts else 0.0
+class _Scorer:
+    """Values a stat line against the week's pool: the sum of category z-scores."""
 
-    def raw(p: int, sid: int) -> float:
-        t = tot[p]
+    def __init__(self, tot: dict[int, dict[str, float]], categories: list[int]):
+        self.cats = [c for c in categories if c in COUNTING or c in RATIOS] or [*COUNTING, *RATIOS]
+        pool = [tot[p] for p in sorted(tot, key=lambda p: (-tot[p]["minutes"], p))[:POOL_SIZE]]
+        self.rate = {}
+        for sid, (made, att) in RATIOS.items():
+            attempts = sum(t[att] for t in pool)
+            self.rate[sid] = sum(t[made] for t in pool) / attempts if attempts else 0.0
+        self.mean = {c: statistics.fmean(self._raw(t, c) for t in pool) for c in self.cats} if pool else {}
+        self.sd = {c: statistics.pstdev(self._raw(t, c) for t in pool) or 1.0 for c in self.cats} if pool else {}
+
+    def _raw(self, t: dict[str, float], sid: int) -> float:
         if sid in RATIOS:
             made, att = RATIOS[sid]
-            return t[made] - rate[sid] * t[att]
-        v = t[COUNTING[sid]]
+            return t.get(made, 0) - self.rate[sid] * t.get(att, 0)
+        v = t.get(COUNTING[sid], 0)
         return -v if sid in LOWER_IS_BETTER else v
 
-    mean = {c: statistics.fmean(raw(p, c) for p in pool) for c in cats} if pool else {}
-    sd = {c: statistics.pstdev(raw(p, c) for p in pool) or 1.0 for c in cats} if pool else {}
-    z = {p: {STAT_NAMES[c]: round((raw(p, c) - mean[c]) / sd[c], 2) for c in cats} for p in tot}
-    return {p: round(sum(z[p].values()), 2) for p in tot}, z
+    def z(self, t: dict[str, float]) -> dict[str, float]:
+        return {STAT_NAMES[c]: round((self._raw(t, c) - self.mean[c]) / self.sd[c], 2) for c in self.cats}
+
+    def value(self, t: dict[str, float]) -> float:
+        return round(sum(self.z(t).values()), 2)
 
 
 def _team_result(side: dict, categories: list[int]) -> dict:
@@ -121,7 +125,9 @@ def is_final(matchups: list[dict]) -> bool:
 def build_recap(week: Week) -> dict:
     """The recap, in the shape of ``schemas.WeekRecap`` minus the league and date fields."""
     tot, who = _totals(week)
-    value, z = _values(tot, week.categories)
+    scorer = _Scorer(tot, week.categories)
+    z = {p: scorer.z(t) for p, t in tot.items()}
+    value = {p: round(sum(z[p].values()), 2) for p in tot}
     order = sorted(tot, key=lambda p: (-value[p], p))
     rank = {p: i + 1 for i, p in enumerate(order)}
     first, last = week.days[0], week.days[-1]
@@ -143,6 +149,28 @@ def build_recap(week: Week) -> dict:
 
     top = [{**player(p), "owner_team_id": week.rosters.get(last, {}).get(p, (None, 0))[0]} for p in order[:TOP_PLAYERS]]
 
+    by_day = {d: {ln["player_id"]: ln for ln in week.day_lines.get(d, [])} for d in week.days}
+
+    def after(p: int, team_id: int, added: int) -> dict:
+        """What he did for ``team_id`` from the day it added him: games while on its roster."""
+        t: dict[str, float] = defaultdict(float)
+        started = 0
+        for d in week.days[day_index[added] :]:
+            seat = week.rosters.get(d, {}).get(p)
+            ln = by_day[d].get(p)
+            if seat is None or seat[0] != team_id or ln is None:
+                continue
+            t["games"] += 1
+            started += seat[1] not in (BENCH_SLOT, IR_SLOT)
+            for k in TOTALS:
+                t[k] += ln[k]
+        return {
+            "games": int(t["games"]),
+            "started": started,
+            "value": scorer.value(t) if t["games"] else 0.0,
+            "totals": {k: int(t[k]) for k in TOTALS},
+        }
+
     start = week.rosters.get(first, {})
     free_agents = []
     for p in [p for p in order if p not in start][:TOP_FREE_AGENTS]:
@@ -151,7 +179,12 @@ def build_recap(week: Week) -> dict:
             {
                 **player(p),
                 "picked_up": (
-                    {"team_id": week.rosters[taken][p][0], "day": taken, "weekday": day_index[taken]}
+                    {
+                        "team_id": week.rosters[taken][p][0],
+                        "day": taken,
+                        "weekday": day_index[taken],
+                        "after": after(p, week.rosters[taken][p][0], taken),
+                    }
                     if taken is not None
                     else None
                 ),
@@ -186,17 +219,22 @@ def build_recap(week: Week) -> dict:
     teams = []
     for t in sorted(team_ids):
         mvp = max(started.get(t, ()), key=lambda p: (value[p], -p), default=None)
-        add = max(adds.get(t, ()), key=lambda a: (value[a[0]], -a[0]), default=None)
+        # The best add is judged on what he did for this team, not on his whole week.
+        gains = [(p, day, after(p, t, day)) for p, day in adds.get(t, ())]
+        add = max(gains, key=lambda a: (a[2]["games"] > 0, a[2]["value"], -a[0]), default=None)
         teams.append(
             {
                 "team_id": t,
                 "mvp": player(mvp) if mvp is not None else None,
-                "best_add": {**player(add[0]), "day": add[1], "weekday": day_index[add[1]]} if add else None,
+                "best_add": (
+                    {**player(add[0]), "day": add[1], "weekday": day_index[add[1]], "after": add[2]} if add else None
+                ),
                 "bench": dict(bench[t]) if t in bench else {"games": 0},
             }
         )
 
     return {
+        "version": VERSION,
         "period": week.period,
         "days": week.days,
         "matchups": _matchups(week),

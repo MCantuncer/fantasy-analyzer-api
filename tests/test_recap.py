@@ -9,7 +9,7 @@ import pytest
 from app.accounts import MemoryAccountStore
 from app.espn.client import EspnClient
 from app.main import create_app
-from app.recap import Week, build_recap, is_final
+from app.recap import VERSION, Week, build_recap, is_final
 from app.store import MemoryStore
 from tests.conftest import LEAGUE_ID, FakeEspn, signed_in
 
@@ -72,7 +72,8 @@ def test_players_of_the_week_rank_by_value_and_name_their_owner(week):
 def test_free_agents_are_those_free_when_the_week_began(week):
     fas = {p["name"]: p for p in build_recap(week)["free_agents"]}
     assert set(fas) == {"Hot Pickup", "Free"}
-    assert fas["Hot Pickup"]["picked_up"] == {"team_id": 20, "day": 3, "weekday": 2}
+    picked = fas["Hot Pickup"]["picked_up"]
+    assert (picked["team_id"], picked["day"], picked["weekday"]) == (20, 3, 2)
     assert fas["Hot Pickup"]["owner_now_team_id"] == 20
     assert fas["Free"]["picked_up"] is None and fas["Free"]["owner_now_team_id"] is None
 
@@ -85,6 +86,25 @@ def test_team_mvp_counts_started_games_and_bench_counts_the_rest(week):
     assert teams[20]["bench"]["games"] == 2 and teams[20]["bench"]["pts"] == 43
     assert teams[20]["best_add"]["name"] == "Hot Pickup" and teams[20]["best_add"]["weekday"] == 2
     assert teams[10]["best_add"] is None
+
+
+def test_an_add_counts_only_the_games_he_played_for_his_new_team(week):
+    recap = build_recap(week)
+    pickup = next(p for p in recap["free_agents"] if p["name"] == "Hot Pickup")
+    # He played days 2 and 3, but team 20 only had him on day 3.
+    assert pickup["games"] == 2 and pickup["totals"]["pts"] == 58
+    after = pickup["picked_up"]["after"]
+    assert (after["games"], after["started"], after["totals"]["pts"], after["totals"]["stl"]) == (1, 1, 28, 3)
+    assert recap["teams"][1]["best_add"]["after"] == after
+
+
+def test_a_late_add_with_no_games_yet_is_not_the_best_add(week):
+    # Team 20 also adds "Free" on the last day, after his games: a bigger week, nothing for them.
+    week.rosters[3][8] = (20, BENCH)
+    teams = {t["team_id"]: t for t in build_recap(week)["teams"]}
+    assert teams[20]["best_add"]["name"] == "Hot Pickup"
+    free = next(p for p in build_recap(week)["free_agents"] if p["name"] == "Free")
+    assert free["picked_up"]["after"]["games"] == 0 and free["picked_up"]["after"]["value"] == 0.0
 
 
 def test_matchups_biggest_margin_first(week):
@@ -153,3 +173,15 @@ def test_recap_endpoint_needs_cookies_for_a_private_league(recorded, nba_schedul
     )
     r = signed_in(app, team_id=None).post("/api/recap", json={"league_id": LEAGUE_ID})
     assert r.status_code in (401, 403)
+
+
+def test_a_recap_stored_by_an_older_version_is_rebuilt(recorded, nba_schedule):
+    fake = FakeEspn(finished_week_one(recorded), schedule=nba_schedule)
+    store = MemoryStore()
+    store.save_recap(LEAGUE_ID, 2027, 1, {"period": 1, "days": [1], "matchups": [], "players": [], "teams": []})
+    app = create_app(
+        EspnClient(transport=httpx.MockTransport(fake.handler)), store=store, accounts=MemoryAccountStore()
+    )
+    r = signed_in(app, team_id=None).post("/api/recap", json={"league_id": LEAGUE_ID, "period": 1})
+    assert r.status_code == 200, r.text
+    assert store.get_recap(LEAGUE_ID, 2027, 1)["version"] == VERSION
