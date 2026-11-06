@@ -273,3 +273,43 @@ def test_sits_on_their_own(recorded, schedule_raw, day4_players):
     ).json()
     assert all(not d["sits"] for d in quick["week"])
     assert [d["day"] for d in quick["week"]] == [d["day"] for d in full["week"]]
+
+
+def _with_starters(players: list[dict], day: int, starters: set[int]) -> list[dict]:
+    """The recorded day trimmed the games-started stat (41); put it back for the given players."""
+    out = json.loads(json.dumps(players))
+    for entry in out:
+        p = entry.get("player") or entry
+        for st in p.get("stats") or []:
+            if st.get("scoringPeriodId") == day and st.get("statSplitTypeId") == 5 and st.get("stats"):
+                st["stats"]["41"] = 1.0 if int(p["id"]) in starters else 0.0
+    return out
+
+
+def test_lines_say_who_started(day4_players):
+    players = _with_starters(day4_players, 4, {AMEN_THOMPSON})
+    lines = [ln for game in parse_lines(players, 4).values() for ln in game]
+    assert [ln.player_id for ln in lines if ln.starter] == [AMEN_THOMPSON]
+    # A line without the stat (a day saved before) is no starter.
+    assert not any(ln.starter for game in parse_lines(day4_players, 4).values() for ln in game)
+
+
+def test_a_day_saved_before_starters_is_fetched_once_more(recorded, schedule_raw, day4_players):
+    players = _with_starters(day4_players, 4, {AMEN_THOMPSON})
+    client, fake, store = scores_client(recorded, schedule_raw, players, MORNING_AFTER)
+    old = build_day(parse_schedule(schedule_raw), 4, day4_players, MORNING_AFTER)
+    for g in old["games"]:
+        for ln in g["lines"]:
+            del ln["starter"]
+    store.save_day(2027, 4, old)
+
+    body = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027, "day": 4}).json()
+    lines = [ln for g in body["games"] for ln in g["lines"]]
+    assert next(ln for ln in lines if ln["player_id"] == AMEN_THOMPSON)["starter"] is True
+    assert fake.stat_calls == 1
+    assert all("starter" in ln for g in store.get_day(2027, 4)["games"] for ln in g["lines"])
+
+    # Saved again with starters, so the next read stays in the store.
+    client.app.state.settled_days.clear()
+    client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027, "day": 4})
+    assert fake.stat_calls == 1

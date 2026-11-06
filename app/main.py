@@ -68,7 +68,7 @@ from app.recap import VERSION as RECAP_VERSION
 from app.recap import Week as RecapWeek
 from app.recap import build_recap, is_final
 from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
-from app.scores import Schedule, build_day, needs_stats, parse_schedule, settled, week_fixtures
+from app.scores import Schedule, build_day, has_starters, needs_stats, parse_schedule, settled, week_fixtures
 from app.social import (
     CHALLENGE_SECONDS,
     Challenge,
@@ -1653,7 +1653,7 @@ def create_app(
             if body is not None:
                 return body
             body = await run_in_threadpool(app.state.store.get_day, season, day)
-            if body is not None:
+            if body is not None and has_starters(body):
                 app.state.settled_days.set(key, body)
                 return body
             now = app.state.now()

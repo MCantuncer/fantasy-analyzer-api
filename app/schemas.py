@@ -848,6 +848,7 @@ class GameLine(BaseModel):
     fga: int
     ftm: int
     fta: int
+    starter: bool = Field(default=False, description="In his team's starting five")
 
 
 class GameSide(BaseModel):
