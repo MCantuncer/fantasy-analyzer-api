@@ -25,8 +25,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
 
-# No 0/O, 1/I/L, 2/Z, 5/S or 8/B: easy to read off a phone and type into ESPN.
-CODE_ALPHABET = "ACDEFGHJKMNPQRTUVWXY34679"
+# Codes are four consonants (QDHT): no vowels, Y or digits, so ESPN's banned-word filter can't
+# read a word or slur in them, not even in leet (4=A, 3=E, 7=T). F, G, K, N and X go too (FCK,
+# KKK, NGR, XXX), and so do B/8, L/1, S/5 and Z/2 so a code reads cleanly off a phone.
+CODE_ALPHABET = "CDHJMPQRTVW"
 CODE_LENGTH = 4
 CHALLENGE_SECONDS = 30 * 60
 
@@ -47,9 +49,10 @@ def _unb64(text: str) -> bytes:
 
 
 def new_code(avoid: str = "") -> str:
+    """A fresh verification code, never the team's current abbreviation (``avoid``)."""
     while True:
         code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
-        if code != avoid.upper():
+        if code != avoid.strip().upper():
             return code
 
 
