@@ -382,6 +382,19 @@ class ErrorBody(BaseModel):
     message: str
 
 
+class ReportChange(BaseModel):
+    """Something that moved in the league since a saved report was built."""
+
+    kind: Literal["status", "added", "dropped", "moved", "games"] = Field(
+        description="status: an injury tag or IR slot changed; added/dropped/moved: a roster move; "
+        "games: new box scores"
+    )
+    text: str = Field(description="Plain words, e.g. 'Jayson Tatum is out'")
+    player_id: int | None = None
+    team_id: int | None = Field(default=None, description="The fantasy team the player is on now (or left)")
+    mine: bool = Field(default=False, description="True when it touches the team asking")
+
+
 class AnalysisJob(BaseModel):
     """A team's analysis running in the background. Poll with the same request until it is done."""
 
@@ -393,6 +406,15 @@ class AnalysisJob(BaseModel):
         default=None,
         description="While running: the report so far, once free agents and the season table are in. Its trade "
         "lists are empty and named in its `pending`; the finished report replaces it.",
+    )
+    saved: AnalysisReport | None = Field(
+        default=None,
+        description="While running: the last saved report, out of date because of `changes` (or its age). "
+        "Show it until the new one is done.",
+    )
+    changes: list[ReportChange] = Field(
+        default_factory=list,
+        description="What moved in the league since `saved` was built, the asking team's news first",
     )
     error: ErrorBody | None = None
 

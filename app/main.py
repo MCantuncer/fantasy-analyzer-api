@@ -68,6 +68,7 @@ from app.recap import VERSION as RECAP_VERSION
 from app.recap import Week as RecapWeek
 from app.recap import build_recap, is_final
 from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
+from app.saved import Saved, changes, fingerprint, read_saved, report_key, saved_row
 from app.scores import Schedule, build_day, has_starters, needs_stats, parse_schedule, settled, week_fixtures
 from app.social import (
     CHALLENGE_SECONDS,
@@ -141,6 +142,8 @@ class AnalysisProgress:
         self.progress = 0.0
         self.stage = "Loading your league"
         self.preview: schemas.AnalysisReport | None = None  # the report so far, before its trade lists
+        self.saved: Saved | None = None  # the last saved report, shown until this run replaces it
+        self.changes: list[schemas.ReportChange] = []  # what moved in the league since it was built
 
     def update(self, stage: str, progress: float) -> None:
         self.stage = stage
@@ -755,7 +758,10 @@ def create_app(
         summary = league_summary(lg)
         if not summary.supported:
             raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
+        if job.saved is not None and not job.changes:
+            job.changes = changes(job.saved.fingerprint, fingerprint(lg), body.team_id)
         job.update("Reading rosters", 0.02)
+        built_at = app.state.now()
         report = await run_in_threadpool(
             lambda: Analyzer(
                 lg,
@@ -767,16 +773,55 @@ def create_app(
             ).report(on_preview=job.show)
         )
         app.state.reports.set(key, report)
+        try:
+            row = saved_row(report, lg, built_at)
+            await run_in_threadpool(
+                app.state.store.save_report, report_key(key), body.league_id, season, body.team_id, row
+            )
+        except Exception:  # the report is still served from memory; it just won't open instantly next time
+            logging.getLogger(__name__).warning("could not save the report", exc_info=True)
         return report
 
+    async def saved_report(
+        body: schemas.AnalyzeRequest, creds: EspnCredentials | None, key: tuple
+    ) -> tuple[schemas.AnalysisReport | None, Saved | None, list[schemas.ReportChange]]:
+        """The team's saved report if the league still matches it, else the out-of-date one and what changed.
+
+        The check is one light league read (rosters and injury tags, no free agents), cached
+        like any league read, so opening the page costs a second or so instead of a full run.
+        """
+        try:
+            saved = read_saved(await run_in_threadpool(app.state.store.get_report, report_key(key)))
+        except Exception:
+            logging.getLogger(__name__).warning("could not read the saved report", exc_info=True)
+            return None, None, []
+        if saved is None:
+            return None, None, []
+        if not saved.fresh(app.state.now()):
+            return None, saved, []  # what changed is worked out once the run has the league
+        try:
+            lg = await load_league(body.league_id, key[1], creds, with_fa=False)
+        except EspnError:
+            return None, saved, []  # the run reads the league again and reports the error
+        now = fingerprint(lg)
+        if now == saved.fingerprint:
+            return saved.report, None, []
+        return None, saved, changes(saved.fingerprint, now, body.team_id)
+
     def analysis_job(
-        body: schemas.AnalyzeRequest, creds: EspnCredentials | None, key: tuple, retry_failed: bool = False
+        body: schemas.AnalyzeRequest,
+        creds: EspnCredentials | None,
+        key: tuple,
+        retry_failed: bool = False,
+        saved: Saved | None = None,
+        changed: list[schemas.ReportChange] | None = None,
     ) -> AnalysisProgress:
         """One run per team and settings at a time, however many tabs or refreshes ask for it."""
         job = app.state.analysis_jobs.get(key)
         failed = job is not None and job.task.done() and (job.task.cancelled() or job.task.exception() is not None)
         if job is None or (failed and retry_failed):
             job = AnalysisProgress()
+            job.saved, job.changes = saved, list(changed or [])
             job.task = asyncio.create_task(build_report(body, creds, key, job))
             app.state.analysis_jobs[key] = job
 
@@ -810,6 +855,11 @@ def create_app(
         cached = app.state.reports.get(key)
         if cached is not None:
             return cached
+        if key not in app.state.analysis_jobs:
+            report, _, _ = await saved_report(body, creds, key)
+            if report is not None:
+                app.state.reports.set(key, report)
+                return report
         return await asyncio.shield(analysis_job(body, creds, key, retry_failed=True).task)
 
     @app.post(
@@ -833,9 +883,22 @@ def create_app(
         cached = app.state.reports.get(key)
         if cached is not None:
             return schemas.AnalysisJob(status="done", progress=1.0, stage="Done", report=cached)
-        job = analysis_job(body, creds, key)
+        saved, changed = None, []
+        if key not in app.state.analysis_jobs:
+            report, saved, changed = await saved_report(body, creds, key)
+            if report is not None:
+                app.state.reports.set(key, report)
+                return schemas.AnalysisJob(status="done", progress=1.0, stage="Done", report=report)
+        job = analysis_job(body, creds, key, saved=saved, changed=changed)
         if not job.task.done():
-            return schemas.AnalysisJob(status="running", progress=job.progress, stage=job.stage, preview=job.preview)
+            return schemas.AnalysisJob(
+                status="running",
+                progress=job.progress,
+                stage=job.stage,
+                preview=job.preview,
+                saved=job.saved.report if job.saved else None,
+                changes=job.changes,
+            )
         app.state.analysis_jobs.pop(key, None)  # a retry after a failure starts afresh
         exc = job.task.exception()
         if exc is None:
