@@ -847,6 +847,20 @@ def create_app(
             job.task.add_done_callback(done)
         return job
 
+    def live_job(key: tuple) -> bool:
+        """Whether a run for this key is under way, or failed and has yet to say so.
+
+        A run that finished fine is forgotten here: its report is in the cache, or was dropped
+        from it because the league moved, and then the saved report has to be checked again.
+        """
+        job = app.state.analysis_jobs.get(key)
+        if job is None:
+            return False
+        if job.task.done() and not job.task.cancelled() and job.task.exception() is None:
+            del app.state.analysis_jobs[key]
+            return False
+        return True
+
     async def injury_sweep() -> list[tuple]:
         """One look by the injury watch. Returns the report keys it rebuilt."""
         rows = await run_in_threadpool(app.state.store.recent_reports, app.state.now() - WATCH_WINDOW)
@@ -869,7 +883,7 @@ def create_app(
         rebuilt = []
         for row in sorted(hit, key=lambda r: r["built_at"], reverse=True)[:WATCH_RERUNS]:
             key = key_from_text(row["key"])
-            if key[-1] != credentials_key(None) or key in app.state.analysis_jobs:
+            if key[-1] != credentials_key(None) or live_job(key):
                 continue
             saved = read_saved(await run_in_threadpool(app.state.store.get_report, row["key"]))
             body = schemas.AnalyzeRequest(
@@ -924,7 +938,7 @@ def create_app(
         cached = app.state.reports.get(key)
         if cached is not None:
             return cached
-        if key not in app.state.analysis_jobs:
+        if not live_job(key):
             report, _, _ = await saved_report(body, creds, key)
             if report is not None:
                 app.state.reports.set(key, report)
@@ -953,7 +967,7 @@ def create_app(
         if cached is not None:
             return schemas.AnalysisJob(status="done", progress=1.0, stage="Done", report=cached)
         saved, changed = None, []
-        if key not in app.state.analysis_jobs:
+        if not live_job(key):
             report, saved, changed = await saved_report(body, creds, key)
             if report is not None:
                 app.state.reports.set(key, report)

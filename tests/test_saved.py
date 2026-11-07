@@ -235,3 +235,18 @@ def test_recent_reports_skip_old_ones(first_run):
     (row,) = store.recent_reports(built - timedelta(minutes=1))
     assert row["team_id"] == MY_TEAM and row["fingerprint"] and "body" not in row
     assert store.recent_reports(built + timedelta(minutes=1)) == []
+
+
+def test_news_right_after_a_run_is_not_hidden_by_it(recorded, pro_schedule):
+    news = copy.deepcopy(recorded)
+    client, _ = fresh_app(news, pro_schedule, MemoryStore())
+    with client:
+        first = run_job(client)[-1]["report"]
+        hurt = healthy_player(news["league"], MY_TEAM)
+        hurt["injuryStatus"] = "OUT"
+        # What the injury watch does when the tag changes, seconds after the run finished.
+        client.app.state.leagues.clear()
+        client.app.state.reports.clear()
+        seen = run_job(client)
+    assert seen[0]["status"] == "running" and seen[0]["saved"]["generated_at"] == first["generated_at"]
+    assert seen[0]["changes"][0]["text"] == f"{hurt['fullName']} is out"
