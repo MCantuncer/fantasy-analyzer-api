@@ -1070,6 +1070,14 @@ class NewsPage(BaseModel):
     refreshing: bool = Field(description="A check of every source is running; ask again in a minute")
 
 
+class NewsCheck(BaseModel):
+    refreshing: bool = Field(description="A check of every source is running; ask /api/news again in a few seconds")
+    updated_at: str | None = Field(default=None, description="Last time every source was checked, UTC")
+    next_check_at: str | None = Field(
+        default=None, description="Before this time a new check is not started (the news is already this fresh), UTC"
+    )
+
+
 class PlayerCardRequest(BaseModel):
     league_id: int = Field(gt=0)
     season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")

@@ -467,3 +467,29 @@ def test_a_story_about_two_players_keeps_both():
     ]
     [story] = build_stories(items, states(), TEAMS, NOW)
     assert set(story.player_ids) == {LAVINE, DUNN}
+
+
+def test_a_readers_refresh_checks_sources_now_but_at_most_every_2_minutes(recorded, fake_espn):
+    app = news_client(recorded, fake_espn, {})
+    clock = {"now": datetime(2026, 10, 26, 12, 0, tzinfo=UTC)}
+    app.state.now = lambda: clock["now"]
+    client = signed_in(app)
+    client.get("/api/news/refresh")  # the scheduled check
+
+    clock["now"] += timedelta(minutes=1)
+    body = client.post("/api/news/check").json()
+    assert body["refreshing"] is False, "the sources were checked under 2 minutes ago"
+    assert body["updated_at"] == "2026-10-26T12:00:00Z" and body["next_check_at"] == "2026-10-26T12:02:00Z"
+
+    clock["now"] += timedelta(minutes=2)
+    client.post("/api/news/check")
+    # Well inside the 15 minutes, a reader's refresh still checks again.
+    body = client.post("/api/news/check").json()
+    assert body["updated_at"] == "2026-10-26T12:03:00Z" and body["next_check_at"] == "2026-10-26T12:05:00Z"
+    page = client.post("/api/news", json={"season": 2027}).json()
+    assert page["updated_at"] == "2026-10-26T12:03:00Z" and page["refreshing"] is False
+
+
+def test_a_readers_refresh_needs_sign_in(recorded, fake_espn):
+    app = news_client(recorded, fake_espn, {})
+    assert TestClient(app).post("/api/news/check").status_code == 401
