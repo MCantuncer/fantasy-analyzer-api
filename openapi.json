@@ -3514,6 +3514,25 @@
             ],
             "description": "While running: the report so far, once free agents and the season table are in. Its trade lists are empty and named in its `pending`; the finished report replaces it."
           },
+          "saved": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisReport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "While running: the last saved report, out of date because of `changes` (or its age). Show it until the new one is done."
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/ReportChange"
+            },
+            "type": "array",
+            "title": "Changes",
+            "description": "What moved in the league since `saved` was built, the asking team's news first"
+          },
           "error": {
             "anyOf": [
               {
@@ -8009,6 +8028,63 @@
           "target"
         ],
         "title": "RepliesRequest"
+      },
+      "ReportChange": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "status",
+              "added",
+              "dropped",
+              "moved",
+              "games"
+            ],
+            "title": "Kind",
+            "description": "status: an injury tag or IR slot changed; added/dropped/moved: a roster move; games: new box scores"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "Plain words, e.g. 'Jayson Tatum is out'"
+          },
+          "player_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Id"
+          },
+          "team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id",
+            "description": "The fantasy team the player is on now (or left)"
+          },
+          "mine": {
+            "type": "boolean",
+            "title": "Mine",
+            "description": "True when it touches the team asking",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "text"
+        ],
+        "title": "ReportChange",
+        "description": "Something that moved in the league since a saved report was built."
       },
       "ScoreDay": {
         "properties": {
