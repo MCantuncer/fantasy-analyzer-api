@@ -2301,7 +2301,7 @@ def create_app(
         if season - 1 in played and raw_last:
             schedules[season - 1] = parse_schedule(raw_last)
         teams = {tid: abbrev for sched in schedules.values() for tid, (abbrev, _) in sched.teams.items()}
-        return parse_card(entry, season, schedules), teams
+        return parse_card(entry, season, schedules, app.state.now()), teams
 
     async def card_news(season: int, player_id: int, teams: dict[int, str]) -> list[schemas.PlayerNews]:
         # Every card reads the same news; build it once a minute, not once a card.
@@ -2434,6 +2434,7 @@ def create_app(
                     date=card_ms(g.start_ms) if g.start_ms else None,
                     opponent=teams.get(g.opponent_id, ""),
                     home=g.home,
+                    won=g.won,
                     stats=stats(g.stats),
                 )
                 for g in games[:CARD_GAMES]

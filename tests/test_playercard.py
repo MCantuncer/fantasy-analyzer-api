@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import httpx
 from fastapi.testclient import TestClient
 
@@ -121,6 +123,25 @@ def test_card_keeps_games_he_played_newest_first_with_opponents():
     assert card.season_line.games == 2 and card.season_line.per_game["pts"] == 25.5
     assert round(card.season_line.fg_pct, 3) == 0.533 and card.season_line.ft_pct == 0.75
     assert card.injury_status == "DAY_TO_DAY" and card.on_team_id == 4 and card.percent_owned == 64.2
+
+
+def test_team_result_shows_once_the_game_is_surely_over():
+    raw = entry()
+    stats = raw["player"]["stats"]
+    stats[0]["stats"]["43"] = 1  # game 11: won
+    stats[2]["stats"]["43"] = 0  # game 14: lost, or still going
+    stats[3]["stats"]["43"] = 1  # last season, no calendar
+    sched = parse_schedule(SCHEDULE)
+    tip = datetime.fromtimestamp(1793059200, UTC)  # game 14
+
+    during = parse_card(raw, 2027, {2027: sched}, now=tip + timedelta(hours=1))
+    assert [g.won for g in during.games] == [None, True, True], "a game that may still be going has no result yet"
+
+    after = parse_card(raw, 2027, {2027: sched}, now=tip + timedelta(hours=6))
+    assert [g.won for g in after.games] == [False, True, True]
+
+    raw["player"]["stats"][2]["stats"].pop("43")
+    assert parse_card(raw, 2027, {2027: sched}, now=tip + timedelta(hours=6)).games[0].won is None, "no stat, no result"
 
 
 def test_moves_are_executed_ones_newest_first():
