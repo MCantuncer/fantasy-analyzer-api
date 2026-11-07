@@ -1156,6 +1156,9 @@ class PlayerNews(BaseModel):
     source: str = Field(description="The latest source's name")
     url: str
     severity: int = 0
+    summary: str = Field(default="", description="The lead source's own summary; never written by us")
+    sources: list[NewsSourceLink] = Field(default_factory=list, description="Every source for this story, oldest first")
+    conflict: str | None = Field(default=None, description="Set when sources disagree on how bad an injury is")
 
 
 class PlayerCard(BaseModel):

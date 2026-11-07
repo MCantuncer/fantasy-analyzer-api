@@ -6921,6 +6921,32 @@
             "type": "integer",
             "title": "Severity",
             "default": 0
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "description": "The lead source's own summary; never written by us",
+            "default": ""
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/NewsSourceLink"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "Every source for this story, oldest first"
+          },
+          "conflict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conflict",
+            "description": "Set when sources disagree on how bad an injury is"
           }
         },
         "type": "object",
