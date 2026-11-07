@@ -52,6 +52,8 @@ SIM_SPOTLIGHT = 3  # extra spotlight-team candidates checked
 SIMS = 4000
 SPOTLIGHT_SHARE = 0.6  # the spotlight deal wins if it scores at least this share of the best
 KEEP_SHARE = 0.85  # on a re-check, the current pick stays if it scores at least this share of the best
+GAIN_MIN = 0.02  # a category gain worth a tile on the card: the web shows gains from 2 points
+GAIN_TILES = 4  # gain tiles per side
 
 CATEGORY_WORDS = {
     "PTS": "points",
@@ -235,6 +237,7 @@ class DailyTrade:
         pitch: str,
         facts: list[schemas.ReasonFact],
         needs: list[schemas.PitchNeed],
+        gains: list[schemas.PitchNeed],
         dists: list[Dist],
         before: np.ndarray,
         after: np.ndarray,
@@ -257,6 +260,7 @@ class DailyTrade:
             reasons=[f.text for f in facts],
             facts=facts,
             pitch_needs=needs,
+            gains=gains,
             playoff_pct_before=round(float(before[idx]), 3),
             playoff_pct_after=round(float(after[idx]), 3),
         )
@@ -287,11 +291,13 @@ class DailyTrade:
         # A deal's pitch and reasons are written for its partner: ``a`` speaks to team j, ``b`` to team i.
         side_i = self.side(
             pair.i, a.give, a.my_drop, pair.gain_i, b.acceptance,
-            self.finders[pair.j].pitch(b), _story(b.facts), self.finders[pair.j].pitch_needs(b), a.dists, before, after,
+            self.finders[pair.j].pitch(b), _story(b.facts), self.finders[pair.j].pitch_needs(b),
+            self.finders[pair.j].pitch_needs(b, GAIN_MIN, GAIN_TILES), a.dists, before, after,
         )  # fmt: skip
         side_j = self.side(
             pair.j, a.get, a.their_drop, pair.gain_j, a.acceptance,
-            self.finders[pair.i].pitch(a), _story(a.facts), self.finders[pair.i].pitch_needs(a), a.dists, before, after,
+            self.finders[pair.i].pitch(a), _story(a.facts), self.finders[pair.i].pitch_needs(a),
+            self.finders[pair.i].pitch_needs(a, GAIN_MIN, GAIN_TILES), a.dists, before, after,
         )  # fmt: skip
         sides = [side_i, side_j]
         # Lead with the spotlight team so its owner sees their name first.

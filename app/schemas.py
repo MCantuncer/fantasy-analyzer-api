@@ -434,6 +434,11 @@ class TradeSide(BaseModel):
     reasons: list[str]
     facts: list[ReasonFact] = Field(default_factory=list, description="`reasons` as data, in the same order")
     pitch_needs: list[PitchNeed] = Field(default_factory=list, description="`pitch` as data")
+    gains: list[PitchNeed] = Field(
+        default_factory=list,
+        description="Every category this team gains 2+ points of weekly win chance in (up to 4), biggest first, "
+        "with its rank now and the per-game change",
+    )
     playoff_pct_before: float
     playoff_pct_after: float
 
