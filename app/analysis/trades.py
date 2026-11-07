@@ -813,7 +813,7 @@ class TradeFinder:
     def picks(self, n: int) -> Picks:
         return Picks(n, self.perceived.value)
 
-    def pitch_needs(self, d: Deal) -> list[schemas.PitchNeed]:
+    def pitch_needs(self, d: Deal, min_change: float = 0.03, limit: int = 2) -> list[schemas.PitchNeed]:
         """The categories where the deal helps them most, with their rank and what it adds a game."""
         j = d.partner_idx
         before = self._avg_win(j, self.dists)
@@ -822,7 +822,7 @@ class TradeFinder:
         mus = np.array([x.mu for x in self.dists])
         signed = np.where(self.model.reverse, -mus, mus)
         ranks = (signed > signed[j]).sum(0) + 1
-        order = [c for c in np.argsort(-change) if change[c] >= 0.03][:2]
+        order = [c for c in np.argsort(-change) if change[c] >= min_change][:limit]
         out = []
         for c in order:
             cat = self.model.cats[c]

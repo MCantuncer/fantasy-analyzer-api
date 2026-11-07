@@ -221,6 +221,15 @@ def test_sides_carry_reasons_as_data(pick):
         assert all(n.category in s.pitch for n in s.pitch_needs)
 
 
+def test_sides_carry_every_gain_with_its_rank(pick):
+    """The card's gain tiles: every category a side gains in, not just the two its pitch names."""
+    for s in pick.sides:
+        cats = [g.category for g in s.gains]
+        assert len(cats) <= 4 and len(set(cats)) == len(cats)
+        assert [n.category for n in s.pitch_needs] == cats[: len(s.pitch_needs)]
+        assert all(1 <= g.league_rank <= 10 for g in s.gains)
+
+
 def test_daily_scan_waits_for_the_leagues_analysis(client, fake_espn, monkeypatch):
     """Analysis first, then the scan: run together on a small server, both would finish late."""
     import asyncio
