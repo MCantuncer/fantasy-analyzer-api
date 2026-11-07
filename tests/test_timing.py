@@ -96,12 +96,30 @@ def test_adds_allowed_per_day_and_per_matchup(league):
     from app.espn.parse import _adds_limit
 
     week = league.current_period
-    days = len(league.calendar.period_days[week])
+    days = len(league.calendar.game_days(week))
     per_day = replace(league, **_adds_limit({"matchupAcquisitionLimit": 5 / 7, "matchupLimitPerScoringPeriod": True}))
     assert per_day.adds_allowed(week) == (5 if days == 7 else int(round(5 / 7 * days, 6)))
     flat = replace(league, **_adds_limit({"matchupAcquisitionLimit": 4}))
     assert flat.adds_allowed(week) == 4
     assert replace(league, **_adds_limit({"matchupAcquisitionLimit": -1})).adds_allowed(week) is None
+
+
+def test_adds_allowed_skips_days_without_games(league):
+    """ESPN earns the per-day pickup allowance only on days with NBA games: League A's week of
+    2026-11-02 had no games on Election Day, so ESPN allowed 4 pickups, not 5."""
+    from app.espn.parse import _adds_limit
+
+    week = league.current_period
+    limit = _adds_limit({"matchupAcquisitionLimit": 5 / 7, "matchupLimitPerScoringPeriod": True})
+
+    def with_games(game_days: set[int]):
+        cal = replace(league.calendar, period_days={week: list(range(15, 22))}, team_days={0: frozenset(game_days)})
+        return replace(league, calendar=cal, **limit)
+
+    assert with_games(set(range(15, 22))).adds_allowed(week) == 5
+    election_week = with_games(set(range(15, 22)) - {16})
+    assert election_week.calendar.game_days(week) == [15, 17, 18, 19, 20, 21]
+    assert election_week.adds_allowed(week) == 4
 
 
 def test_week_override_with_todays_roster_changes_nothing(league):

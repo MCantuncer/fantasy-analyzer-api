@@ -197,6 +197,10 @@ class Calendar:
         """The scoring day a moment falls on, on the US calendar (see parse_calendar)."""
         return (date(1970, 1, 1) + timedelta(seconds=ms / 1000 - US_DAY_SHIFT) - self.opening).days + 1
 
+    def game_days(self, period: int) -> list[int]:
+        """The days of a matchup period on which at least one NBA game is played."""
+        return [d for d in self.period_days.get(period, []) if any(d in days for days in self.team_days.values())]
+
     def days_left(self, period: int) -> list[int]:
         return [d for d in self.period_days.get(period, []) if d >= self.today]
 
@@ -222,8 +226,8 @@ class League:
     draft_rounds: int = 0  # rounds in this league's draft
     lineup_slots: dict[int, int] = field(default_factory=dict)  # starting slot id -> count
     calendar: Calendar | None = None  # None: no NBA schedule, assume an even number of games a week
-    # Pickups allowed in a matchup: a number, or a number per day of it (ESPN stores 5 a week as
-    # 5/7 a day). None: no limit.
+    # Pickups allowed in a matchup: a number, or a number per game day of it (ESPN stores 5 a week
+    # as 5/7 a day, and a day without NBA games, like Election Day, earns none). None: no limit.
     adds_limit: float | None = None
     adds_limit_per_day: bool = False
 
@@ -233,7 +237,7 @@ class League:
             return None
         if not self.adds_limit_per_day:
             return int(self.adds_limit)
-        days = len(self.calendar.period_days.get(period, [])) if self.calendar else 7
+        days = len(self.calendar.game_days(period)) if self.calendar else 7
         return math.floor(round(self.adds_limit * days, 6))
 
     def team(self, team_id: int) -> Team | None:
