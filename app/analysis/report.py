@@ -46,10 +46,16 @@ PICKUP_VIA_TRADE = 2  # at most this many "trade X to open a spot" ideas
 MIN_SAMPLE_GAMES = 5  # a free agent with no projection or last season needs this many games
 LOCKED, LOST = 0.70, 0.30
 SUPPORTED_SCORING = {"H2H_CATEGORY", "H2H_MOST_CATEGORIES"}
-# Share of a report's run time each step takes, measured on League A: (stage, start, end).
-FAIR_SPAN = ("Screening trades", 0.05, 0.50)
-EDGE_SPAN = ("Screening edge trades", 0.50, 0.65)
-VISION_SPAN = ("Screening vision trades", 0.65, 0.80)
+# Share of a report's run time each step takes, measured on League A (2026-11-07): (stage, start, end).
+# Free agents and the season table come first, so they can be shown while trades are screened. The step
+# is called "Screening free agents" so an older website, which doesn't know the name, shows it as part of
+# loading the league rather than jumping back from trades.
+PICKUP_SPAN = ("Screening free agents", 0.04, 0.18)
+FAIR_SPAN = ("Screening trades", 0.18, 0.72)
+EDGE_SPAN = ("Screening edge trades", 0.72, 0.92)
+VISION_SPAN = ("Screening vision trades", 0.92, 0.98)
+# The parts of a report a preview leaves for later.
+TRADE_SECTIONS = ["trades", "edge_trades", "vision_trades"]
 # A vision trade can cost a little now for a stronger playoff run: playoff odds may dip this much.
 VISION_ODDS_SLACK = 0.02
 # A fair trade raises the other team's playoff odds visibly too: their owner can see it's good for them.
@@ -61,7 +67,6 @@ LOCK_ODDS = 0.98  # a team this sure of the playoffs can't rise a point: it only
 # that helps me costs them 4.7 points, so this keeps the deals that cost them least, not lopsided ones.
 PAPER_WIN_RATIO = 1.0
 PAPER_MAX_PARTNER_DROP = 0.03
-PICKUP_SPAN = ("Screening pickups", 0.80, 0.94)
 # Within a trade step: pairing up players with every team takes about half the time (League A,
 # 2026-11-06: 10 s of 17.5 s for fair trades), simulating the best deals the other half.
 PAIRING_SHARE = 0.5
@@ -713,11 +718,6 @@ class Analyzer:
         ]
         return sorted(rows, key=lambda r: r.mean_rank)
 
-    def _season_step(self) -> list[schemas.SeasonRow]:
-        if self.progress is not None:
-            self.progress("Simulating the season", PICKUP_SPAN[2])
-        return self.season()
-
     def league_rosters(self) -> list[schemas.TeamRoster]:
         """Other teams' players with how much each would help you, for the trade-for picker."""
         cuts = droppable(self.me.roster, self.keep)
@@ -738,18 +738,20 @@ class Analyzer:
             out.append(schemas.TeamRoster(team_id=t.id, team_name=t.name, players=players))
         return out
 
-    def report(self) -> schemas.AnalysisReport:
+    def report(self, on_preview: Callable[[schemas.AnalysisReport], None] | None = None) -> schemas.AnalysisReport:
+        """The whole analysis. ``on_preview`` gets the report early, once everything but the trade lists is
+        in (``pending`` names what's missing), so a caller can show free agents while trades are screened."""
         if not REPORT_LOCK.acquire(blocking=False):
             if self.progress is not None:
                 self.progress("Waiting for another analysis", 0.02)
             REPORT_LOCK.acquire()
         try:
-            return self._report()
+            return self._report(on_preview)
         finally:
             self._fine_sim = None  # the big run's memory goes back before the next report starts
             REPORT_LOCK.release()
 
-    def _report(self) -> schemas.AnalysisReport:
+    def _report(self, on_preview: Callable[[schemas.AnalysisReport], None] | None) -> schemas.AnalysisReport:
         started = time.perf_counter()
         each_cat = self.league.scoring_type == EACH_CATEGORY
         roster = sorted(self.me.roster, key=self.model.value, reverse=True)
@@ -760,11 +762,12 @@ class Analyzer:
             roster=[self.ref(p) for p in roster],
             categories=self.categories(),
             builds=self.builds(),
-            trades=self.trades(span=FAIR_SPAN),
-            edge_trades=self.trades("edge", span=EDGE_SPAN),
-            vision_trades=self.trades("vision", span=VISION_SPAN),
+            trades=[],
+            edge_trades=[],
+            vision_trades=[],
             pickups=self.pickups(span=PICKUP_SPAN),
-            season=self._season_step(),
+            season=self.season(),
+            pending=list(TRADE_SECTIONS),
             league_rosters=self.league_rosters(),
             faab_remaining=self.me.faab_remaining,
             week=self.week_matchup(),
@@ -798,5 +801,12 @@ class Analyzer:
             generated_at=datetime.now(UTC).isoformat(timespec="seconds"),
             elapsed_ms=0,
         )
+        if on_preview is not None:
+            on_preview(report.model_copy(update={"elapsed_ms": int((time.perf_counter() - started) * 1000)}))
+        report.trades = self.trades(span=FAIR_SPAN)
+        report.edge_trades = self.trades("edge", span=EDGE_SPAN)
+        report.vision_trades = self.trades("vision", span=VISION_SPAN)
+        report.pending = []
+        report.generated_at = datetime.now(UTC).isoformat(timespec="seconds")
         report.elapsed_ms = int((time.perf_counter() - started) * 1000)
         return report

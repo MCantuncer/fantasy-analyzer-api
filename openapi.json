@@ -3503,6 +3503,17 @@
               }
             ]
           },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisReport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "While running: the report so far, once free agents and the season table are in. Its trade lists are empty and named in its `pending`; the finished report replaces it."
+          },
           "error": {
             "anyOf": [
               {
@@ -3646,6 +3657,14 @@
           "elapsed_ms": {
             "type": "integer",
             "title": "Elapsed Ms"
+          },
+          "pending": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Pending",
+            "description": "Report sections still being worked out (in a preview: trades, edge_trades, vision_trades). Empty in a finished report."
           }
         },
         "type": "object",
@@ -3892,6 +3911,64 @@
           "confidence"
         ],
         "title": "Beneficiary"
+      },
+      "CategoryDetail": {
+        "properties": {
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "mine_before": {
+            "type": "number",
+            "title": "Mine Before",
+            "description": "My weekly projection in this category today (a percentage as 0-1)"
+          },
+          "mine_after": {
+            "type": "number",
+            "title": "Mine After",
+            "description": "The same after the deal"
+          },
+          "my_win_before": {
+            "type": "number",
+            "title": "My Win Before",
+            "description": "My chance to win this category in a week against an average team"
+          },
+          "my_win_after": {
+            "type": "number",
+            "title": "My Win After"
+          },
+          "theirs_before": {
+            "type": "number",
+            "title": "Theirs Before",
+            "description": "The other team's weekly projection today"
+          },
+          "theirs_after": {
+            "type": "number",
+            "title": "Theirs After"
+          },
+          "their_win_before": {
+            "type": "number",
+            "title": "Their Win Before",
+            "description": "The other team's weekly chance to win this category"
+          },
+          "their_win_after": {
+            "type": "number",
+            "title": "Their Win After"
+          }
+        },
+        "type": "object",
+        "required": [
+          "category",
+          "mine_before",
+          "mine_after",
+          "my_win_before",
+          "my_win_after",
+          "theirs_before",
+          "theirs_after",
+          "their_win_before",
+          "their_win_after"
+        ],
+        "title": "CategoryDetail"
       },
       "CategoryGains": {
         "properties": {
@@ -6911,6 +6988,53 @@
         ],
         "title": "PlayerSeasonLine"
       },
+      "PlayoffWeek": {
+        "properties": {
+          "period": {
+            "type": "integer",
+            "title": "Period",
+            "description": "Matchup period"
+          },
+          "starts_on": {
+            "type": "string",
+            "title": "Starts On",
+            "description": "First day, ISO date"
+          },
+          "ends_on": {
+            "type": "string",
+            "title": "Ends On",
+            "description": "Last day, ISO date"
+          },
+          "my_cats_before": {
+            "type": "number",
+            "title": "My Cats Before",
+            "description": "My expected categories won that week against an average team, on its real games, today"
+          },
+          "my_cats_after": {
+            "type": "number",
+            "title": "My Cats After"
+          },
+          "their_cats_before": {
+            "type": "number",
+            "title": "Their Cats Before"
+          },
+          "their_cats_after": {
+            "type": "number",
+            "title": "Their Cats After"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period",
+          "starts_on",
+          "ends_on",
+          "my_cats_before",
+          "my_cats_after",
+          "their_cats_before",
+          "their_cats_after"
+        ],
+        "title": "PlayoffWeek"
+      },
       "PollTally": {
         "properties": {
           "yes": {
@@ -8328,6 +8452,67 @@
             "title": "Category Changes",
             "description": "Change in my weekly win % per category"
           },
+          "category_detail": {
+            "items": {
+              "$ref": "#/components/schemas/CategoryDetail"
+            },
+            "type": "array",
+            "title": "Category Detail",
+            "description": "Both teams, every category: weekly projection and win chance, before and after"
+          },
+          "playoff_weeks": {
+            "items": {
+              "$ref": "#/components/schemas/PlayoffWeek"
+            },
+            "type": "array",
+            "title": "Playoff Weeks",
+            "description": "Each fantasy playoff week, both teams, before and after"
+          },
+          "finish_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish Before",
+            "description": "My projected final place in the standings (average over simulated seasons)"
+          },
+          "finish_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish After"
+          },
+          "partner_finish_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partner Finish Before"
+          },
+          "partner_finish_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partner Finish After"
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -8936,6 +9121,67 @@
             "type": "object",
             "title": "Category Changes",
             "description": "Change in my weekly win % per category"
+          },
+          "category_detail": {
+            "items": {
+              "$ref": "#/components/schemas/CategoryDetail"
+            },
+            "type": "array",
+            "title": "Category Detail",
+            "description": "Both teams, every category: weekly projection and win chance, before and after"
+          },
+          "playoff_weeks": {
+            "items": {
+              "$ref": "#/components/schemas/PlayoffWeek"
+            },
+            "type": "array",
+            "title": "Playoff Weeks",
+            "description": "Each fantasy playoff week, both teams, before and after"
+          },
+          "finish_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish Before",
+            "description": "My projected final place in the standings (average over simulated seasons)"
+          },
+          "finish_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish After"
+          },
+          "partner_finish_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partner Finish Before"
+          },
+          "partner_finish_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partner Finish After"
           },
           "angle": {
             "type": "string",
@@ -9811,6 +10057,67 @@
             "type": "object",
             "title": "Category Changes",
             "description": "Change in my weekly win % per category"
+          },
+          "category_detail": {
+            "items": {
+              "$ref": "#/components/schemas/CategoryDetail"
+            },
+            "type": "array",
+            "title": "Category Detail",
+            "description": "Both teams, every category: weekly projection and win chance, before and after"
+          },
+          "playoff_weeks": {
+            "items": {
+              "$ref": "#/components/schemas/PlayoffWeek"
+            },
+            "type": "array",
+            "title": "Playoff Weeks",
+            "description": "Each fantasy playoff week, both teams, before and after"
+          },
+          "finish_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish Before",
+            "description": "My projected final place in the standings (average over simulated seasons)"
+          },
+          "finish_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish After"
+          },
+          "partner_finish_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partner Finish Before"
+          },
+          "partner_finish_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partner Finish After"
           }
         },
         "type": "object",

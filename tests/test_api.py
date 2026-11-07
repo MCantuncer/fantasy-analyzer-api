@@ -46,7 +46,10 @@ def test_analysis_job_runs_in_the_background(client, fake_espn):
             time.sleep(0.2)
             job = client.post("/api/analyze/job", json=body).json()
             seen.append(job["progress"])
+            if job.get("preview"):  # free agents shown while trades are screened
+                assert job["preview"]["pending"] and not job["preview"]["trades"]
         assert job["status"] == "done" and job["progress"] == 1.0
+        assert job["report"]["pending"] == [] and job.get("preview") is None
         assert job["report"]["team_name"] == "Kucukesat Aspavas"
         assert seen == sorted(seen)  # progress never goes backwards
         # The blocking endpoint now serves the same cached report.
