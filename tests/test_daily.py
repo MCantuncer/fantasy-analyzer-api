@@ -14,8 +14,13 @@ DAY = date(2026, 10, 23)
 
 
 @pytest.fixture(scope="module")
-def pick(league):
-    return trade_of_the_day(league, DAY)
+def scan_steps() -> list[tuple[str, float]]:
+    return []
+
+
+@pytest.fixture(scope="module")
+def pick(league, scan_steps):
+    return trade_of_the_day(league, DAY, progress=lambda stage, share: scan_steps.append((stage, share)))
 
 
 _scans: dict[tuple, object] = {}
@@ -28,7 +33,9 @@ def one_scan_per_pick(monkeypatch):
     The scan itself is covered by the tests above that call ``trade_of_the_day`` directly.
     """
 
-    def scan(lg, day, keep_id=None):
+    def scan(lg, day, keep_id=None, progress=None):
+        if progress is not None:
+            progress("Screening deals", 0.5)
         key = (lg.id, lg.season, day, keep_id)
         if key not in _scans:
             _scans[key] = trade_of_the_day(lg, day, keep_id)
@@ -50,6 +57,15 @@ def test_pick_is_a_win_win_between_two_teams(pick):
     assert not {p.id for p in a.sends} & {p.id for p in b.sends}
     assert a.team_name in pick.headline and b.team_name in pick.headline
     assert pick.win_win_deals >= 1 and pick.team_pairs == 45
+
+
+def test_scan_says_where_it_is(pick, scan_steps):
+    stages = [s for s, _ in scan_steps]
+    shares = [f for _, f in scan_steps]
+    assert stages[0] == "Screening deals" and "Simulating the season" in stages
+    assert stages.index("Simulating the season") > max(i for i, s in enumerate(stages) if s == "Screening deals")
+    assert shares == sorted(shares) and shares[0] == pytest.approx(0.04) and 0.94 <= shares[-1] < 1
+    assert len(scan_steps) >= 45  # a step per pair of teams, so the bar moves steadily
 
 
 def test_pick_is_an_even_trade(league, pick):
@@ -193,7 +209,9 @@ def test_slow_scan_answers_pending(client, monkeypatch):
     monkeypatch.setattr(main, "today", lambda: DAY.isoformat())
     monkeypatch.setattr(main, "DAILY_WAIT", 0.0)
     r = client.post("/api/trade-of-the-day", json={"league_id": LEAGUE_ID, "season": 2027})
-    assert r.status_code == 200 and r.json()["status"] == "pending"
+    body = r.json()
+    assert r.status_code == 200 and body["status"] == "pending"
+    assert body["stage"] and 0 <= body["progress"] < 1  # the card shows where the scan is
 
 
 def test_sides_carry_reasons_as_data(pick):
@@ -223,15 +241,16 @@ def test_daily_scan_waits_for_the_leagues_analysis(client, fake_espn, monkeypatc
         async with httpx.AsyncClient(transport=transport, base_url="http://t", headers=headers) as c:
             body = {"league_id": LEAGUE_ID, "season": 2027}
             first = (await c.post("/api/trade-of-the-day", json=body)).json()
-            assert first["status"] == "pending"
+            assert first["status"] == "pending" and first["stage"] == "Waiting its turn"
             assert fake_espn.calls == 0  # the scan hasn't even loaded the league
             gate.set_result(None)
             # The scan itself takes a while on a slow runner: wait for it, not a fixed number of polls.
             (scan,) = app.state.daily_jobs.values()
             await asyncio.wait_for(asyncio.shield(scan), timeout=600)
             assert fake_espn.calls > 0
+            assert not app.state.daily_progress  # forgotten with the finished scan
             done = (await c.post("/api/trade-of-the-day", json=body)).json()
-            assert done["status"] == "ready"
+            assert done["status"] == "ready" and done["progress"] is None
             return done
 
     assert asyncio.run(run())["sides"]

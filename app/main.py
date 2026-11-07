@@ -96,8 +96,9 @@ PAST_GAMES_TTL = 7 * 24 * 3600.0  # finished seasons don't change
 ADP_TTL = 6 * 3600.0  # ESPN's ADP barely moves once the season's drafts are done
 DEEP_READ_MIN_SECONDS = 300.0  # the deep-read cron does nothing if it ran in the last five minutes
 STATUS_FOR_ERROR = {LeaguePrivate: 401, LeagueNotFound: 404}
-# How long a trade-of-the-day request waits for the scan before answering "pending".
-DAILY_WAIT = float(os.getenv("DAILY_TRADE_WAIT_SECONDS", "20"))
+# How long a trade-of-the-day request waits for the scan before answering "pending". Short, so the
+# card can show where a long scan is instead of a blank placeholder.
+DAILY_WAIT = float(os.getenv("DAILY_TRADE_WAIT_SECONDS", "3"))
 # How often the day's pick is checked again for injuries, roster moves and better deals.
 DAILY_RECHECK = float(os.getenv("DAILY_TRADE_RECHECK_SECONDS", str(3 * 3600)))
 # The feed pages through the season a week (seven scoring periods) at a time.
@@ -206,6 +207,7 @@ def create_app(
     app.state.store = store or create_store()
     app.state.daily = TTLCache(36 * 3600)
     app.state.daily_jobs = {}
+    app.state.daily_progress: dict[TradeKey, AnalysisProgress] = {}  # where each running scan is
     app.state.analysis_jobs: dict[tuple, AnalysisProgress] = {}
     app.state.social = social or create_social_store()
     app.state.accounts = accounts or create_account_store()
@@ -991,13 +993,16 @@ def create_app(
     ) -> schemas.TradeOfTheDay:
         """Scan the league for the day's pick. On a re-check, ``current`` stays unless something beats it."""
         league_id, season, _, day = key
+        progress = app.state.daily_progress.setdefault(key, AnalysisProgress())
+        progress.update("Waiting its turn", 0.0)
         await analyses_done(league_id, season)
+        progress.update("Loading the league", 0.01)
         lg = await load_league(league_id, season, creds, with_fa=True)
         summary = league_summary(lg)
         if not summary.supported:
             raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
         keep = current.pick_id if current else None
-        pick = await run_in_threadpool(trade_of_the_day, lg, datetime.fromisoformat(day).date(), keep)
+        pick = await run_in_threadpool(trade_of_the_day, lg, datetime.fromisoformat(day).date(), keep, progress.update)
         if current is not None and current.pick_id and pick.pick_id == current.pick_id:
             pick.generated_at = current.generated_at  # same deal with fresh numbers
         await run_in_threadpool(app.state.store.save_trade, key, pick.model_dump(mode="json", exclude={"votes"}))
@@ -1028,6 +1033,7 @@ def create_app(
 
             def done(task: asyncio.Task) -> None:
                 app.state.daily_jobs.pop(key, None)
+                app.state.daily_progress.pop(key, None)
                 if not task.cancelled():
                     task.exception()  # a failed re-check is retried on the next visit
 
@@ -1066,7 +1072,15 @@ def create_app(
         try:
             pick = await asyncio.wait_for(asyncio.shield(job), timeout=DAILY_WAIT)
         except TimeoutError:
-            return schemas.TradeOfTheDay(status="pending", date=key[3], league_id=body.league_id, season=season)
+            where = app.state.daily_progress.get(key)
+            return schemas.TradeOfTheDay(
+                status="pending",
+                date=key[3],
+                league_id=body.league_id,
+                season=season,
+                progress=round(where.progress, 3) if where else 0.0,
+                stage=where.stage if where else "Waiting its turn",
+            )
         return await with_votes(key, pick)
 
     @app.post(
