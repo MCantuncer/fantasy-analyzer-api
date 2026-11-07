@@ -35,6 +35,18 @@ def report_key(key: tuple) -> str:
     return json.dumps([list(k) if isinstance(k, tuple) else k for k in key])
 
 
+def key_from_text(text: str) -> tuple:
+    """``report_key`` back to the analysis cache key."""
+    league_id, season, team_id, keep, not_for_sale, creds = json.loads(text)
+    return (league_id, season, team_id, tuple(keep), tuple(not_for_sale), creds)
+
+
+def touches(print_: dict, player_ids: set[int]) -> bool:
+    """Whether any of these players is on a roster in this fingerprint."""
+    wanted = {str(p) for p in player_ids}
+    return any(wanted & t["players"].keys() for t in print_.get("teams", {}).values())
+
+
 def fingerprint(league: League) -> dict:
     """What a report depends on that can change between runs, small enough to keep beside it."""
     return {

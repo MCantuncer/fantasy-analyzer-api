@@ -12,6 +12,7 @@ import os
 import secrets
 import time
 from collections import defaultdict, deque
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, date, datetime, timedelta
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -54,7 +55,7 @@ from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, 
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.gameclock import apply_clocks, fetch_clocks
 from app.news.extract import timeline
-from app.news.facts import PlayerState
+from app.news.facts import PlayerState, parse_states
 from app.news.service import KEEP as NEWS_KEEP
 from app.news.service import NewsService, parse_iso
 from app.news.service import iso as news_iso
@@ -68,7 +69,7 @@ from app.recap import VERSION as RECAP_VERSION
 from app.recap import Week as RecapWeek
 from app.recap import build_recap, is_final
 from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
-from app.saved import Saved, changes, fingerprint, read_saved, report_key, saved_row
+from app.saved import Saved, changes, fingerprint, key_from_text, read_saved, report_key, saved_row, touches
 from app.scores import Schedule, build_day, has_starters, needs_stats, parse_schedule, settled, week_fixtures
 from app.social import (
     CHALLENGE_SECONDS,
@@ -129,6 +130,13 @@ CARD_GAMES = 10
 CARD_NEWS = 5
 # How long a finished analysis job stays around for its last poll (the report itself is cached).
 ANALYSIS_JOB_KEEP = 120.0
+# The injury watch: every few minutes, compare ESPN's injury tags with the last look. A change on a
+# roster in a recently opened report drops that league's cached reads, so the next open sees it,
+# and rebuilds a few of those reports (public leagues only: cookies are never kept) one at a time.
+# 0 turns it off.
+WATCH_SECONDS = float(os.getenv("INJURY_WATCH_SECONDS", "300"))
+WATCH_WINDOW = timedelta(days=2)  # reports built (so opened) this recently are watched
+WATCH_RERUNS = 3  # reports rebuilt per sweep, newest first
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
 NOT_LINKED = {"code": "not_linked", "message": "Verify your team in this league first."}
 NOT_YOUR_TEAM = {"code": "not_your_team", "message": "Only this team's verified manager can see its analysis."}
@@ -209,6 +217,7 @@ def create_app(
     app.state.daily_jobs = {}
     app.state.daily_progress: dict[TradeKey, AnalysisProgress] = {}  # where each running scan is
     app.state.analysis_jobs: dict[tuple, AnalysisProgress] = {}
+    app.state.watch_states: dict[int, dict[int, PlayerState]] = {}  # season -> ESPN's tags at the last look
     app.state.social = social or create_social_store()
     app.state.accounts = accounts or create_account_store()
     app.state.feedback = feedback or create_feedback_store()
@@ -837,6 +846,66 @@ def create_app(
 
             job.task.add_done_callback(done)
         return job
+
+    async def injury_sweep() -> list[tuple]:
+        """One look by the injury watch. Returns the report keys it rebuilt."""
+        rows = await run_in_threadpool(app.state.store.recent_reports, app.state.now() - WATCH_WINDOW)
+        if not rows:
+            return []  # nobody opened a report lately: don't even ask ESPN
+        changed: set[int] = set()
+        for season in sorted({r["season"] for r in rows}):
+            states = parse_states(await app.state.espn.player_states(season))
+            before = app.state.watch_states.get(season)
+            app.state.watch_states[season] = states
+            if before:  # the first look after a start is only a baseline
+                changed |= {pid for pid, s in states.items() if pid in before and before[pid].status != s.status}
+        hit = [r for r in rows if touches(r["fingerprint"], changed)]
+        if not hit:
+            return []
+        leagues = {(r["league_id"], r["season"]) for r in hit}
+        # Every cached read of these leagues is out of date, private ones too: the next open reads ESPN.
+        app.state.leagues.drop(lambda k: tuple(k[:2]) in leagues)
+        app.state.reports.drop(lambda k: tuple(k[:2]) in leagues)
+        rebuilt = []
+        for row in sorted(hit, key=lambda r: r["built_at"], reverse=True)[:WATCH_RERUNS]:
+            key = key_from_text(row["key"])
+            if key[-1] != credentials_key(None) or key in app.state.analysis_jobs:
+                continue
+            saved = read_saved(await run_in_threadpool(app.state.store.get_report, row["key"]))
+            body = schemas.AnalyzeRequest(
+                league_id=key[0],
+                season=key[1],
+                team_id=key[2],
+                keep_player_ids=list(key[3]),
+                not_for_sale_player_ids=list(key[4]),
+            )
+            # Registered like any run, so a manager opening the page meanwhile follows this one.
+            job = analysis_job(body, None, key, saved=saved)
+            with suppress(Exception):
+                await asyncio.shield(job.task)
+            rebuilt.append(key)
+        return rebuilt
+
+    app.state.injury_sweep = injury_sweep
+
+    async def watch_injuries() -> None:
+        while True:
+            await asyncio.sleep(WATCH_SECONDS)
+            try:
+                await injury_sweep()
+            except Exception:
+                logging.getLogger(__name__).warning("injury watch failed", exc_info=True)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        watch = asyncio.create_task(watch_injuries()) if WATCH_SECONDS > 0 else None
+        try:
+            yield
+        finally:
+            if watch is not None:
+                watch.cancel()
+
+    app.router.lifespan_context = lifespan
 
     @app.post(
         "/api/analyze",
