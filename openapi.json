@@ -6626,6 +6626,18 @@
             ],
             "title": "Home"
           },
+          "won": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Won",
+            "description": "Whether his team won; none while the game may still be going or when unknown"
+          },
           "stats": {
             "$ref": "#/components/schemas/GameStats"
           }

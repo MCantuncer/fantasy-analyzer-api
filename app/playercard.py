@@ -9,12 +9,14 @@ free-agent adds and drops, trades). Opponents and dates come from the NBA calend
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
-from app.scores import Schedule, ScheduledGame
+from app.scores import SETTLE, Schedule, ScheduledGame
 
 GAME_SPLIT = 5
 SEASON_SPLIT = 0
 GP = 42
+TEAM_WIN = 43  # 1 when his team won the game, 0 when it lost (or has not won yet)
 # ESPN stat ids for the nine categories, their makes and attempts, and minutes.
 STATS = {
     "minutes": 40,
@@ -45,6 +47,7 @@ class GameRow:
     opponent_id: int  # pro team id, 0 when unknown
     home: bool | None
     stats: dict[str, float]
+    won: bool | None = None  # his team's result; None while the game may still be going, or unknown
 
 
 @dataclass
@@ -89,13 +92,31 @@ def _line(raw: dict) -> dict[str, float]:
     return {k: float(raw.get(str(sid), 0) or 0) for k, sid in STATS.items()}
 
 
-def parse_card(entry: dict, season: int, schedules: dict[int, Schedule]) -> Card:
+def _won(raw: dict, game: ScheduledGame | None, past_season: bool, now: datetime) -> bool | None:
+    """His team's result from ESPN's team-win stat, once the game is surely over.
+
+    The stat reads 0 while a game is still going, so a game counts only once ESPN marks
+    its stats official or it tipped off long enough ago (``SETTLE``). A game the calendar
+    lacks is trusted only from a past season.
+    """
+    flag = raw.get(str(TEAM_WIN))
+    if flag is None:
+        return None
+    if game is None:
+        decided = past_season
+    else:
+        decided = game.official or now >= game.start + SETTLE
+    return bool(flag) if decided else None
+
+
+def parse_card(entry: dict, season: int, schedules: dict[int, Schedule], now: datetime | None = None) -> Card:
     """Turn one ``kona_playercard`` entry into a card.
 
     Only games he played (minutes > 0) are kept, newest first. ``schedules`` holds the
     NBA calendar by season, for opponents and tip-off times; a season without one still
     lists its games, without them.
     """
+    now = now or datetime.now(UTC)
     p = entry.get("player") or {}
     pid = int(entry.get("id") or p.get("id") or 0)
     by_game: dict[int, ScheduledGame] = {
@@ -109,7 +130,8 @@ def parse_card(entry: dict, season: int, schedules: dict[int, Schedule]) -> Card
         if source:  # projections
             continue
         if split == GAME_SPLIT and st.get("externalId"):
-            stats = _line(st.get("stats") or {})
+            raw = st.get("stats") or {}
+            stats = _line(raw)
             if stats["minutes"] <= 0:
                 continue
             gid = int(st["externalId"])
@@ -120,15 +142,17 @@ def parse_card(entry: dict, season: int, schedules: dict[int, Schedule]) -> Card
                 home = game.home == team
                 opp = game.away if home else game.home
                 start = int(game.start.timestamp() * 1000)
+            row_season = int(st.get("seasonId") or season)
             games.append(
                 GameRow(
                     game_id=gid,
-                    season=int(st.get("seasonId") or season),
+                    season=row_season,
                     day=int(st.get("scoringPeriodId") or 0),
                     start_ms=start,
                     opponent_id=opp,
                     home=home,
                     stats=stats,
+                    won=_won(raw, game, row_season < season, now),
                 )
             )
         elif split == SEASON_SPLIT and st.get("seasonId") == season:

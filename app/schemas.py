@@ -1103,6 +1103,9 @@ class PlayerGame(BaseModel):
     date: str | None = Field(default=None, description="Tip-off, UTC; none when the calendar lacks the game")
     opponent: str = Field(description="Opponent's abbreviation; empty when unknown")
     home: bool | None = None
+    won: bool | None = Field(
+        default=None, description="Whether his team won; none while the game may still be going or when unknown"
+    )
     stats: GameStats
 
 
