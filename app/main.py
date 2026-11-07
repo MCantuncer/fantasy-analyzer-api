@@ -69,7 +69,17 @@ from app.recap import VERSION as RECAP_VERSION
 from app.recap import Week as RecapWeek
 from app.recap import build_recap, is_final
 from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
-from app.saved import Saved, changes, fingerprint, key_from_text, read_saved, report_key, saved_row, touches
+from app.saved import (
+    Saved,
+    changes,
+    current_build,
+    fingerprint,
+    key_from_text,
+    read_saved,
+    report_key,
+    saved_row,
+    touches,
+)
 from app.scores import Schedule, build_day, has_starters, needs_stats, parse_schedule, settled, week_fixtures
 from app.social import (
     CHALLENGE_SECONDS,
@@ -250,6 +260,7 @@ def create_app(
     app.state.recaps = TTLCache(7 * 24 * 3600, max_items=64)
     app.state.recap_locks = defaultdict(asyncio.Lock)
     app.state.now = lambda: datetime.now(UTC)
+    app.state.build = current_build()  # saved reports from other code are rebuilt
     app.state.gamelogs = TTLCache(GAMELOG_TTL, max_items=64)
     app.state.past_gamelogs = TTLCache(PAST_GAMELOG_TTL, max_items=64)
     # (season, player id) -> teammates.Measured: what his absence does to his teammates' minutes.
@@ -783,7 +794,7 @@ def create_app(
         )
         app.state.reports.set(key, report)
         try:
-            row = saved_row(report, lg, built_at)
+            row = saved_row(report, lg, built_at, app.state.build)
             await run_in_threadpool(
                 app.state.store.save_report, report_key(key), body.league_id, season, body.team_id, row
             )
@@ -806,7 +817,7 @@ def create_app(
             return None, None, []
         if saved is None:
             return None, None, []
-        if not saved.fresh(app.state.now()):
+        if not saved.fresh(app.state.now(), app.state.build):
             return None, saved, []  # what changed is worked out once the run has the league
         try:
             lg = await load_league(body.league_id, key[1], creds, with_fa=False)
