@@ -10256,6 +10256,32 @@
             ],
             "title": "Checked At",
             "description": "When the pick was last checked against the league"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress",
+            "description": "While pending: rough share of the league scan done, 0 to 1"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage",
+            "description": "While pending: what the scan is doing (Waiting its turn, while the league's analyses run first; Loading the league; Screening deals; Simulating the season)"
           }
         },
         "type": "object",

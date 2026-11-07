@@ -41,7 +41,7 @@ from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.durability import injury_prone
 from app.analysis.model import CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
-from app.analysis.report import partner_gains
+from app.analysis.report import Progress, partner_gains
 from app.analysis.sim import SeasonSim
 from app.analysis.tiers import tier
 from app.analysis.trades import Deal, TradeFinder, acceptance_label
@@ -105,10 +105,17 @@ def spotlight_index(league: League, day: date) -> int:
     return order[day.toordinal() % len(order)]
 
 
+# Where the scan is, for the card's status line: (stage, share done 0..1). Screening every pair
+# of teams is nearly all of the time; the season simulation of the shortlist is the rest.
+SCREEN_SPAN = ("Screening deals", 0.04, 0.94)
+SIM_SPAN = ("Simulating the season", 0.94, 0.99)
+
+
 class DailyTrade:
-    def __init__(self, league: League, day: date):
+    def __init__(self, league: League, day: date, progress: Progress | None = None):
         self.league = league
         self.day = day
+        self.progress = progress
         self.model = CategoryModel(league)
         self.perceived = PerceivedValue(league, self.model)
         self.teams = league.teams
@@ -123,16 +130,28 @@ class DailyTrade:
         """Every deal that works for both owners, scanning each pair of teams once."""
         out = []
         n = len(self.teams)
+        total, done = n * (n - 1) // 2, 0
         for i in range(n):
+
+            def screened(k: int, _: int, before: int = done) -> None:
+                self._step(SCREEN_SPAN, before + k, total)
+
             # The headline deal is an even one: uneven trades look good on paper but rarely get done.
-            for a in self.finders[i].candidates(partners=range(i + 1, n), uneven=False):
+            for a in self.finders[i].candidates(partners=range(i + 1, n), uneven=False, on_partner=screened):
                 if not all(fully_healthy(p) for p in a.give + a.get):
                     continue
                 j = a.partner_idx
                 b = self.finders[j]._evaluate(i, a.get, a.give)
                 if b is not None:
                     out.append(Pair(a=a, b=b, i=i, j=j))
+            done += n - 1 - i
+        self._step(SCREEN_SPAN, total, total)
         return sorted(out, key=lambda p: p.score, reverse=True)
+
+    def _step(self, span: tuple[str, float, float], done: int, total: int) -> None:
+        if self.progress is not None:
+            stage, lo, hi = span
+            self.progress(stage, lo + (hi - lo) * (done / total if total else 1.0))
 
     def period_dists(self, changed: dict[int, list[Player]] | None = None) -> dict[int, list[Dist]] | None:
         """Each team's projection for every remaining matchup period, with changed rosters swapped in."""
@@ -165,7 +184,8 @@ class DailyTrade:
         shortlist = pairs[:SIM_TOP] + [p for p in involved[:SIM_SPOTLIGHT] if p not in pairs[:SIM_TOP]]
         before = self.playoff_odds()
         held: list[tuple[Pair, np.ndarray]] = []
-        for p in shortlist:
+        for k, p in enumerate(shortlist):
+            self._step(SIM_SPAN, k, len(shortlist))
             after = self.playoff_odds(p)
             # Small category gains can vanish in the full simulation; both owners must see their odds go up.
             if self.both_gain(p, before, after):
@@ -290,5 +310,7 @@ def _story(facts: list[schemas.ReasonFact]) -> list[schemas.ReasonFact]:
     return [f for f in facts if f.kind not in ("sell_high", "buy_low")]
 
 
-def trade_of_the_day(league: League, day: date | None = None, keep_id: str | None = None) -> schemas.TradeOfTheDay:
-    return DailyTrade(league, day or datetime.now(UTC).date()).report(keep_id)
+def trade_of_the_day(
+    league: League, day: date | None = None, keep_id: str | None = None, progress: Progress | None = None
+) -> schemas.TradeOfTheDay:
+    return DailyTrade(league, day or datetime.now(UTC).date(), progress).report(keep_id)

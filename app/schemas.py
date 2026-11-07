@@ -438,6 +438,14 @@ class TradeOfTheDay(BaseModel):
     score: float = Field(default=0.0, description="Ranking score: the smaller side's gain times the odds both agree")
     generated_at: str | None = Field(default=None, description="When this deal became the pick")
     checked_at: str | None = Field(default=None, description="When the pick was last checked against the league")
+    progress: float | None = Field(
+        default=None, ge=0, le=1, description="While pending: rough share of the league scan done, 0 to 1"
+    )
+    stage: str | None = Field(
+        default=None,
+        description="While pending: what the scan is doing (Waiting its turn, while the league's analyses run "
+        "first; Loading the league; Screening deals; Simulating the season)",
+    )
 
 
 class VoteRequest(LeagueRequest):
