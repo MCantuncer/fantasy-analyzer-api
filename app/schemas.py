@@ -370,6 +370,11 @@ class AnalysisReport(BaseModel):
     assumptions: Assumptions
     generated_at: str
     elapsed_ms: int
+    pending: list[str] = Field(
+        default_factory=list,
+        description="Report sections still being worked out (in a preview: trades, edge_trades, vision_trades). "
+        "Empty in a finished report.",
+    )
 
 
 class ErrorBody(BaseModel):
@@ -384,6 +389,11 @@ class AnalysisJob(BaseModel):
     progress: float = Field(ge=0, le=1, description="Rough share of the work done, 0 to 1")
     stage: str = ""
     report: AnalysisReport | None = None
+    preview: AnalysisReport | None = Field(
+        default=None,
+        description="While running: the report so far, once free agents and the season table are in. Its trade "
+        "lists are empty and named in its `pending`; the finished report replaces it.",
+    )
     error: ErrorBody | None = None
 
 

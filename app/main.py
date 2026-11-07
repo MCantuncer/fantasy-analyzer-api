@@ -139,10 +139,14 @@ class AnalysisProgress:
         self.task: asyncio.Task = None  # type: ignore[assignment]
         self.progress = 0.0
         self.stage = "Loading your league"
+        self.preview: schemas.AnalysisReport | None = None  # the report so far, before its trade lists
 
     def update(self, stage: str, progress: float) -> None:
         self.stage = stage
         self.progress = max(self.progress, min(progress, 0.99))
+
+    def show(self, preview: schemas.AnalysisReport) -> None:
+        self.preview = preview
 
 
 def current_season(now: datetime | None = None) -> int:
@@ -758,7 +762,7 @@ def create_app(
                 body.not_for_sale_player_ids,
                 progress=job.update,
                 now=app.state.now(),
-            ).report()
+            ).report(on_preview=job.show)
         )
         app.state.reports.set(key, report)
         return report
@@ -829,7 +833,7 @@ def create_app(
             return schemas.AnalysisJob(status="done", progress=1.0, stage="Done", report=cached)
         job = analysis_job(body, creds, key)
         if not job.task.done():
-            return schemas.AnalysisJob(status="running", progress=job.progress, stage=job.stage)
+            return schemas.AnalysisJob(status="running", progress=job.progress, stage=job.stage, preview=job.preview)
         app.state.analysis_jobs.pop(key, None)  # a retry after a failure starts afresh
         exc = job.task.exception()
         if exc is None:

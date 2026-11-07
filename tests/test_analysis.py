@@ -122,10 +122,16 @@ def test_drift_and_links_spread_the_simulated_records(league, monkeypatch):
 
 
 def test_every_trade_idea_raises_the_partners_odds(league):
-    report = Analyzer(league, 3).report()
+    previews = []
+    report = Analyzer(league, 3).report(on_preview=previews.append)
     assert report.trades
     for t in report.trades:
         assert t.partner_playoff_pct_after - t.partner_playoff_pct_before >= 0.0099
+    # Free agents and the season table come first, in a preview the finished report only adds trades to.
+    [preview] = previews
+    assert preview.pending == ["trades", "edge_trades", "vision_trades"] and report.pending == []
+    assert not preview.trades and not preview.edge_trades and not preview.vision_trades
+    assert preview.pickups == report.pickups and preview.season == report.season
 
 
 def test_partner_gains_needs_a_visible_rise():
@@ -359,7 +365,7 @@ def test_reports_run_one_at_a_time(league, monkeypatch):
 
     running, most = [0], [0]
 
-    def slow(self):
+    def slow(self, on_preview=None):
         running[0] += 1
         most[0] = max(most[0], running[0])
         time.sleep(0.2)
