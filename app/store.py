@@ -1,4 +1,5 @@
-"""Small persistent store for the trade of the day, its "Would you take it?" poll, finished NBA days and NBA news.
+"""Small persistent store for the trade of the day, its "Would you take it?" poll, finished NBA days, NBA news
+and each team's last analysis report.
 
 With ``DATABASE_URL`` set (any Postgres, e.g. a free Neon database) the day's pick
 and the votes survive restarts, which matters on a free server that sleeps when
@@ -68,9 +69,23 @@ create table if not exists news_state (
     body jsonb not null,
     saved_at timestamptz not null default now()
 );
+-- A team's last finished analysis (app/saved.py), keyed by its settings, with the league
+-- fingerprint it was built on. Only its verified manager can read it back.
+create table if not exists saved_reports (
+    key text primary key,
+    league_id bigint not null,
+    season int not null,
+    team_id int not null,
+    body jsonb not null,
+    fingerprint jsonb not null,
+    built_at timestamptz not null
+);
+create index if not exists saved_reports_league on saved_reports (league_id, season);
 """
 # News older than this is deleted when new items are saved.
 NEWS_KEEP_DAYS = 14
+# Saved reports nobody opened again for this long are deleted when another is saved.
+REPORT_KEEP_DAYS = 7
 
 
 class Store(Protocol):
@@ -86,6 +101,8 @@ class Store(Protocol):
     def news_items(self, since: str) -> list[dict]: ...
     def get_news_state(self, key: str) -> dict | None: ...
     def save_news_state(self, key: str, body: dict) -> None: ...
+    def get_report(self, key: str) -> dict | None: ...
+    def save_report(self, key: str, league_id: int, season: int, team_id: int, row: dict) -> None: ...
 
 
 class MemoryStore:
@@ -96,6 +113,7 @@ class MemoryStore:
         self.recaps: dict[tuple[int, int, int], dict] = {}
         self.news: dict[str, dict] = {}
         self.news_state: dict[str, dict] = {}
+        self.reports: dict[str, dict] = {}
 
     def get_trade(self, key: TradeKey) -> dict | None:
         return self.trades.get(key)
@@ -139,6 +157,12 @@ class MemoryStore:
 
     def save_news_state(self, key: str, body: dict) -> None:
         self.news_state[key] = body
+
+    def get_report(self, key: str) -> dict | None:
+        return self.reports.get(key)
+
+    def save_report(self, key: str, league_id: int, season: int, team_id: int, row: dict) -> None:
+        self.reports[key] = row
 
 
 class PostgresStore:
@@ -240,6 +264,31 @@ class PostgresStore:
                 "on conflict (key) do update set body = excluded.body, saved_at = now()",
                 (key, json.dumps(body)),
             )
+
+    def get_report(self, key: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("select body, fingerprint, built_at from saved_reports where key=%s", (key,)).fetchone()
+        if not row:
+            return None
+        return {"body": row[0], "fingerprint": row[1], "built_at": row[2].isoformat()}
+
+    def save_report(self, key: str, league_id: int, season: int, team_id: int, row: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "insert into saved_reports (key, league_id, season, team_id, body, fingerprint, built_at) "
+                "values (%s, %s, %s, %s, %s, %s, %s) on conflict (key) do update set body = excluded.body, "
+                "fingerprint = excluded.fingerprint, built_at = excluded.built_at",
+                (
+                    key,
+                    league_id,
+                    season,
+                    team_id,
+                    json.dumps(row["body"]),
+                    json.dumps(row["fingerprint"]),
+                    row["built_at"],
+                ),
+            )
+            conn.execute(f"delete from saved_reports where built_at < now() - interval '{REPORT_KEEP_DAYS} days'")
 
 
 def create_store() -> Store:
