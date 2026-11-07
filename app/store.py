@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from typing import Protocol
 
 # (league_id, season, credentials key, YYYY-MM-DD)
@@ -103,6 +104,7 @@ class Store(Protocol):
     def save_news_state(self, key: str, body: dict) -> None: ...
     def get_report(self, key: str) -> dict | None: ...
     def save_report(self, key: str, league_id: int, season: int, team_id: int, row: dict) -> None: ...
+    def recent_reports(self, since: datetime) -> list[dict]: ...
 
 
 class MemoryStore:
@@ -162,7 +164,14 @@ class MemoryStore:
         return self.reports.get(key)
 
     def save_report(self, key: str, league_id: int, season: int, team_id: int, row: dict) -> None:
-        self.reports[key] = row
+        self.reports[key] = {**row, "league_id": league_id, "season": season, "team_id": team_id}
+
+    def recent_reports(self, since: datetime) -> list[dict]:
+        return [
+            {k: r[k] for k in ("league_id", "season", "team_id", "fingerprint", "built_at")} | {"key": key}
+            for key, r in self.reports.items()
+            if datetime.fromisoformat(r["built_at"]) >= since
+        ]
 
 
 class PostgresStore:
@@ -289,6 +298,18 @@ class PostgresStore:
                 ),
             )
             conn.execute(f"delete from saved_reports where built_at < now() - interval '{REPORT_KEEP_DAYS} days'")
+
+    def recent_reports(self, since: datetime) -> list[dict]:
+        """Reports built since ``since``, without their bodies: what the injury watch checks."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select key, league_id, season, team_id, fingerprint, built_at from saved_reports where built_at >= %s",
+                (since,),
+            ).fetchall()
+        return [
+            {"key": k, "league_id": lg, "season": s, "team_id": t, "fingerprint": fp, "built_at": b.isoformat()}
+            for k, lg, s, t, fp, b in rows
+        ]
 
 
 def create_store() -> Store:

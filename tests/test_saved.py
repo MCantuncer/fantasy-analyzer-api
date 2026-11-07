@@ -169,5 +169,69 @@ def test_postgres_keeps_saved_reports(first_run):
     store.save_report(key, LEAGUE_ID, 2027, MY_TEAM, row)  # a rebuild replaces it
     back = store.get_report(key)
     assert back["body"] == row["body"] and back["fingerprint"] == row["fingerprint"]
+    built = read_saved(row).built_at
+    assert [r["key"] for r in store.recent_reports(built - timedelta(minutes=1))] == [key]
+    assert key not in [r["key"] for r in store.recent_reports(built + timedelta(minutes=1))]
     assert read_saved(back).built_at == read_saved(row).built_at
     assert store.get_report("no such key") is None
+
+
+class WatchedEspn(FakeEspn):
+    """Also answers ESPN's league-wide player list (injury tags), read from the league's rosters."""
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/seasons/2027/players"):
+            self.calls += 1
+            players = [
+                {"player": {k: raw_player(e).get(k) for k in ("id", "fullName", "proTeamId", "injuryStatus")}}
+                for t in self.recorded["league"]["teams"]
+                for e in t["roster"]["entries"]
+            ]
+            return httpx.Response(200, json=players)
+        return super().handler(request)
+
+
+def test_injury_watch_rebuilds_reports_its_news_touches(recorded, pro_schedule, saved):
+    import asyncio
+
+    store, report = saved
+    news = copy.deepcopy(recorded)
+    fake = WatchedEspn(news, schedule=pro_schedule)
+    espn = EspnClient(transport=httpx.MockTransport(fake.handler))
+    app = create_app(espn, store=store, accounts=MemoryAccountStore())
+    key = (LEAGUE_ID, 2027, MY_TEAM, (), (), credentials_key(None))
+    sweep = app.state.injury_sweep
+
+    async def run() -> None:
+        assert await sweep() == []  # the first look is only a baseline
+        calls = fake.calls
+        assert await sweep() == [] and fake.calls == calls + 1  # nothing moved: one light ESPN call
+        app.state.reports.set(key, "stale")  # what a manager opened a minute ago
+        hurt = healthy_player(news["league"], MY_TEAM)
+        hurt["injuryStatus"] = "OUT"
+        assert await sweep() == [key]
+        fresh = app.state.reports.get(key)
+        assert fresh != "stale" and fresh.generated_at != report["generated_at"]
+        assert store.reports[report_key(key)]["body"]["generated_at"] == fresh.generated_at
+        job = app.state.analysis_jobs[key]
+        assert job.changes[0].text == f"{hurt['fullName']} is out" and job.changes[0].mine
+
+    asyncio.run(run())
+
+
+def test_injury_watch_stays_quiet_without_recent_reports(recorded, pro_schedule):
+    import asyncio
+
+    fake = WatchedEspn(recorded, schedule=pro_schedule)
+    app = create_app(
+        EspnClient(transport=httpx.MockTransport(fake.handler)), store=MemoryStore(), accounts=MemoryAccountStore()
+    )
+    assert asyncio.run(app.state.injury_sweep()) == [] and fake.calls == 0
+
+
+def test_recent_reports_skip_old_ones(first_run):
+    store, report = first_run
+    built = datetime.fromisoformat(next(iter(store.reports.values()))["built_at"])
+    (row,) = store.recent_reports(built - timedelta(minutes=1))
+    assert row["team_id"] == MY_TEAM and row["fingerprint"] and "body" not in row
+    assert store.recent_reports(built + timedelta(minutes=1)) == []

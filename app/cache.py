@@ -47,3 +47,10 @@ class TTLCache:
 
     def clear(self) -> None:
         self._items.clear()
+
+    def drop(self, matches) -> int:
+        """Forget every entry whose key ``matches(key)``; returns how many went."""
+        gone = [k for k in self._items if matches(k)]
+        for k in gone:
+            del self._items[k]
+        return len(gone)
