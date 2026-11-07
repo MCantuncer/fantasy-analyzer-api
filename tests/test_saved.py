@@ -41,13 +41,15 @@ def run_job(client, body=BODY) -> list[dict]:
     return seen
 
 
-def fresh_app(recorded, pro_schedule, store, now=None):
+def fresh_app(recorded, pro_schedule, store, now=None, build=None):
     """A new server process (nothing cached in memory) sharing ``store`` with the last one."""
     fake = FakeEspn(recorded, schedule=pro_schedule)
     espn = EspnClient(transport=httpx.MockTransport(fake.handler))
     app = create_app(espn, store=store, accounts=MemoryAccountStore())
     if now is not None:
         app.state.now = lambda: now
+    if build is not None:
+        app.state.build = build
     return signed_in(app), fake
 
 
@@ -142,6 +144,32 @@ def test_an_old_report_is_rebuilt_and_shown_meanwhile(recorded, pro_schedule, sa
     assert all(s["changes"] == [] for s in seen)  # same rosters and tags, only older
 
 
+def test_a_report_from_before_a_deploy_is_rebuilt_and_shown_meanwhile(recorded, pro_schedule, saved):
+    # Same rosters, tags and hour, but new code: a fix (like the weekly adds limit) must show.
+    store, report = saved
+    client, _ = fresh_app(recorded, pro_schedule, store, build="next-deploy")
+    with client:
+        seen = run_job(client)
+    assert seen[0]["status"] == "running" and seen[0]["saved"]["generated_at"] == report["generated_at"]
+    assert all(s["changes"] == [] for s in seen)
+    assert seen[-1]["report"]["generated_at"] != report["generated_at"]
+    # The new report is saved under the new build, so the next open is instant again.
+    again, fake = fresh_app(recorded, pro_schedule, store, build="next-deploy")
+    with again:
+        job = again.post("/api/analyze/job", json=BODY).json()
+    assert job["status"] == "done" and job["report"]["generated_at"] == seen[-1]["report"]["generated_at"]
+
+
+def test_a_report_saved_before_builds_were_kept_is_not_fresh(saved):
+    store, _ = saved
+    row = copy.deepcopy(next(iter(store.reports.values())))
+    kept = read_saved(row)
+    assert kept.build == "" and "build" not in kept.fingerprint and kept.fresh(kept.built_at, "")
+    del row["fingerprint"]["build"]
+    older = read_saved(row)
+    assert older.build is None and not older.fresh(older.built_at, "")
+
+
 def test_a_store_failure_never_fails_the_analysis(recorded, pro_schedule):
     class Broken(MemoryStore):
         def get_report(self, key):
@@ -173,6 +201,7 @@ def test_postgres_keeps_saved_reports(first_run):
     assert [r["key"] for r in store.recent_reports(built - timedelta(minutes=1))] == [key]
     assert key not in [r["key"] for r in store.recent_reports(built + timedelta(minutes=1))]
     assert read_saved(back).built_at == read_saved(row).built_at
+    assert read_saved(back).build == read_saved(row).build == ""
     assert store.get_report("no such key") is None
 
 

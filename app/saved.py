@@ -6,11 +6,15 @@ status, whether he sits in an IR slot and how many games he has played. When the
 fingerprint still matches (and the report isn't too old) the saved report is served as it
 is. When it doesn't, a fresh run starts and the changes are listed in plain words, so urgent
 news ("Tatum is out") shows up right away instead of after the next run.
+
+A report is also only as good as the code that built it: one saved before a deploy is never
+served as current, so a fix (like the weekly adds limit) shows on the next open.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -20,6 +24,12 @@ from app.espn.parse import IR_SLOT, League
 # A saved report older than this is rebuilt even when nothing in the league moved: the
 # days left in the matchup and the season shift under it.
 SAVED_FRESH = timedelta(hours=6)
+
+
+def current_build() -> str:
+    """The deployed commit (Render sets RENDER_GIT_COMMIT), or "" when it isn't known."""
+    return os.environ.get("RENDER_GIT_COMMIT", "")
+
 
 STATUS_WORDS = {
     "OUT": "is out",
@@ -67,9 +77,11 @@ class Saved:
     report: schemas.AnalysisReport
     fingerprint: dict
     built_at: datetime
+    build: str | None = None  # the code that built it; None: saved before builds were kept
 
-    def fresh(self, now: datetime) -> bool:
-        return now - self.built_at < SAVED_FRESH
+    def fresh(self, now: datetime, build: str) -> bool:
+        """Recent enough, and built by the code running now."""
+        return self.build == build and now - self.built_at < SAVED_FRESH
 
 
 def read_saved(row: dict | None) -> Saved | None:
@@ -77,10 +89,13 @@ def read_saved(row: dict | None) -> Saved | None:
     if not row:
         return None
     try:
+        print_ = dict(row["fingerprint"])
+        build = print_.pop("build", None)
         return Saved(
             report=schemas.AnalysisReport.model_validate(row["body"]),
-            fingerprint=row["fingerprint"],
+            fingerprint=print_,
             built_at=datetime.fromisoformat(row["built_at"]).astimezone(UTC),
+            build=build,
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -151,9 +166,10 @@ def changes(old: dict, new: dict, team_id: int) -> list[schemas.ReportChange]:
     return ordered
 
 
-def saved_row(report: schemas.AnalysisReport, league: League, built_at: datetime) -> dict:
+def saved_row(report: schemas.AnalysisReport, league: League, built_at: datetime, build: str) -> dict:
     return {
         "body": report.model_dump(mode="json"),
-        "fingerprint": fingerprint(league),
+        # The build rides in the fingerprint, so stores keep the same columns.
+        "fingerprint": {**fingerprint(league), "build": build},
         "built_at": built_at.astimezone(UTC).isoformat(),
     }
