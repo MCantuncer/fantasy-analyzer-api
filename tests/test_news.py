@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -483,8 +484,13 @@ def test_a_readers_refresh_checks_sources_now_but_at_most_every_2_minutes(record
 
     clock["now"] += timedelta(minutes=2)
     client.post("/api/news/check")
-    # Well inside the 15 minutes, a reader's refresh still checks again.
-    body = client.post("/api/news/check").json()
+    # Well inside the 15 minutes, a reader's refresh still checks again. The check runs in the
+    # background, so ask until it has finished rather than assume it beat the next request.
+    for _ in range(100):
+        body = client.post("/api/news/check").json()
+        if not body["refreshing"]:
+            break
+        time.sleep(0.02)
     assert body["updated_at"] == "2026-10-26T12:03:00Z" and body["next_check_at"] == "2026-10-26T12:05:00Z"
     page = client.post("/api/news", json={"season": 2027}).json()
     assert page["updated_at"] == "2026-10-26T12:03:00Z" and page["refreshing"] is False
