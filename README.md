@@ -175,6 +175,7 @@ All settings are optional for local development.
 | POST | `/api/injury-impact` | `{player_id, league_id?, season?}` | Teammates who gain while a player is out, from games his team played without him, each tagged with his fantasy team in `league_id` |
 | POST | `/api/news` | `{league_id?, season?, include_held?}` | Checked NBA news from every source, each player tagged with his fantasy team in `league_id`; source health; today's most-added players |
 | GET | `/api/news/refresh` | | Starts a check of every news source if the last is over 15 minutes old. For the scheduled ping |
+| POST | `/api/news/check` | | A reader's refresh: checks every news source now, at most once every 2 minutes for everyone; says when the last check was and when the next may start |
 | GET | `/api/health` | | `{ok: true}` |
 
 Every endpoint except `/api/health`, `/api/news/refresh` and `/api/auth/*` needs `Authorization: Bearer <token>` from sign-up or sign-in. `season` defaults to the current ESPN season (2026-27 is `2027`). `keep_player_ids` are never offered in trades or suggested as drops.
@@ -251,7 +252,7 @@ Each item is tagged with the players its headline names in full (ESPN's own athl
 
 When sources disagree on how bad an injury is (for example ESPN lists day-to-day and an outlet reports a fracture), the story's `conflict` says so, naming each source, and `severity` is the worst one. Headlines and summaries are always the sources' own; a story with only ESPN data gets a plain line from that data ("ESPN lists X as out").
 
-A check runs at most every 15 minutes, started by any request when due. Items are stored in `news_items` (kept 14 days), and the last player snapshot, source health and trending players in `news_state`. On the free Render plan the server sleeps, so the `News refresh` GitHub workflow calls `/api/news/refresh` every 30 minutes; set the repository variable `API_URL` (e.g. `https://fantasy-analyzer-api.onrender.com`) to turn it on.
+A check runs at most every 15 minutes, started by any request when due. The News page's refresh button (`/api/news/check`) can start one sooner, but never more than once every 2 minutes in total, since every reader shares one feed. Items are stored in `news_items` (kept 14 days), and the last player snapshot, source health and trending players in `news_state`. On the free Render plan the server sleeps, so the `News refresh` GitHub workflow calls `/api/news/refresh` every 30 minutes; set the repository variable `API_URL` (e.g. `https://fantasy-analyzer-api.onrender.com`) to turn it on.
 
 ### Who gains from an injury
 

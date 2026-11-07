@@ -2164,6 +2164,22 @@ def create_app(
         refreshing = await app.state.news.ensure_fresh(current_season(), app.state.now())
         return {"ok": True, "refreshing": refreshing}
 
+    @app.post("/api/news/check", response_model=schemas.NewsCheck, responses={401: {"model": schemas.ErrorBody}})
+    async def news_check(authorization: str | None = Header(default=None)) -> schemas.NewsCheck:
+        """A reader's "refresh": check every news source now. The feed is shared, so this runs at most
+        once every two minutes for everyone; a press inside that gap just says when the last check was."""
+        await current_user(authorization)
+        service: NewsService = app.state.news
+        now = app.state.now()
+        refreshing = service.check_now(current_season(), now)
+        last = await run_in_threadpool(service.last_refresh)
+        nxt = service.next_check(now)
+        return schemas.NewsCheck(
+            refreshing=refreshing,
+            updated_at=news_iso(last) if last else None,
+            next_check_at=news_iso(nxt) if nxt else None,
+        )
+
     @app.post("/api/news", response_model=schemas.NewsPage, responses={401: {"model": schemas.ErrorBody}})
     async def news(
         body: schemas.NewsRequest,

@@ -2755,6 +2755,63 @@
         }
       }
     },
+    "/api/news/check": {
+      "post": {
+        "summary": "News Check",
+        "description": "A reader's \"refresh\": check every news source now. The feed is shared, so this runs at most\nonce every two minutes for everyone; a press inside that gap just says when the last check was.",
+        "operationId": "news_check_api_news_check_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewsCheck"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/news": {
       "post": {
         "summary": "News",
@@ -5682,6 +5739,44 @@
           "name"
         ],
         "title": "MyLeague"
+      },
+      "NewsCheck": {
+        "properties": {
+          "refreshing": {
+            "type": "boolean",
+            "title": "Refreshing",
+            "description": "A check of every source is running; ask /api/news again in a few seconds"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At",
+            "description": "Last time every source was checked, UTC"
+          },
+          "next_check_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Check At",
+            "description": "Before this time a new check is not started (the news is already this fresh), UTC"
+          }
+        },
+        "type": "object",
+        "required": [
+          "refreshing"
+        ],
+        "title": "NewsCheck"
       },
       "NewsPage": {
         "properties": {

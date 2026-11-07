@@ -2,8 +2,10 @@
 
 A refresh runs at most every ``REFRESH_EVERY``: any request for news starts one
 in the background when the last is older than that, so the feed stays current
-as long as someone (or a scheduled ping) asks for it. A failing source never
-stops the others; its error shows in the source health list.
+as long as someone (or a scheduled ping) asks for it. A reader who wants the
+latest news now can ask for a check sooner, but every source is still asked at
+most once per ``CHECK_GAP``, however many readers press refresh. A failing
+source never stops the others; its error shows in the source health list.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from app.store import Store
 log = logging.getLogger(__name__)
 
 REFRESH_EVERY = timedelta(minutes=15)
+CHECK_GAP = timedelta(minutes=2)  # a reader's "refresh" checks the sources again at most this often
 FIRST_WAIT = 25.0  # seconds a request waits for the very first refresh before answering empty
 KEEP = timedelta(days=7)
 FUTURE_SLACK = timedelta(hours=1)
@@ -94,10 +97,21 @@ class NewsService:
             entry["last_success"] = iso(now)
         health[source.id] = entry
 
-    async def refresh(self, season: int, now: datetime) -> None:
+    @property
+    def running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+    def next_check(self, now: datetime) -> datetime | None:
+        """When a reader's refresh may start another check; None when it may now (or one is running)."""
+        last = self.last_refresh()
+        if last is None or self.running or now - last >= CHECK_GAP:
+            return None
+        return last + CHECK_GAP
+
+    async def refresh(self, season: int, now: datetime, every: timedelta = REFRESH_EVERY) -> None:
         async with self._lock:
             last = self.last_refresh()
-            if last is not None and now - last < REFRESH_EVERY:
+            if last is not None and now - last < every:
                 return
             health = self.health()
             fact_source = sources.BY_ID[FACT_SOURCE]
@@ -167,16 +181,16 @@ class NewsService:
             await asyncio.to_thread(self.store.save_news_state, "health", health)
             await asyncio.to_thread(self.store.save_news_state, "meta", {"refreshed_at": iso(now), "season": season})
 
-    def _start(self, season: int, now: datetime) -> asyncio.Task:
+    def _start(self, season: int, now: datetime, every: timedelta = REFRESH_EVERY) -> asyncio.Task:
         if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self.refresh(season, now))
+            self._task = asyncio.create_task(self.refresh(season, now, every))
         return self._task
 
     async def ensure_fresh(self, season: int, now: datetime) -> bool:
         """Start a refresh when due. Waits only for the first one ever. True while a refresh is running."""
         last = self.last_refresh()
         if last is not None and now - last < REFRESH_EVERY:
-            return False
+            return self.running  # a check a reader asked for may be under way
         task = self._start(season, now)
         if last is None:
             try:
@@ -184,6 +198,16 @@ class NewsService:
             except TimeoutError:
                 return True
         return not task.done()
+
+    def check_now(self, season: int, now: datetime) -> bool:
+        """A reader asked for the latest news: check every source now, unless a check ran in the
+        last ``CHECK_GAP`` (then the stored news is already the latest). True while a check runs."""
+        if self.running:
+            return True
+        last = self.last_refresh()
+        if last is not None and now - last < CHECK_GAP:
+            return False
+        return not self._start(season, now, CHECK_GAP).done()
 
     def stories(self, teams: dict[int, str], now: datetime) -> list[Story]:
         items = [item_from_dict(d) for d in self.store.news_items(iso(now - KEEP))]
