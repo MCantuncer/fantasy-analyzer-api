@@ -68,7 +68,7 @@ MAX_PER_GIVE = 3  # each of my players goes in at most this many deals on a list
 # even ones the list is shorter, not padded with uneven ones. A display rule only: it never
 # changes a deal's odds or gains.
 MAX_UNEVEN_SHARE = 0.2
-# Worth a Try lists also try 3-player deals (3-for-3, and 2-for-3 where I get the extra player), grown
+# Bold lists also try 3-player deals (3-for-3, and 2-for-3 where I get the extra player), grown
 # from the best 2-for-2s with each team: trying every 3-for-3 took 36 s on League A and passed nothing.
 # In 4,000 real category-league offers a 3-for-3 was accepted 15% of the time, like a 1-for-1, and was
 # 7% of accepted trades; a 3-for-2 that makes them cut a player, 6% (as poor as a 2-for-1), so it's left out.
