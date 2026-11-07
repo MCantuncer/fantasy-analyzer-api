@@ -270,6 +270,11 @@ def test_core_card_comes_first_and_extras_fill_in_the_rest():
     extras = client.post("/api/player-card/extras", json=body)
     assert extras.status_code == 200, extras.text
     assert [x["headline"] for x in extras.json()["news"]] == ["Test Center (ankle) questionable Friday"]
+    story = extras.json()["news"][0]
+    assert [(src["title"], src["url"]) for src in story["sources"]] == [
+        ("Test Center (ankle) questionable Friday", "https://example.com/1")
+    ], "each source with its own words and link, for the News tab"
+    assert story["summary"] == "" and story["conflict"] is None
     assert extras.json()["names"] == {"99": "Other Guy"}
     assert not [c for c in calls[n:] if c.url.params.get("view") == "kona_playercard"], "shares the core's ESPN call"
 

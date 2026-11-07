@@ -127,7 +127,7 @@ LIVE_SCORES_TTL = 60.0
 PLAYER_CARD_TTL = 300.0  # a card a few people open in a row is one ESPN call; box scores land after games
 CARD_NEWS_TTL = 60.0  # player cards share one build of the news stories
 CARD_GAMES = 10
-CARD_NEWS = 5
+CARD_NEWS = 8
 # How long a finished analysis job stays around for its last poll (the report itself is cached).
 ANALYSIS_JOB_KEEP = 120.0
 # The injury watch: every few minutes, compare ESPN's injury tags with the last look. A change on a
@@ -2218,20 +2218,6 @@ def create_app(
                 owner_team_id=owners.get(pid),
             )
 
-        def link(item) -> schemas.NewsSourceLink:
-            src = NEWS_SOURCES.get(item.source_id)
-            fact = item.source_id == FACT_SOURCE
-            page = f"https://www.espn.com/nba/player/_/id/{item.player_ids[0]}" if item.player_ids else ""
-            return schemas.NewsSourceLink(
-                source_id=item.source_id,
-                name=src.name if src else item.source_id,
-                kind=src.kind if src else "tip",
-                title=describe_fact(item, names, teams) if fact else item.title,
-                url=page if fact else item.url,
-                published_at=news_iso(item.published),
-                summary=item.summary,
-            )
-
         out = [
             schemas.NewsStory(
                 id=s.id,
@@ -2243,7 +2229,7 @@ def create_app(
                 updated_at=news_iso(s.updated),
                 players=[player(pid) for pid in s.player_ids if pid in states],
                 # One link per source: its latest item on the story.
-                sources=[link(i) for i in {i.source_id: i for i in s.items}.values()],
+                sources=story_links(s, names, teams),
                 severity=s.severity,
                 conflict=s.conflict,
             )
@@ -2319,6 +2305,25 @@ def create_app(
         teams = {tid: abbrev for sched in schedules.values() for tid, (abbrev, _) in sched.teams.items()}
         return parse_card(entry, season, schedules, app.state.now()), teams
 
+    def news_link(item, names: dict[int, str], teams: dict[int, str]) -> schemas.NewsSourceLink:
+        src = NEWS_SOURCES.get(item.source_id)
+        fact = item.source_id == FACT_SOURCE
+        page = f"https://www.espn.com/nba/player/_/id/{item.player_ids[0]}" if item.player_ids else ""
+        return schemas.NewsSourceLink(
+            source_id=item.source_id,
+            name=src.name if src else item.source_id,
+            kind=src.kind if src else "tip",
+            title=describe_fact(item, names, teams) if fact else item.title,
+            url=page if fact else item.url,
+            published_at=news_iso(item.published),
+            summary=item.summary,
+        )
+
+    def story_links(story, names: dict[int, str], teams: dict[int, str]) -> list[schemas.NewsSourceLink]:
+        """One link per source, oldest first: its latest item on the story."""
+        latest = {i.source_id: i for i in story.items}
+        return sorted((news_link(i, names, teams) for i in latest.values()), key=lambda link: link.published_at)
+
     async def card_news(season: int, player_id: int, teams: dict[int, str]) -> list[schemas.PlayerNews]:
         # Every card reads the same news; build it once a minute, not once a card.
         stories = app.state.card_stories.get((season,))
@@ -2328,6 +2333,11 @@ def create_app(
             app.state.card_stories.set((season,), stories)
         mine = [s for s in stories if player_id in s.player_ids and s.status != "held"]
         mine.sort(key=lambda s: s.updated, reverse=True)
+        mine = mine[:CARD_NEWS]
+        # ESPN data items read as a sentence with his name, so names only when one is there.
+        facts = any(i.source_id == FACT_SOURCE for s in mine for i in s.items)
+        states: dict[int, PlayerState] = await run_in_threadpool(app.state.news.states) if facts else {}
+        names = {pid: st.name for pid, st in states.items()}
 
         def row(s) -> schemas.PlayerNews:
             item = s.items[-1]
@@ -2343,9 +2353,12 @@ def create_app(
                 source="ESPN" if fact else (src.name if src else item.source_id),
                 url=f"https://www.espn.com/nba/player/_/id/{player_id}" if fact else item.url,
                 severity=s.severity,
+                summary=s.summary,
+                sources=story_links(s, names, teams),
+                conflict=s.conflict,
             )
 
-        return [row(s) for s in mine[:CARD_NEWS]]
+        return [row(s) for s in mine]
 
     async def move_names(
         league_id: int, season: int, ids: set[int], creds: EspnCredentials | None
