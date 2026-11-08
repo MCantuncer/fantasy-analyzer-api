@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import numpy as np
@@ -27,8 +28,10 @@ WHAT_IF_SIMS = 4000  # what-if gains are paired differences: ~0.5 point noise at
 # ~120 MB while the report runs (League A, 2026-11-06); 32,000 would need ~390 MB of a 512 MB server.
 FINE_SIMS = 12000
 SEASON_SIMS = FINE_SIMS
-# One report runs at a time: each holds a FINE_SIMS run, and two at once could take a 512 MB server
-# down (2026-11-02). On half a CPU two at once would each take twice as long anyway.
+# One big run at a time, a team's report or a league's trade-of-the-day scan: each holds big
+# simulations and lineup caches, and two at once took the 512 MB server down (2026-11-02, and
+# 2026-11-08 with one league's scan beside another league's report). On half a CPU two at once
+# would each take twice as long anyway.
 REPORT_LOCK = threading.Lock()
 TRADE_RESULTS = 10
 # Most deals fail the both-teams-gain check early in the season, so the report simulates down
@@ -143,6 +146,19 @@ def league_summary(league: League) -> schemas.LeagueSummary:
 
 def same_dist(a: Dist, b: Dist) -> bool:
     return a is b or (np.array_equal(a.mu, b.mu) and np.array_equal(a.sd, b.sd))
+
+
+@contextmanager
+def one_at_a_time(progress: Progress | None, waiting: str, at: float) -> Iterator[None]:
+    """Hold the one big-run slot (REPORT_LOCK); while another run has it, say so through ``progress``."""
+    if not REPORT_LOCK.acquire(blocking=False):
+        if progress is not None:
+            progress(waiting, at)
+        REPORT_LOCK.acquire()
+    try:
+        yield
+    finally:
+        REPORT_LOCK.release()
 
 
 class Analyzer:
@@ -741,15 +757,11 @@ class Analyzer:
     def report(self, on_preview: Callable[[schemas.AnalysisReport], None] | None = None) -> schemas.AnalysisReport:
         """The whole analysis. ``on_preview`` gets the report early, once everything but the trade lists is
         in (``pending`` names what's missing), so a caller can show free agents while trades are screened."""
-        if not REPORT_LOCK.acquire(blocking=False):
-            if self.progress is not None:
-                self.progress("Waiting for another analysis", 0.02)
-            REPORT_LOCK.acquire()
-        try:
-            return self._report(on_preview)
-        finally:
-            self._fine_sim = None  # the big run's memory goes back before the next report starts
-            REPORT_LOCK.release()
+        with one_at_a_time(self.progress, "Waiting for another analysis", 0.02):
+            try:
+                return self._report(on_preview)
+            finally:
+                self._fine_sim = None  # the big run's memory goes back before the next report starts
 
     def _report(self, on_preview: Callable[[schemas.AnalysisReport], None] | None) -> schemas.AnalysisReport:
         started = time.perf_counter()

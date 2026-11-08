@@ -41,7 +41,7 @@ from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.durability import injury_prone
 from app.analysis.model import CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
-from app.analysis.report import Progress, partner_gains
+from app.analysis.report import Progress, one_at_a_time, partner_gains
 from app.analysis.sim import SeasonSim
 from app.analysis.tiers import tier
 from app.analysis.trades import Deal, TradeFinder, acceptance_label
@@ -319,4 +319,6 @@ def _story(facts: list[schemas.ReasonFact]) -> list[schemas.ReasonFact]:
 def trade_of_the_day(
     league: League, day: date | None = None, keep_id: str | None = None, progress: Progress | None = None
 ) -> schemas.TradeOfTheDay:
-    return DailyTrade(league, day or datetime.now(UTC).date(), progress).report(keep_id)
+    # Shares the one big-run slot with team reports: building every team's trade finder is the big part.
+    with one_at_a_time(progress, "Waiting its turn", 0.0):
+        return DailyTrade(league, day or datetime.now(UTC).date(), progress).report(keep_id)
