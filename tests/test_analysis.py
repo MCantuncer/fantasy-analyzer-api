@@ -364,20 +364,26 @@ def test_reports_run_one_at_a_time(league, monkeypatch):
     from app.analysis import report as report_module
 
     running, most = [0], [0]
+    started = threading.Event()
 
     def slow(self, on_preview=None):
         running[0] += 1
         most[0] = max(most[0], running[0])
+        started.set()
         time.sleep(0.2)
         running[0] -= 1
         return None
 
     monkeypatch.setattr(Analyzer, "_report", slow)
     stages = []
-    first = threading.Thread(target=lambda: Analyzer(league, 3).report())
+    # Both analyzers are built up front and the second report starts only once the first
+    # holds the lock: building one can take longer than any fixed sleep on a busy runner.
+    first_analyzer = Analyzer(league, 3)
+    second = Analyzer(league, 3, progress=lambda stage, _: stages.append(stage))
+    first = threading.Thread(target=first_analyzer.report)
     first.start()
-    time.sleep(0.05)
-    Analyzer(league, 3, progress=lambda stage, _: stages.append(stage)).report()
+    assert started.wait(5)
+    second.report()
     first.join()
     assert most[0] == 1
     assert stages == ["Waiting for another analysis"]
