@@ -6,6 +6,8 @@ import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from app.espn.ages import season_age
+
 # ESPN stat ids for basketball.
 STAT_NAMES = {
     0: "PTS",
@@ -58,6 +60,16 @@ LAST_MINUTES_WEIGHT = 0.25
 MINUTES_WEIGHT_GAMES = 10.0
 # Per-game totals that scale with minutes: everything a category is built from.
 COUNTING_STATS = frozenset({0, 1, 2, 3, 4, 5, 6, 11, 13, 14, 15, 16, 17, 18})
+# Age: a season so far understates what young players do the rest of the way (they get
+# better and play more as the season goes) and overstates it for older ones. ESPN's
+# preseason projection already allows for age, so only the season-so-far part of the blend
+# is adjusted: its counting stats scale by 1 + YOUNG per year under PEAK_AGE, and by
+# 1 - OLD per year over it. Fitted on 2023-24 against each player's rest of the season,
+# better after 5 to 40 games in 2024-25 and 2025-26 too (scripts/age_backtest.py).
+PEAK_AGE = 27.0
+YOUNG_TREND = 0.04
+OLD_TREND = 0.0075
+MIN_AGE = 19.0  # younger players are scaled as 19-year-olds
 
 
 @dataclass(frozen=True)
@@ -103,6 +115,7 @@ class Player:
     # Minutes a game he gains while an injured teammate is out, and the day that teammate is
     # expected back (analysis/teammates.py). ``per_game`` already holds the rest-of-season average.
     minute_shifts: tuple[tuple[float, int], ...] = ()
+    age: float | None = None  # at the season's midpoint (espn/ages.py), None when unknown
 
     @property
     def available(self) -> bool:
@@ -244,7 +257,15 @@ class League:
         return next((t for t in self.teams if t.id == team_id), None)
 
 
-def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int, bool]:
+def age_trend(age: float | None) -> float:
+    """How much of his season so far a player keeps up, by age (see PEAK_AGE). 1.0 without an age."""
+    if age is None:
+        return 1.0
+    age = max(age, MIN_AGE)
+    return 1.0 + YOUNG_TREND * max(PEAK_AGE - age, 0.0) - OLD_TREND * max(age - PEAK_AGE, 0.0)
+
+
+def _blend_stats(player: dict, season: int, age: float | None = None) -> tuple[dict[int, float], int, bool]:
     """Per-game stats: a prior blended with this season's actuals as games are played.
 
     The prior is ESPN's season projection, or last season's per-game stats for players
@@ -253,7 +274,8 @@ def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int, bool
 
     Minutes are handled apart from the rest (see LAST_MINUTES_WEIGHT): ESPN's projected
     minutes lean toward last season's, and this season's minutes count sooner, with the
-    counting stats scaled to match.
+    counting stats scaled to match. With an ``age``, the season so far is first scaled by
+    ``age_trend`` (see PEAK_AGE).
     """
     proj: dict[int, float] = {}
     last: dict[int, float] = {}
@@ -278,11 +300,13 @@ def _blend_stats(player: dict, season: int) -> tuple[dict[int, float], int, bool
         return actual, gp, False
     if gp <= 0:
         return prior, gp, True
+    trend = age_trend(age)
     keys = set(prior) | set(actual)
     out = {}
     for k in keys:
         w = gp / (gp + ACTUAL_WEIGHT_BY_STAT.get(k, ACTUAL_WEIGHT_GAMES))
-        out[k] = (1 - w) * prior.get(k, 0.0) + w * actual.get(k, prior.get(k, 0.0))
+        so_far = actual.get(k, prior.get(k, 0.0)) * (trend if k in COUNTING_STATS and k in actual else 1.0)
+        out[k] = (1 - w) * prior.get(k, 0.0) + w * so_far
     if prior.get(MINUTES) and MINUTES in actual:
         w = gp / (gp + MINUTES_WEIGHT_GAMES)
         out = with_minutes(out, (1 - w) * prior[MINUTES] + w * actual[MINUTES])
@@ -317,7 +341,9 @@ def _draft_rank(p: dict) -> tuple[int | None, float]:
 
 def parse_player(entry: dict, season: int, lineup_slot: int | None = None, roster_entry: dict | None = None) -> Player:
     p = entry.get("player") or entry.get("playerPoolEntry", {}).get("player", {})
-    per_game, gp, has_prior = _blend_stats(p, season)
+    name = p.get("fullName", str(p["id"]))
+    age = season_age(name, season)
+    per_game, gp, has_prior = _blend_stats(p, season, age)
     positions = [POSITIONS[s] for s in p.get("eligibleSlots", []) if s in POSITIONS]
     espn_rank, espn_av = _draft_rank(p)
     ratings = entry.get("ratings") or {}
@@ -326,7 +352,7 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None, roste
     acq = roster_entry or {}
     return Player(
         id=int(p["id"]),
-        name=p.get("fullName", str(p["id"])),
+        name=name,
         positions=positions,
         pro_team_id=int(p.get("proTeamId", 0)),
         injury_status=p.get("injuryStatus") or "ACTIVE",
@@ -348,6 +374,7 @@ def parse_player(entry: dict, season: int, lineup_slot: int | None = None, roste
         acquisition_type=acq.get("acquisitionType") or "",
         acquired_ms=int(acq["acquisitionDate"]) if acq.get("acquisitionDate") else None,
         waiver_ms=int(entry["waiverProcessDate"]) if entry.get("waiverProcessDate") else None,
+        age=age,
     )
 
 
