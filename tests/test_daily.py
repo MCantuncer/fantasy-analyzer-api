@@ -263,3 +263,29 @@ def test_daily_scan_waits_for_the_leagues_analysis(client, fake_espn, monkeypatc
             return done
 
     assert asyncio.run(run())["sides"]
+
+
+def test_scan_waits_for_a_running_report(league, monkeypatch):
+    """A league's scan never runs beside another big run (a team's report, maybe in another league)."""
+    import threading
+
+    from app.analysis import report as report_module
+
+    started = threading.Event()
+    monkeypatch.setattr(DailyTrade, "__init__", lambda self, *a: started.set())
+    monkeypatch.setattr(DailyTrade, "report", lambda self, keep_id=None: "picked")
+    stages: list[str] = []
+    out: list[object] = []
+    report_module.REPORT_LOCK.acquire()  # a report is running
+    try:
+        scan = threading.Thread(
+            target=lambda: out.append(trade_of_the_day(league, DAY, progress=lambda stage, _: stages.append(stage)))
+        )
+        scan.start()
+        assert not started.wait(0.3)
+        assert stages == ["Waiting its turn"]
+    finally:
+        report_module.REPORT_LOCK.release()
+    scan.join(5)
+    assert started.is_set() and out == ["picked"]
+    assert not report_module.REPORT_LOCK.locked()
