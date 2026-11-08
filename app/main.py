@@ -54,6 +54,7 @@ from app.espn.parse import League, parse_calendar, parse_league
 from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.gameclock import apply_clocks, fetch_clocks
+from app.memory import give_back_after, limit_arenas
 from app.news.extract import timeline
 from app.news.facts import PlayerState, parse_states
 from app.news.service import KEEP as NEWS_KEEP
@@ -216,6 +217,7 @@ def create_app(
     rules: RuleStore | None = None,
     clock_transport=None,
 ) -> FastAPI:
+    limit_arenas()  # before any worker thread starts: see app/memory.py
     app = FastAPI(title="Fantasy Analyzer API", version="0.1.0")
     app.state.espn = espn or EspnClient()
     app.state.leagues = TTLCache(LEAGUE_TTL)
@@ -783,6 +785,7 @@ def create_app(
         job.update("Reading rosters", 0.02)
         built_at = app.state.now()
         report = await run_in_threadpool(
+            give_back_after,
             lambda: Analyzer(
                 lg,
                 body.team_id,
@@ -790,7 +793,7 @@ def create_app(
                 body.not_for_sale_player_ids,
                 progress=job.update,
                 now=app.state.now(),
-            ).report(on_preview=job.show)
+            ).report(on_preview=job.show),
         )
         app.state.reports.set(key, report)
         try:
@@ -1060,7 +1063,7 @@ def create_app(
             )
         except ShopError as exc:
             raise HTTPException(422, detail={"code": exc.code, "message": str(exc)}) from exc
-        report = await run_in_threadpool(analyzer.report)
+        report = await run_in_threadpool(give_back_after, analyzer.report)
         app.state.reports.set(key, report)
         return report
 
@@ -1096,7 +1099,9 @@ def create_app(
         if not summary.supported:
             raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
         keep = current.pick_id if current else None
-        pick = await run_in_threadpool(trade_of_the_day, lg, datetime.fromisoformat(day).date(), keep, progress.update)
+        pick = await run_in_threadpool(
+            give_back_after, trade_of_the_day, lg, datetime.fromisoformat(day).date(), keep, progress.update
+        )
         if current is not None and current.pick_id and pick.pick_id == current.pick_id:
             pick.generated_at = current.generated_at  # same deal with fresh numbers
         await run_in_threadpool(app.state.store.save_trade, key, pick.model_dump(mode="json", exclude={"votes"}))
@@ -1701,7 +1706,7 @@ def create_app(
             ).target_report()
 
         try:
-            return await run_in_threadpool(run)
+            return await run_in_threadpool(give_back_after, run)
         except TargetError as exc:
             raise HTTPException(400, detail={"code": exc.code, "message": str(exc)}) from exc
 
