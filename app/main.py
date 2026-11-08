@@ -2343,7 +2343,7 @@ def create_app(
             stories = await run_in_threadpool(service.stories, teams, app.state.now())
             app.state.card_stories.set((season,), stories)
         mine = [s for s in stories if player_id in s.player_ids and s.status != "held"]
-        mine.sort(key=lambda s: s.updated, reverse=True)
+        mine.sort(key=lambda s: s.published, reverse=True)
         mine = mine[:CARD_NEWS]
         # ESPN data items read as a sentence with his name, so names only when one is there.
         facts = any(i.source_id == FACT_SOURCE for s in mine for i in s.items)

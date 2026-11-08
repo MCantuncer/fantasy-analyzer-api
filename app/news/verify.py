@@ -288,5 +288,7 @@ def build_stories(
                 conflict=_conflict(views, states, pid) if kind == "injury" else None,
             )
         )
-    stories.sort(key=lambda s: (s.updated, s.id), reverse=True)
+    # Newest news first, by when the story broke: a later source confirming an old story
+    # doesn't move it back to the top.
+    stories.sort(key=lambda s: (s.published, s.id), reverse=True)
     return stories

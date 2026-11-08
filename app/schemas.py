@@ -1037,7 +1037,10 @@ class NewsStory(BaseModel):
     )
     headline: str = Field(description="The lead source's own headline; never written by us")
     summary: str
-    published_at: str = Field(description="First seen, UTC")
+    published_at: str = Field(
+        description="When the story broke: its earliest source's own publish time, UTC. ESPN player data has "
+        "no publish time, so its items carry the time a refresh noticed the change"
+    )
     updated_at: str = Field(description="Latest source, UTC")
     players: list[NewsPlayer]
     sources: list[NewsSourceLink] = Field(description="Every source for this story, oldest first")
