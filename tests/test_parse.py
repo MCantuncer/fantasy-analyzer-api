@@ -7,6 +7,9 @@ from app.espn.parse import (
     GAMES_PLAYED,
     MINUTES,
     MINUTES_WEIGHT_GAMES,
+    PEAK_AGE,
+    _blend_stats,
+    age_trend,
     parse_league,
     parse_player,
 )
@@ -122,4 +125,41 @@ def test_lines_without_minutes_are_left_alone():
     now = {k: v for k, v in LOPEZ_NOW.items() if k != "40"}
     p = _lopez(_line(2027, 1, projected), _line(2026, 0, LOPEZ_LAST), _line(2027, 0, now))
     w = 6 / (6 + ACTUAL_WEIGHT_GAMES)
-    assert p.per_game[1] == pytest.approx((1 - w) * 1.69 + w * 1.0)
+    assert p.per_game[1] == pytest.approx((1 - w) * 1.69 + w * 1.0 * age_trend(p.age))
+
+
+def test_age_trend():
+    assert age_trend(None) == age_trend(PEAK_AGE) == 1.0
+    assert age_trend(21.0) > age_trend(24.0) > 1.0 > age_trend(31.0) > age_trend(36.0)
+    assert age_trend(17.5) == age_trend(19.0)  # the youngest are scaled alike
+
+
+# A slow start: 10 games below his projection.
+SLOW_PROJECTED = {"0": 20.0, "3": 6.0, "11": 3.0, "13": 7.0, "14": 15.0, "19": 0.467, "40": 32.0, "42": 70.0}
+SLOW_NOW = {"0": 15.0, "3": 4.5, "11": 2.6, "13": 5.6, "14": 14.0, "19": 0.4, "40": 31.0, "42": 10.0}
+
+
+def test_young_players_keep_more_of_a_slow_start_and_older_ones_less():
+    stats = {"stats": [_line(2027, 1, SLOW_PROJECTED), _line(2027, 0, SLOW_NOW)]}
+    young, _, _ = _blend_stats(stats, 2027, 21.5)
+    peak, _, _ = _blend_stats(stats, 2027, PEAK_AGE)
+    old, _, _ = _blend_stats(stats, 2027, 36.0)
+    unknown, _, _ = _blend_stats(stats, 2027)
+    assert peak == unknown
+    for stat in (0, 3, 11, 13, 14):  # counting stats, turnovers and shot volume alike
+        assert young[stat] > peak[stat] > old[stat]
+    assert young[19] == peak[19] == old[19]  # percentages aren't volume
+    assert young[MINUTES] == peak[MINUTES] == old[MINUTES]
+    assert young[GAMES_PLAYED] == peak[GAMES_PLAYED]
+
+
+def test_age_leaves_the_preseason_projection_alone():
+    stats = {"stats": [_line(2027, 1, SLOW_PROJECTED)]}
+    assert _blend_stats(stats, 2027, 20.0) == _blend_stats(stats, 2027, 37.0) == _blend_stats(stats, 2027)
+
+
+def test_players_get_their_age_from_the_birth_dates():
+    george = parse_player({"player": {"id": 3907, "fullName": "Paul George", "stats": []}}, 2027)
+    assert george.age == pytest.approx(36.75, abs=0.01)  # born 2 May 1990, aged at 1 Feb 2027
+    nobody = parse_player({"player": {"id": 1, "fullName": "Not A Player", "stats": []}}, 2027)
+    assert nobody.age is None

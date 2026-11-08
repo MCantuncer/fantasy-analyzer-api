@@ -190,7 +190,7 @@ uv run python -m scripts.export_openapi openapi.json
 
 ### The analysis model
 
-- **Projections:** ESPN's season projections, blended with this season's per-game stats as games are played (`app/espn/parse.py`).
+- **Projections:** ESPN's season projections, blended with this season's per-game stats as games are played (`app/espn/parse.py`). The season so far is scaled by age first: young players tend to get better as a season goes and older ones to fade, which ESPN's preseason line allows for but a season-so-far average doesn't (ages from `app/espn/birth_dates.csv`).
 - **Weekly model:** each team starts its top healthy players (by z-score value) for about 3.4 games a week. Each category's weekly total is a normal distribution; counting stats use an over-dispersed Poisson variance, percentages use binomial variance on attempts (`app/analysis/model.py`).
 - **Trades:** every 1-for-1, 2-for-2, 2-for-1 and 1-for-2 with every team (`app/analysis/trades.py`). Bold lists also try 3-for-3s and 2-for-3s (you get the extra player), grown from the best 2-for-2s with each team and kept only when they do more for you than that 2-for-2; in real category-league offers a 3-for-3 is accepted about as often as a 1-for-1. A deal is kept only if it
     - helps your categories,
@@ -309,6 +309,16 @@ Checks the expected-games model (`app/analysis/durability.py`) on past seasons: 
 ```sh
 uv run python -m scripts.durability_backtest        # add --fit to search the constants again
 ```
+
+### Age backtest
+
+Checks the age trend in the projection (`PEAK_AGE`, `YOUNG_TREND`, `OLD_TREND` in `app/espn/parse.py`): after 0 to 40 games of past seasons, the projection with and without each player's age predicts his rest of the season, scored by 9-cat value:
+
+```sh
+uv run python -m scripts.age_backtest               # add --fit to search the constants again
+```
+
+Fitted on 2023-24 (season so far +4% a year under 27, -0.75% a year over), it is better after 5 to 40 games in all three seasons and leaves the preseason projection alone. Without it, players under 23 beat their projection by about 1 z-score a game the rest of the way, and players 30 and older fell short. Refresh the birth dates once a season with `uv run python -m scripts.birth_dates`.
 
 ### Vision-trade backtest
 
