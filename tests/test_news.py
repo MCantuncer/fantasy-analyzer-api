@@ -262,6 +262,32 @@ def test_fact_only_story_gets_a_plain_data_headline():
     assert story.headline == "ESPN lists Jalen Williams as out" and story.status == "confirmed"
 
 
+def test_stories_are_dated_and_ordered_by_when_they_broke():
+    # Dunn broke 6 hours ago and ESPN's data caught up just now; LaVine broke 2 hours ago.
+    noticed = Item(
+        id="fact:dunn",
+        source_id="espn_players",
+        title="",
+        url="",
+        published=NOW,
+        summary="",
+        kind="injury",
+        player_ids=[DUNN],
+        severity=2,
+        old="ACTIVE",
+        new="OUT",
+    )
+    items = [
+        item("rotowire", "Kris Dunn: Ruled out Monday", 6),
+        noticed,
+        item("rotowire", "Zach LaVine: Ruled out Monday", 2),
+    ]
+    stories = build_stories(items, states(**{str(DUNN): "OUT"}), TEAMS, NOW)
+    assert [s.player_ids[0] for s in stories] == [LAVINE, DUNN]
+    dunn = stories[1]
+    assert dunn.published == NOW - timedelta(hours=6) and dunn.updated == NOW
+
+
 # -- the endpoint, with ESPN's player data and every feed faked
 
 
