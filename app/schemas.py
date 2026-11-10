@@ -903,6 +903,38 @@ class SitsRequest(LeagueRequest):
     team_id: int = Field(gt=0)
 
 
+class LineupRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+    day: int | None = Field(
+        default=None, ge=1, le=250, description="ESPN scoring period (a day). Default: the last day a game started"
+    )
+
+
+class LineupSpot(BaseModel):
+    player_id: int
+    name: str
+    pro_team_id: int
+    slot: str = Field(description='ESPN lineup slot: "PG", "SG", "SF", "PF", "C", "G", "F", "UTIL", "BE", "IR", ...')
+    slot_id: int
+    starting: bool = Field(description="In a starting slot: only these players' lines count that day")
+    injury_status: str
+    game_id: int | None = Field(default=None, description="His NBA team's game that day; none = no game")
+    eligible: list[str] = Field(
+        default_factory=list, description="Starting slots he can fill, so a bench player who plays can be moved up"
+    )
+
+
+class DayLineup(BaseModel):
+    league_id: int
+    season: int
+    team_id: int
+    day: int
+    date: str | None = None
+    spots: list[LineupSpot] = Field(description="Starting slots in ESPN's order, then the bench, then IR")
+    open_slots: list[str] = Field(description="Starting slots nobody fills that day, one entry per empty seat")
+    fetched_at: str = Field(description="When this lineup was read from ESPN, UTC ISO 8601")
+
+
 class DaySits(BaseModel):
     day: int
     date: str | None = None
