@@ -190,6 +190,13 @@ class EspnClient:
         params = [("view", "mRoster"), ("scoringPeriodId", str(day))]
         return await self._get(self._league_url(season, league_id), params, creds)
 
+    async def team_lineup(
+        self, season: int, league_id: int, team_id: int, day: int, creds: EspnCredentials | None
+    ) -> dict:
+        """One team's roster and lineup slots on one scoring period: about a tenth of everyone's."""
+        params = [("view", "mRoster"), ("scoringPeriodId", str(day)), ("forTeamId", str(team_id))]
+        return await self._get(self._league_url(season, league_id), params, creds)
+
     async def player_pool(
         self, season: int, league_id: int, creds: EspnCredentials | None, limit: int = 1500
     ) -> list[dict]:

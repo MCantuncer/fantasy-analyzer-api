@@ -54,6 +54,7 @@ from app.espn.parse import League, parse_calendar, parse_league
 from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.gameclock import apply_clocks, fetch_clocks
+from app.lineup import open_slots, parse_lineup, slot_name
 from app.memory import give_back_after, limit_arenas
 from app.news.extract import timeline
 from app.news.facts import PlayerState, parse_states
@@ -135,6 +136,9 @@ IMPACT_TRACK_RECORD = (
 )
 # While a game is on, one ESPN call a minute serves every visitor.
 LIVE_SCORES_TTL = 60.0
+# A lineup change in the ESPN app shows within this long; a finished day's lineup never changes.
+LINEUP_TTL = 30.0
+PAST_LINEUP_TTL = 6 * 3600.0
 PLAYER_CARD_TTL = 300.0  # a card a few people open in a row is one ESPN call; box scores land after games
 CARD_NEWS_TTL = 60.0  # player cards share one build of the news stories
 CARD_GAMES = 10
@@ -255,6 +259,8 @@ def create_app(
     app.state.week_sits = TTLCache(LEAGUE_TTL)
     # Quarter and clock from ESPN's scoreboard, by date; refreshed as often as live scores.
     app.state.clocks = TTLCache(LIVE_SCORES_TTL)
+    app.state.lineups = TTLCache(LINEUP_TTL)
+    app.state.past_lineups = TTLCache(PAST_LINEUP_TTL)
     app.state.clock_transport = clock_transport
     app.state.settled_days = TTLCache(7 * 24 * 3600, max_items=512)
     app.state.score_locks = defaultdict(asyncio.Lock)
@@ -2055,6 +2061,59 @@ def create_app(
                 )
                 for d, _ in week_fixtures(sched, now)
             ]
+        )
+
+    @app.post("/api/scores/lineup", response_model=schemas.DayLineup, responses={401: {"model": schemas.ErrorBody}})
+    async def day_lineup(
+        body: schemas.LineupRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.DayLineup:
+        """A team's lineup on one day, read fresh from ESPN: who starts, who sits on the bench or IR,
+        and each player's game that day. Follows a change made in the ESPN app within half a minute."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        sched = await score_calendar(season)
+        now = app.state.now()
+        day = score_day_of(sched, body.day, now)
+        lg = await load_league(body.league_id, season, creds, with_fa=False)
+        if lg.team(body.team_id) is None:
+            raise HTTPException(
+                404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
+            )
+        past = settled(sched, day, now)
+        cache = app.state.past_lineups if past else app.state.lineups
+        key = (body.league_id, season, body.team_id, day, credentials_key(creds))
+        hit = cache.get(key)
+        if hit is None:
+            raw = await app.state.espn.team_lineup(season, body.league_id, body.team_id, day, creds)
+            hit = (parse_lineup(raw, body.team_id, day, sched), iso(now))
+            cache.set(key, hit)
+        spots, fetched_at = hit
+        return schemas.DayLineup(
+            league_id=body.league_id,
+            season=season,
+            team_id=body.team_id,
+            day=day,
+            date=_iso_date(sched.date_of(day)),
+            spots=[
+                schemas.LineupSpot(
+                    player_id=s.player_id,
+                    name=s.name,
+                    pro_team_id=s.pro_team_id,
+                    slot=slot_name(s.slot_id),
+                    slot_id=s.slot_id,
+                    starting=s.starting,
+                    injury_status=s.injury_status,
+                    game_id=s.game_id,
+                    eligible=list(dict.fromkeys(slot_name(x) for x in s.eligible if x in lg.lineup_slots)),
+                )
+                for s in spots
+            ],
+            open_slots=[slot_name(s) for s in open_slots(spots, lg.lineup_slots)],
+            fetched_at=fetched_at,
         )
 
     async def rosters_by_day(

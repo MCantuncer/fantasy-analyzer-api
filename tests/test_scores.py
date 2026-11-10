@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from app.espn.client import EspnClient
+from app.lineup import Spot, open_slots, slot_name
 from app.main import create_app
 from app.scores import build_day, game_status, parse_lines, parse_schedule, settled, week_fixtures
 from app.store import MemoryStore
@@ -313,3 +314,74 @@ def test_a_day_saved_before_starters_is_fetched_once_more(recorded, schedule_raw
     client.app.state.settled_days.clear()
     client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027, "day": 4})
     assert fake.stat_calls == 1
+
+
+def _lineup_client(recorded, schedule_raw, day4_players, now):
+    client, fake, _ = scores_client(recorded, schedule_raw, day4_players, now)
+    return client, fake
+
+
+def _lineup_calls(fake) -> list[str]:
+    return [u for u in fake.seen_urls if "forTeamId=" in u]
+
+
+def test_lineup_reads_one_teams_slots_for_the_day(recorded, schedule_raw, day4_players):
+    client, fake = _lineup_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
+    r = client.post("/api/scores/lineup", json={"league_id": LEAGUE_ID, "season": 2027, "team_id": MY_TEAM, "day": 4})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["day"] == 4 and body["date"] == "2026-10-23" and body["team_id"] == MY_TEAM
+    calls = _lineup_calls(fake)
+    assert len(calls) == 1 and f"forTeamId={MY_TEAM}" in calls[0] and "scoringPeriodId=4" in calls[0]
+    team = next(t for t in recorded["league"]["teams"] if t["id"] == MY_TEAM)
+    assert {s["player_id"] for s in body["spots"]} == {
+        e["playerPoolEntry"]["player"]["id"] for e in team["roster"]["entries"]
+    }
+    # ESPN's slot order: starting slots first, then the bench, then IR.
+    ids = [s["slot_id"] for s in body["spots"]]
+    assert ids == sorted(ids)
+    assert all(s["starting"] == (s["slot"] not in ("BE", "IR")) for s in body["spots"])
+    # Each player's game that day, by his NBA team.
+    sched = parse_schedule(schedule_raw)
+    playing = {t for g in sched.games[4] for t in (g.away, g.home)}
+    assert all((s["game_id"] is not None) == (s["pro_team_id"] in playing) for s in body["spots"])
+    assert any(s["game_id"] for s in body["spots"])
+    # Slots each can fill, among the league's starting slots: UTIL fits everyone, never BE or IR.
+    assert all("UTIL" in s["eligible"] and not {"BE", "IR"} & set(s["eligible"]) for s in body["spots"])
+
+
+def test_lineup_follows_espn_within_its_cache(recorded, schedule_raw, day4_players):
+    client, fake = _lineup_client(recorded, schedule_raw, day4_players, FRIDAY_NIGHT)
+    req = {"league_id": LEAGUE_ID, "season": 2027, "team_id": MY_TEAM}
+    first = client.post("/api/scores/lineup", json=req).json()
+    assert first["day"] == 5
+    client.post("/api/scores/lineup", json=req)
+    assert len(_lineup_calls(fake)) == 1  # a refresh within half a minute shares the read
+    client.app.state.lineups.clear()
+    client.post("/api/scores/lineup", json=req)
+    assert len(_lineup_calls(fake)) == 2  # then ESPN is asked again, so a change there shows
+
+
+def test_finished_days_lineup_is_kept(recorded, schedule_raw, day4_players):
+    client, fake = _lineup_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
+    req = {"league_id": LEAGUE_ID, "season": 2027, "team_id": MY_TEAM, "day": 4}
+    client.post("/api/scores/lineup", json=req)
+    client.app.state.lineups.clear()
+    client.post("/api/scores/lineup", json=req)
+    assert len(_lineup_calls(fake)) == 1
+
+
+def test_lineup_for_an_unknown_team(recorded, schedule_raw, day4_players):
+    client, _ = _lineup_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
+    r = client.post("/api/scores/lineup", json={"league_id": LEAGUE_ID, "season": 2027, "team_id": 99, "day": 4})
+    assert r.status_code == 404
+
+
+def test_open_starting_slots():
+    spots = [
+        Spot(player_id=1, name="A", pro_team_id=1, slot_id=0, injury_status="ACTIVE", game_id=None),
+        Spot(player_id=2, name="B", pro_team_id=1, slot_id=11, injury_status="ACTIVE", game_id=None),
+        Spot(player_id=3, name="C", pro_team_id=1, slot_id=12, injury_status="ACTIVE", game_id=None),
+    ]
+    assert open_slots(spots, {0: 1, 4: 1, 11: 3}) == [4, 11, 11]
+    assert [slot_name(s) for s in (0, 11, 12, 13, 99)] == ["PG", "UTIL", "BE", "IR", "Slot 99"]
