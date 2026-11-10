@@ -15,7 +15,8 @@ games are all over is saved once and never fetched again.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # ESPN stat ids in a game line.
 PTS, BLK, STL, AST, REB, TO, FGM, FGA, FTM, FTA, TPM, MIN, GS = 0, 1, 2, 3, 6, 11, 13, 14, 15, 16, 17, 40, 41
@@ -24,6 +25,13 @@ GAME_SPLIT = 5  # statSplitTypeId of a single game
 GAME_LENGTH = timedelta(hours=3)
 # A finished day is saved this long after its last game started, once late stat fixes are in.
 SETTLE = timedelta(hours=5)
+# Game days are US dates. Through the US morning the Scores page opens on last night's results;
+# from noon New York time it opens on tonight's slate, before the first tip-off.
+try:
+    NEW_YORK = ZoneInfo("America/New_York")
+except ZoneInfoNotFoundError:  # no tz database on the host: Eastern Standard Time is close enough
+    NEW_YORK = timezone(timedelta(hours=-5))
+TONIGHT_FROM = time(12)
 
 
 @dataclass
@@ -69,6 +77,22 @@ class Schedule:
         """The last day with a game that has started: last night in the morning, tonight once it tips off."""
         started = [d for d, games in self.games.items() if any(g.start <= now for g in games)]
         return max(started) if started else min(self.games, default=1)
+
+    def default_day(self, now: datetime) -> int:
+        """The day the Scores page opens on: last night until noon New York time, then tonight's slate.
+
+        Between noon and the first tip-off, the last day a game started is already a day old: someone
+        opening Scores at 6 pm in New York (or 2 am in Istanbul) is looking for tonight's games.
+        """
+        day = self.latest_started(now)
+        later = [d for d in self.games if d > day]
+        if not later:
+            return day
+        tonight = min(later)
+        local = now.astimezone(NEW_YORK)
+        if self.date_of(tonight) == local.date() and local.time() >= TONIGHT_FROM:
+            return tonight
+        return day
 
 
 def parse_schedule(raw: dict) -> Schedule:

@@ -1900,7 +1900,7 @@ def create_app(
         return parse_schedule(raw)
 
     def score_day_of(sched: Schedule, day: int | None, now: datetime) -> int:
-        day = day or sched.latest_started(now)
+        day = day or sched.default_day(now)
         if day not in sched.games:
             raise HTTPException(404, detail={"code": "no_games", "message": "No NBA games that day."})
         return day

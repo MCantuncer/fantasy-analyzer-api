@@ -17,6 +17,8 @@ FIXTURES = Path(__file__).parent / "fixtures"
 # Day 4 is Thu 23 Oct 2026 (12 games, all final); day 5 is Fri 24 Oct (8 games).
 MORNING_AFTER = datetime(2026, 10, 24, 8, 0, tzinfo=UTC)
 FRIDAY_NIGHT = datetime(2026, 10, 24, 23, 0, tzinfo=UTC)  # MIA @ CHA tipped off at 22:00 UTC
+FRIDAY_LATE_MORNING = datetime(2026, 10, 24, 15, 30, tzinfo=UTC)  # 11:30 in New York
+FRIDAY_AFTERNOON = datetime(2026, 10, 24, 18, 0, tzinfo=UTC)  # 14:00 in New York, before the first tip-off
 HOU, SA = 10, 24
 AMEN_THOMPSON = 4684740
 
@@ -45,6 +47,14 @@ def test_schedule_days_and_dates(schedule):
     assert len(schedule.games[5]) == 8
     assert schedule.latest_started(MORNING_AFTER) == 4
     assert schedule.latest_started(FRIDAY_NIGHT) == 5
+
+
+def test_scores_open_on_last_night_until_noon_then_tonight(schedule):
+    assert schedule.latest_started(FRIDAY_AFTERNOON) == 4  # nothing has tipped off yet tonight
+    assert schedule.default_day(MORNING_AFTER) == 4
+    assert schedule.default_day(FRIDAY_LATE_MORNING) == 4
+    assert schedule.default_day(FRIDAY_AFTERNOON) == 5
+    assert schedule.default_day(FRIDAY_NIGHT) == 5
 
 
 def test_scores_add_up_from_player_lines(schedule, day4_players):
@@ -123,6 +133,13 @@ def test_scores_endpoint_tags_owners_and_saves_finished_days(recorded, schedule_
     client.app.state.settled_days.clear()
     assert client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027, "day": 4}).status_code == 200
     assert fake.stat_calls == 1
+
+
+def test_scores_endpoint_opens_on_tonights_slate_in_the_afternoon(recorded, schedule_raw, day4_players):
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, FRIDAY_AFTERNOON)
+    body = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()
+    assert body["day"] == 5 and body["date"] == "2026-10-24" and body["live"] is False
+    assert len(body["games"]) == 8 and all(g["status"] == "scheduled" for g in body["games"])
 
 
 def test_live_day_is_cached_briefly_and_not_saved(recorded, schedule_raw, day4_players):
