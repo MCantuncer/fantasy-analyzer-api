@@ -904,6 +904,12 @@ class SitsRequest(LeagueRequest):
     team_id: int = Field(gt=0)
 
 
+class MatchupProjectionRequest(LeagueRequest):
+    team_id: int | None = Field(
+        default=None, gt=0, description="The team to project. Default: the team this account verified"
+    )
+
+
 class LineupRequest(LeagueRequest):
     team_id: int = Field(gt=0)
     day: int | None = Field(

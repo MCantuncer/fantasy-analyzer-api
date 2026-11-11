@@ -89,9 +89,14 @@ def test_analysis_is_only_for_the_verified_manager(client, fake_espn):
     app = client.app
     other = client.post("/api/analyze", json={"league_id": LEAGUE_ID, "team_id": 8, "season": 2027})
     assert other.status_code == 403 and other.json()["detail"]["code"] == "not_your_team"
-    unverified = signed_in(app, team_id=None)
-    r = unverified.post("/api/analyze", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM, "season": 2027})
-    assert r.status_code == 403 and r.json()["detail"]["code"] == "not_linked"
+    # A verified team is closed to everyone else, also to an account that only added the league.
+    follower = signed_in(app, team_id=None, follows=True)
+    r = follower.post("/api/analyze", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM, "season": 2027})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "not_your_team"
+    # A team nobody verified needs the league in your leagues first.
+    stranger = signed_in(app, team_id=None)
+    r = stranger.post("/api/analyze", json={"league_id": LEAGUE_ID, "team_id": 8, "season": 2027})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "not_following"
     anonymous = TestClient(app)
     r = anonymous.post("/api/analyze", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM, "season": 2027})
     assert r.status_code == 401 and r.json()["detail"]["code"] == "not_signed_in"
@@ -165,6 +170,29 @@ def test_matchup_projection_needs_a_verified_team(client, fake_espn):
     assert {c["winner"] for c in body["categories"]} <= {"me", "them"}
     unverified = signed_in(client.app, team_id=None)
     assert unverified.post("/api/matchup-projection", json={"league_id": LEAGUE_ID}).status_code == 403
+
+
+def test_a_team_nobody_verified_opens_to_an_account_that_added_the_league(client, fake_espn):
+    """Before the ESPN code check a new manager picks their team and sees its analysis."""
+    follower = signed_in(client.app, team_id=None, follows=True)
+    picked = {"league_id": LEAGUE_ID, "season": 2027, "team_id": 8}
+    res = follower.post("/api/matchup-projection", json=picked)
+    assert res.status_code == 200 and res.json()["opponent_id"] != 8
+    with follower:
+        job = follower.post("/api/analyze/job", json=picked)
+        assert job.status_code == 200 and job.json()["status"] in {"running", "done"}
+    # The team its manager verified stays closed, and so do the things that need a verified seat.
+    mine = {**picked, "team_id": MY_TEAM}
+    for path in ("/api/matchup-projection", "/api/analyze/job", "/api/shop", "/api/target"):
+        r = follower.post(path, json={**mine, "offer_player_ids": [1], "player_id": 1})
+        assert r.status_code == 403 and r.json()["detail"]["code"] == "not_your_team", path
+    r = follower.post("/api/trade-rules/mine", json=picked)
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "not_linked"
+    # Verifying a team closes it: the follower loses team 8 once its manager shows up.
+    signed_in(client.app, team_id=8)
+    assert follower.post("/api/matchup-projection", json=picked).status_code == 403
+    # A verified manager cannot look into teams nobody verified either.
+    assert client.post("/api/matchup-projection", json={**picked, "team_id": 4}).status_code == 403
 
 
 def test_projection_reuses_the_analysis_league(client, fake_espn):

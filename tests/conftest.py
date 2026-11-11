@@ -8,7 +8,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.accounts import MemoryAccountStore
+from app.accounts import FollowedLeague, MemoryAccountStore
 from app.espn.client import EspnClient
 from app.espn.parse import parse_league
 from app.main import create_app
@@ -79,14 +79,19 @@ def fake_espn(recorded, pro_schedule):
 _emails = itertools.count(1)
 
 
-def signed_in(app, team_id: int | None = MY_TEAM, season: int = 2027) -> TestClient:
-    """A client for a fresh account, verified as ``team_id``'s manager unless that is None."""
+def signed_in(app, team_id: int | None = MY_TEAM, season: int = 2027, follows: bool = False) -> TestClient:
+    """A client for a fresh account, verified as ``team_id``'s manager unless that is None.
+
+    ``follows`` adds the league to the account's leagues without verifying a team.
+    """
     accounts = app.state.accounts
     user = accounts.create_user(f"user{next(_emails)}@example.com", None)
     token = secrets.token_urlsafe(16)
     accounts.save_session(hash_token(token), user.id)
     if team_id is not None:
         accounts.set_manager(LEAGUE_ID, season, team_id, user.id)
+    if follows:
+        accounts.follow(user.id, FollowedLeague(LEAGUE_ID, season, "Chill Primera Division"))
     return TestClient(app, headers={"Authorization": f"Bearer {token}"})
 
 

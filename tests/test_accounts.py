@@ -107,11 +107,14 @@ def test_my_leagues(espn, stores):
     league = {"league_id": LEAGUE_ID, "season": SEASON}
     me = client.post("/api/my-leagues/add", json=league, headers=auth).json()
     assert me["leagues"] == [{**league, "name": "Chill Primera Division", "team_id": None}]
-    # Following a league shows the league, not any team in it.
     assert client.post("/api/league-overview", json=league, headers=auth).status_code == 200
-    r = client.post("/api/analyze", json={**league, "team_id": MY_TEAM}, headers=auth)
+    # A team nobody verified is open to an account that added the league; the verified seat is not.
+    assert client.post("/api/matchup-projection", json={**league, "team_id": MY_TEAM}, headers=auth).status_code == 200
+    r = client.post("/api/matchup-projection", json=league, headers=auth)
     assert r.status_code == 403 and r.json()["detail"]["code"] == "not_linked"
     assert client.post("/api/my-leagues/remove", json=league, headers=auth).json()["leagues"] == []
+    r = client.post("/api/analyze", json={**league, "team_id": MY_TEAM}, headers=auth)
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "not_following"
     assert client.post("/api/my-leagues/add", json=league).status_code == 401
 
 
