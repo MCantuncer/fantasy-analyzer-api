@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal
 
 import numpy as np
 
@@ -118,6 +119,17 @@ def _playoff_payoff(t: schemas.TradeIdea) -> float:
     """Change in playoff odds times expected categories won per playoff week."""
     before = t.playoff_pct_before * (t.playoff_week_cats_before or 0.0)
     return t.playoff_pct_after * (t.playoff_week_cats_after or 0.0) - before
+
+
+def expected_gain(t: schemas.TradeIdea) -> float:
+    """Playoff-odds points a trade adds times the chance of a yes, to the one decimal a trade row prints."""
+    points = Decimal(t.acceptance * (t.playoff_pct_after - t.playoff_pct_before) * 100)
+    return float(points.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
+def _expected_rank(t: schemas.TradeIdea) -> tuple[float, float]:
+    """Expected gain as the row prints it; of two rows that print the same number, the likelier yes first."""
+    return expected_gain(t), t.acceptance
 
 
 def record(t: Team) -> str:
@@ -541,8 +553,7 @@ class Analyzer:
             # Expected playoff payoff: the chance to be there times how strong I am once there.
             ideas.sort(key=lambda t: t.acceptance * _playoff_payoff(t), reverse=True)
         else:
-            # Expected payoff: playoff gain weighted by the chance the deal actually happens.
-            ideas.sort(key=lambda t: t.acceptance * (t.playoff_pct_after - t.playoff_pct_before), reverse=True)
+            ideas.sort(key=_expected_rank, reverse=True)
         return mix_shapes(ideas, TRADE_RESULTS, lambda t: len(t.give) != len(t.get))
 
     @staticmethod
