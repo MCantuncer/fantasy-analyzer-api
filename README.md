@@ -232,6 +232,8 @@ ESPN answers `401` for a private league without cookies, and the API passes that
 
 ESPN's fantasy API has no scoreboard, but for any day it returns every player's line for each game. `/api/scores` adds those up into team scores and box scores, and takes start times from the NBA calendar. There is no quarter or clock, so a game counts as live from tip-off until ESPN marks its stats official or three hours pass.
 
+While a game is on, each player's line also says whether he is on the floor right now (`on_court`), from ESPN's public box score for that game. It is set only when ESPN marks exactly five players on each side; otherwise it stays empty.
+
 A day is the same in every league. While a game is on, the day is fetched at most once a minute for everyone. Once a day's games are over (five hours after the last tip-off), it is saved to `DATABASE_URL` (table `nba_days`) and never fetched again. Other features can read finished games from there instead of calling ESPN.
 
 ### NBA news

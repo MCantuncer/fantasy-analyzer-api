@@ -1002,6 +1002,9 @@ class GameLine(BaseModel):
     ftm: int
     fta: int
     starter: bool = Field(default=False, description="In his team's starting five")
+    on_court: bool | None = Field(
+        default=None, description="On the floor right now; set only while the game is live and ESPN says"
+    )
 
 
 class GameSide(BaseModel):

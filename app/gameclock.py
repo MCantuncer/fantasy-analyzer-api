@@ -8,12 +8,15 @@ reached, games keep the fantasy-only status and show no clock.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import date
 
 import httpx
 
 SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+# One game's box score, which marks the ten players on the floor as "active" while it is played.
+SUMMARY = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"
 # ESPN's site API refuses (403) a user agent that carries a link.
 USER_AGENT = "Mozilla/5.0 (compatible; fantasy-analyzer/1.0)"
 TIMEOUT = 5.0
@@ -93,5 +96,59 @@ def apply_clocks(body: dict, clocks: dict[int, Clock]) -> dict:
             elif clock.state == "in":
                 g["status"] = "live"
                 g["clock"] = clock.label
+        games.append(g)
+    return {**body, "games": games}
+
+
+def parse_on_court(raw: dict) -> frozenset[int] | None:
+    """The ESPN ids of the players on the floor, or None when the box score doesn't say clearly.
+
+    ESPN flags the players on the court as ``active``. It is trusted only when each team has
+    exactly five, so a box score that flags nobody (or everybody) never dims a whole team.
+    """
+    teams = (raw.get("boxscore") or {}).get("players") or []
+    if len(teams) != 2:
+        return None
+    out: set[int] = set()
+    for team in teams:
+        try:
+            athletes = (team.get("statistics") or [{}])[0].get("athletes") or []
+            on = {int(a["athlete"]["id"]) for a in athletes if a.get("active") is True}
+        except (KeyError, TypeError, ValueError, IndexError):
+            return None
+        if len(on) != 5:
+            return None
+        out |= on
+    return frozenset(out)
+
+
+async def fetch_on_court(
+    game_ids: list[int], transport: httpx.AsyncBaseTransport | None = None
+) -> dict[int, frozenset[int]]:
+    """Who is on the floor in each game in progress, by ESPN game id; games ESPN can't tell are left out."""
+    if not game_ids:
+        return {}
+    async with httpx.AsyncClient(transport=transport, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT}) as http:
+
+        async def one(gid: int) -> tuple[int, frozenset[int] | None]:
+            try:
+                resp = await http.get(SUMMARY, params={"event": gid})
+                if resp.status_code != 200:
+                    return gid, None
+                return gid, parse_on_court(resp.json())
+            except (httpx.HTTPError, ValueError):
+                return gid, None
+
+        pairs = await asyncio.gather(*(one(g) for g in game_ids))
+    return {gid: on for gid, on in pairs if on is not None}
+
+
+def apply_on_court(body: dict, on_court: dict[int, frozenset[int]]) -> dict:
+    """A copy of a score day where each line of a game in progress says whether he is on the floor now."""
+    games = []
+    for g in body["games"]:
+        on = on_court.get(g["id"]) if g["status"] == "live" else None
+        if on is not None:
+            g = {**g, "lines": [{**ln, "on_court": ln["player_id"] in on} for ln in g["lines"]]}
         games.append(g)
     return {**body, "games": games}
