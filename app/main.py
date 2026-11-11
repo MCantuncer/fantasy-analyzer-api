@@ -54,7 +54,7 @@ from app.espn.parse import League, parse_calendar, parse_league
 from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.gameclock import apply_clocks, fetch_clocks
-from app.lineup import open_slots, parse_lineup, slot_name
+from app.lineup import next_game, open_slots, parse_lineup, slot_name, team_days, week_of
 from app.memory import give_back_after, limit_arenas
 from app.news.extract import timeline
 from app.news.facts import PlayerState, parse_states
@@ -2089,9 +2089,10 @@ def create_app(
         hit = cache.get(key)
         if hit is None:
             raw = await app.state.espn.team_lineup(season, body.league_id, body.team_id, day, creds)
-            hit = (parse_lineup(raw, body.team_id, day, sched), iso(now))
+            hit = (parse_lineup(raw, body.team_id, day, sched, season), iso(now))
             cache.set(key, hit)
         spots, fetched_at = hit
+        week = week_of(sched, day)
         return schemas.DayLineup(
             league_id=body.league_id,
             season=season,
@@ -2109,11 +2110,29 @@ def create_app(
                     injury_status=s.injury_status,
                     game_id=s.game_id,
                     eligible=list(dict.fromkeys(slot_name(x) for x in s.eligible if x in lg.lineup_slots)),
+                    season_avg=schemas.SeasonAverage(**s.season_avg) if s.season_avg else None,
+                    next_game=lineup_next_game(sched, s.pro_team_id, day),
+                    week_games=team_days(sched, s.pro_team_id, week),
                 )
                 for s in spots
             ],
             open_slots=[slot_name(s) for s in open_slots(spots, lg.lineup_slots)],
+            week=[schemas.LineupDay(day=d, date=_iso_date(sched.date_of(d))) for d in week],
             fetched_at=fetched_at,
+        )
+
+    def lineup_next_game(sched: Schedule, pro_team_id: int, day: int) -> schemas.NextGame | None:
+        g = next_game(sched, pro_team_id, day)
+        if g is None:
+            return None
+        opp = g.home if g.away == pro_team_id else g.away
+        abbrev, name = sched.teams.get(opp, ("", ""))
+        return schemas.NextGame(
+            day=g.day,
+            date=_iso_date(sched.date_of(g.day)),
+            start=iso(g.start),
+            opponent=schemas.GameSide(pro_team_id=opp, abbrev=abbrev, name=name),
+            home=g.home == pro_team_id,
         )
 
     async def rosters_by_day(

@@ -4381,6 +4381,14 @@
             "title": "Open Slots",
             "description": "Starting slots nobody fills that day, one entry per empty seat"
           },
+          "week": {
+            "items": {
+              "$ref": "#/components/schemas/LineupDay"
+            },
+            "type": "array",
+            "title": "Week",
+            "description": "The Monday-to-Sunday week this day falls in"
+          },
           "fetched_at": {
             "type": "string",
             "title": "Fetched At",
@@ -5558,6 +5566,30 @@
         ],
         "title": "LeagueSummary"
       },
+      "LineupDay": {
+        "properties": {
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day"
+        ],
+        "title": "LineupDay"
+      },
       "LineupRequest": {
         "properties": {
           "league_id": {
@@ -5655,6 +5687,36 @@
             "type": "array",
             "title": "Eligible",
             "description": "Starting slots he can fill, so a bench player who plays can be moved up"
+          },
+          "season_avg": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SeasonAverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "His per-game line this season; none before his first game"
+          },
+          "next_game": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NextGame"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "His NBA team's first game after this day"
+          },
+          "week_games": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Week Games",
+            "description": "Days of this Monday-to-Sunday week (see DayLineup.week) his NBA team plays"
           }
         },
         "type": "object",
@@ -6414,6 +6476,45 @@
           "sources"
         ],
         "title": "NewsStory"
+      },
+      "NextGame": {
+        "properties": {
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "Tip-off, UTC ISO 8601"
+          },
+          "opponent": {
+            "$ref": "#/components/schemas/GameSide"
+          },
+          "home": {
+            "type": "boolean",
+            "title": "Home"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day",
+          "start",
+          "opponent",
+          "home"
+        ],
+        "title": "NextGame"
       },
       "NoteRead": {
         "properties": {
@@ -8657,6 +8758,81 @@
           "league_id"
         ],
         "title": "ScoresRequest"
+      },
+      "SeasonAverage": {
+        "properties": {
+          "gp": {
+            "type": "integer",
+            "title": "Gp",
+            "description": "Games played this season"
+          },
+          "min": {
+            "type": "number",
+            "title": "Min"
+          },
+          "fgm": {
+            "type": "number",
+            "title": "Fgm"
+          },
+          "fga": {
+            "type": "number",
+            "title": "Fga"
+          },
+          "ftm": {
+            "type": "number",
+            "title": "Ftm"
+          },
+          "fta": {
+            "type": "number",
+            "title": "Fta"
+          },
+          "tpm": {
+            "type": "number",
+            "title": "Tpm"
+          },
+          "reb": {
+            "type": "number",
+            "title": "Reb"
+          },
+          "ast": {
+            "type": "number",
+            "title": "Ast"
+          },
+          "stl": {
+            "type": "number",
+            "title": "Stl"
+          },
+          "blk": {
+            "type": "number",
+            "title": "Blk"
+          },
+          "to": {
+            "type": "number",
+            "title": "To"
+          },
+          "pts": {
+            "type": "number",
+            "title": "Pts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gp",
+          "min",
+          "fgm",
+          "fga",
+          "ftm",
+          "fta",
+          "tpm",
+          "reb",
+          "ast",
+          "stl",
+          "blk",
+          "to",
+          "pts"
+        ],
+        "title": "SeasonAverage",
+        "description": "A player's real per-game line this season (not a projection)."
       },
       "SeasonRow": {
         "properties": {
