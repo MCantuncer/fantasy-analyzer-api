@@ -7153,7 +7153,8 @@
               "received",
               "sending"
             ],
-            "title": "Direction"
+            "title": "Direction",
+            "description": "received: idea.acceptance and idea.pitch are still filled but don't apply, since they offered it"
           },
           "team_id": {
             "type": "integer",
@@ -7248,6 +7249,14 @@
             "title": "Partner Punts",
             "description": "Categories they win less than 30% of the time"
           },
+          "my_punts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "My Punts",
+            "description": "Categories you win less than 30% of the time"
+          },
           "paper_win": {
             "type": "boolean",
             "title": "Paper Win",
@@ -7263,7 +7272,7 @@
           },
           "my_drop_options": {
             "items": {
-              "$ref": "#/components/schemas/PlayerRef"
+              "$ref": "#/components/schemas/OfferCutOption"
             },
             "type": "array",
             "title": "My Drop Options",
@@ -7305,6 +7314,14 @@
             "type": "array",
             "title": "Flags",
             "description": "Concerns the data confirms, e.g. a category you compete in drops"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/CheckVerdict"
+            },
+            "type": "array",
+            "title": "Checks",
+            "description": "Every data check that ran, confirmed or clear, so a page can name the clear ones"
           },
           "idea": {
             "$ref": "#/components/schemas/TradeIdea",
@@ -7451,6 +7468,37 @@
           "get_player_ids"
         ],
         "title": "OfferCheckRequest"
+      },
+      "OfferCutOption": {
+        "properties": {
+          "player": {
+            "$ref": "#/components/schemas/PlayerRef",
+            "description": "tier says whether he is droppable or has trade value"
+          },
+          "chosen": {
+            "type": "boolean",
+            "title": "Chosen",
+            "description": "The cut this check used"
+          },
+          "playoff_pct_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playoff Pct After",
+            "description": "Your playoff odds after the trade with this cut; given for the cheapest few of a one-player cut"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player",
+          "chosen"
+        ],
+        "title": "OfferCutOption"
       },
       "OverviewMatchup": {
         "properties": {
