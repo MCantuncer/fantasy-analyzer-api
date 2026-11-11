@@ -25,6 +25,65 @@
         }
       }
     },
+    "/api/usage": {
+      "post": {
+        "summary": "Usage",
+        "description": "A page view from the website: counted per page, and the visitor once a day without\ntracking them (no cookies or ids; see app/usage.py).",
+        "operationId": "usage_api_usage_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageView"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Usage Api Usage Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/errors": {
       "post": {
         "summary": "Report Client Error",
@@ -7515,6 +7574,22 @@
           "helps"
         ],
         "title": "OwnerWant"
+      },
+      "PageView": {
+        "properties": {
+          "page": {
+            "type": "string",
+            "maxLength": 40,
+            "title": "Page",
+            "description": "A tab or screen, e.g. moves, scores, my-leagues"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page"
+        ],
+        "title": "PageView",
+        "description": "A page the website opened, for the usage numbers. Only the page name: no ids, no query."
       },
       "PickupIdea": {
         "properties": {

@@ -99,6 +99,9 @@ from app.social import (
 )
 from app.store import Store, TradeKey, create_store
 from app.timing import Stopwatch
+from app.usage import EVENTS as USAGE_EVENTS
+from app.usage import PAGES as USAGE_PAGES
+from app.usage import Usage, UsageStore, create_usage_store
 from app.week import category_scores, live_score, roster_pro_teams, week_bounds, week_games
 
 # httpx logs request lines at INFO; keep its logs quiet so nothing about a request leaks.
@@ -119,6 +122,7 @@ DAILY_RECHECK = float(os.getenv("DAILY_TRADE_RECHECK_SECONDS", str(3 * 3600)))
 # The feed pages through the season a week (seven scoring periods) at a time.
 FEED_PAGE_PERIODS = 7
 POSTS_PER_MINUTE = 10
+USAGE_FLUSH_SECONDS = float(os.getenv("USAGE_FLUSH_SECONDS", "60"))
 # Website error reports: a visitor sends at most this many per window; new kinds a day are capped.
 ERROR_POSTS_PER_WINDOW = 20
 ERROR_POST_WINDOW = 600.0
@@ -198,7 +202,8 @@ def read_credentials(espn_s2: str | None, swid: str | None) -> EspnCredentials |
 
 
 def client_ip(request: Request) -> str:
-    """The visitor's address as Render's proxy saw it; used only to slow down a flood, never stored."""
+    """The visitor's address as Render's proxy saw it: held in memory to slow down a flood of error
+    reports, or hashed with the day's salt for the usage numbers. Never stored as is."""
     forwarded = request.headers.get("x-forwarded-for", "")
     return forwarded.split(",")[0].strip() or (request.client.host if request.client else "")
 
@@ -252,6 +257,7 @@ def create_app(
     deep_reader: DeepReader | None = None,
     rules: RuleStore | None = None,
     clock_transport=None,
+    usage_store: UsageStore | None = None,
     error_store: error_reports.ErrorStore | None = None,
 ) -> FastAPI:
     limit_arenas()  # before any worker thread starts: see app/memory.py
@@ -312,6 +318,7 @@ def create_app(
     app.state.cards = TTLCache(PLAYER_CARD_TTL, max_items=2048)
     app.state.card_stories = TTLCache(CARD_NEWS_TTL, max_items=4)
     app.state.news = NewsService(app.state.espn, app.state.store, transport=news_transport)
+    app.state.usage = Usage(usage_store or create_usage_store())
     app.state.errors = error_store or error_reports.create_error_store()
     error_reports.install(app.state.errors)
     app.state.admins = {normalize_email(e) for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
@@ -546,6 +553,38 @@ def create_app(
     async def health() -> dict:
         return {"ok": True}
 
+    # Usage numbers -----------------------------------------------------------------
+
+    def counted(event: str) -> None:
+        """Counts something done on the server (see app/usage.py); never in the way of the request."""
+        assert event in USAGE_EVENTS, event
+        app.state.usage.count(event)
+
+    @app.post("/api/usage", status_code=202)
+    async def usage(body: schemas.PageView, request: Request, authorization: str | None = Header(default=None)) -> dict:
+        """A page view from the website: counted per page, and the visitor once a day without
+        tracking them (no cookies or ids; see app/usage.py)."""
+        if body.page not in USAGE_PAGES:
+            return {"ok": True}
+        app.state.usage.count(f"view:{body.page}")
+        opted_out = request.headers.get("sec-gpc") == "1" or request.headers.get("dnt") == "1"
+        if not opted_out:
+            await run_in_threadpool(
+                app.state.usage.visit,
+                client_ip(request),
+                request.headers.get("user-agent", "")[:300],
+                bearer(authorization) is not None,
+            )
+        return {"ok": True}
+
+    async def flush_usage_every_minute() -> None:
+        while True:
+            await asyncio.sleep(USAGE_FLUSH_SECONDS)
+            try:
+                await run_in_threadpool(app.state.usage.flush)
+            except Exception:  # noqa: BLE001 - kept in memory and tried again next minute
+                logging.getLogger(__name__).warning("could not save usage counts", exc_info=True)
+
     # Error reports ---------------------------------------------------------------
 
     @app.post("/api/errors", status_code=202, responses={429: {"model": schemas.ErrorBody}})
@@ -760,6 +799,7 @@ def create_app(
             raise HTTPException(
                 409, detail={"code": "email_taken", "message": "That email already has an account. Sign in instead."}
             ) from None
+        counted("signup")
         return await signed_in(user)
 
     @app.post(
@@ -776,6 +816,7 @@ def create_app(
             raise HTTPException(
                 401, detail={"code": "bad_credentials", "message": "That email and password don't match."}
             )
+        counted("sign_in")
         return await signed_in(found[0])
 
     @app.post(
@@ -803,6 +844,9 @@ def create_app(
                 user.has_google = True
         if user is None:
             user = await run_in_threadpool(accounts.create_user, who.email, None, who.sub)
+            counted("signup")
+        else:
+            counted("sign_in")
         return await signed_in(user)
 
     @app.post("/api/auth/logout")
@@ -838,6 +882,7 @@ def create_app(
         basics = await feed_basics(body.league_id, season, creds)
         name = ((basics.get("settings") or {}).get("name") or f"League {body.league_id}").strip()
         await run_in_threadpool(app.state.accounts.follow, user.id, FollowedLeague(body.league_id, season, name))
+        counted("league_added")
         return await me_for(user)
 
     @app.post("/api/my-leagues/remove", response_model=schemas.Me)
@@ -956,6 +1001,7 @@ def create_app(
             job = AnalysisProgress()
             job.saved, job.changes = saved, list(changed or [])
             job.task = asyncio.create_task(build_report(body, creds, key, job))
+            counted("analysis")
             app.state.analysis_jobs[key] = job
 
             def forget() -> None:
@@ -1037,11 +1083,15 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         watch = asyncio.create_task(watch_injuries()) if WATCH_SECONDS > 0 else None
+        usage_flush = asyncio.create_task(flush_usage_every_minute())
         try:
             yield
         finally:
             if watch is not None:
                 watch.cancel()
+            usage_flush.cancel()
+            with suppress(Exception):  # the last minute's counts, on a deploy or restart
+                await run_in_threadpool(app.state.usage.flush)
 
     app.router.lifespan_context = lifespan
 
@@ -1479,6 +1529,7 @@ def create_app(
                 f"Another account verified {team.name} in {league_name}, so you are no longer its manager here. "
                 "If you do manage it, verify it again.",
             )
+        counted("verify")
         return linked_team(Seat(user.id, c.league_id, c.season, c.team_id), teams)
 
     @app.post("/api/feed", response_model=schemas.FeedPage, responses={401: {"model": schemas.ErrorBody}})
@@ -1558,6 +1609,7 @@ def create_app(
         post = await run_in_threadpool(
             app.state.social.add_post, body.league_id, season, session.team_id, body.target, text
         )
+        counted("chat_post")
         return post_item(post)
 
     @app.post("/api/posts/delete", responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}})
@@ -2809,6 +2861,7 @@ def create_app(
             created_at=app.state.now(),
         )
         saved = await run_in_threadpool(app.state.feedback.save, entry)
+        counted("trade_feedback")
         return feedback_out(saved)
 
     @app.post(

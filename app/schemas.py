@@ -1536,6 +1536,12 @@ class WeekRecap(BaseModel):
     weeks: list[RecapWeekRef] = Field(description="Every finished week, for a week picker")
 
 
+class PageView(BaseModel):
+    """A page the website opened, for the usage numbers. Only the page name: no ids, no query."""
+
+    page: str = Field(max_length=40, description="A tab or screen, e.g. moves, scores, my-leagues")
+
+
 class ClientError(BaseModel):
     """A crash or unhandled error in the website, sent so it shows up in the error reports."""
 
