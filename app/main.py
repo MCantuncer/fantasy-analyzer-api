@@ -20,6 +20,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app import errors as error_reports
 from app import schemas
 from app.accounts import (
     PASSWORD_MIN,
@@ -117,6 +118,10 @@ DAILY_RECHECK = float(os.getenv("DAILY_TRADE_RECHECK_SECONDS", str(3 * 3600)))
 # The feed pages through the season a week (seven scoring periods) at a time.
 FEED_PAGE_PERIODS = 7
 POSTS_PER_MINUTE = 10
+# Website error reports: a visitor sends at most this many per window; new kinds a day are capped.
+ERROR_POSTS_PER_WINDOW = 20
+ERROR_POST_WINDOW = 600.0
+NEW_WEB_ERRORS_PER_DAY = 200
 # A team's game logs: this season's change after every game night, last season's never.
 GAMELOG_TTL = 3 * 3600.0
 MIN_RELEVANT_MINUTES = 15.0
@@ -191,6 +196,32 @@ def read_credentials(espn_s2: str | None, swid: str | None) -> EspnCredentials |
     return EspnCredentials(espn_s2=espn_s2, swid=swid)
 
 
+def client_ip(request: Request) -> str:
+    """The visitor's address as Render's proxy saw it; used only to slow down a flood, never stored."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    return forwarded.split(",")[0].strip() or (request.client.host if request.client else "")
+
+
+def client_occurrence(body: schemas.ClientError, user_agent: str) -> error_reports.Occurrence:
+    page = body.page.split("#")[0]
+    path = page.split("?")[0] or "/"
+    # The tab is part of where it happened; ids and every other query value are left out.
+    tab = next((p.split("=", 1)[1] for p in page.partition("?")[2].split("&") if p.startswith("tab=")), "")
+    route = f"{path}?tab={tab[:30]}" if tab else path
+    message = error_reports.scrub(body.message, error_reports.MESSAGE_MAX)
+    first_line = message.splitlines()[0] if message else ""
+    return error_reports.Occurrence(
+        source="web",
+        title=error_reports.scrub(f"{body.name}: {first_line}", 200),
+        where=f"{body.kind}|{route}",
+        message=message,
+        stack=error_reports.scrub(body.stack, error_reports.STACK_MAX),
+        route=route,
+        build=error_reports.scrub(body.build, 40),
+        user_agent=user_agent[:300],
+    )
+
+
 def today() -> str:
     return datetime.now(UTC).date().isoformat()
 
@@ -220,6 +251,7 @@ def create_app(
     deep_reader: DeepReader | None = None,
     rules: RuleStore | None = None,
     clock_transport=None,
+    error_store: error_reports.ErrorStore | None = None,
 ) -> FastAPI:
     limit_arenas()  # before any worker thread starts: see app/memory.py
     app = FastAPI(title="Fantasy Analyzer API", version="0.1.0")
@@ -279,6 +311,10 @@ def create_app(
     app.state.cards = TTLCache(PLAYER_CARD_TTL, max_items=2048)
     app.state.card_stories = TTLCache(CARD_NEWS_TTL, max_items=4)
     app.state.news = NewsService(app.state.espn, app.state.store, transport=news_transport)
+    app.state.errors = error_store or error_reports.create_error_store()
+    error_reports.install(app.state.errors)
+    app.state.admins = {normalize_email(e) for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
+    app.state.error_posts = defaultdict(deque)
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
     app.add_middleware(
@@ -287,6 +323,8 @@ def create_app(
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type", "Authorization", "X-ESPN-S2", "X-ESPN-SWID"],
     )
+
+    app.add_middleware(error_reports.RouteContext)
 
     @app.exception_handler(EspnError)
     async def espn_error(_: Request, exc: EspnError) -> JSONResponse:
@@ -507,6 +545,59 @@ def create_app(
     async def health() -> dict:
         return {"ok": True}
 
+    # Error reports ---------------------------------------------------------------
+
+    @app.post("/api/errors", status_code=202, responses={429: {"model": schemas.ErrorBody}})
+    async def report_client_error(body: schemas.ClientError, request: Request) -> dict:
+        """The website's crashes. No account needed: a crash can happen before sign-in."""
+        recent = app.state.error_posts[client_ip(request)]
+        now = time.monotonic()
+        while recent and now - recent[0] > ERROR_POST_WINDOW:
+            recent.popleft()
+        if len(recent) >= ERROR_POSTS_PER_WINDOW:
+            raise HTTPException(429, detail={"code": "slow_down", "message": "Too many reports."})
+        recent.append(now)
+        occurrence = client_occurrence(body, request.headers.get("user-agent", ""))
+        if not await run_in_threadpool(app.state.errors.known, occurrence.fingerprint):
+            # New kinds of error a day are capped, so junk sent on purpose can't fill the table.
+            if await run_in_threadpool(app.state.errors.new_today, "web") >= NEW_WEB_ERRORS_PER_DAY:
+                return {"ok": True}
+        await run_in_threadpool(app.state.errors.record, occurrence)
+        return {"ok": True}
+
+    @app.post("/api/admin/errors", response_model=schemas.ErrorReports, responses={403: {"model": schemas.ErrorBody}})
+    async def admin_errors(authorization: str | None = Header(default=None)) -> schemas.ErrorReports:
+        await admin_user(authorization)
+        rows = await run_in_threadpool(app.state.errors.recent)
+        return schemas.ErrorReports(
+            reports=[
+                schemas.ErrorReport(
+                    id=r.id,
+                    source=r.source,
+                    title=r.title,
+                    message=r.message,
+                    stack=r.stack,
+                    route=r.route,
+                    build=r.build,
+                    user_agent=r.user_agent,
+                    count=r.count,
+                    first_seen=iso(r.first_seen),
+                    last_seen=iso(r.last_seen),
+                    resolved=r.resolved_at is not None,
+                )
+                for r in rows
+            ]
+        )
+
+    @app.post("/api/admin/errors/resolve", responses={403: {"model": schemas.ErrorBody}})
+    async def resolve_error(
+        body: schemas.ResolveErrorRequest, authorization: str | None = Header(default=None)
+    ) -> dict:
+        await admin_user(authorization)
+        if not await run_in_threadpool(app.state.errors.resolve, body.id):
+            raise HTTPException(404, detail={"code": "not_found", "message": "No such report."})
+        return {"ok": True}
+
     async def peek_gamelogs(season: int, pro_team_id: int, past: bool) -> list[dict]:
         """A team's game logs from the cache if they're there, else from ESPN without caching them:
         background jobs walk many teams, and the cache keeps up to 64 of these big lists."""
@@ -627,7 +718,17 @@ def create_app(
                 for f in followed
             ],
             notices=[schemas.Notice(id=n.id, text=n.text, at=iso(n.created_at)) for n in notices],
+            admin=is_admin(user),
         )
+
+    def is_admin(user: User | None) -> bool:
+        return bool(user and user.email and normalize_email(user.email) in app.state.admins)
+
+    async def admin_user(authorization: str | None) -> User:
+        user = await current_user(authorization)
+        if not is_admin(user):
+            raise HTTPException(403, detail={"code": "not_admin", "message": "Only the site's admins can see this."})
+        return user
 
     async def signed_in(user: User) -> schemas.AuthResult:
         token = secrets.token_urlsafe(32)
