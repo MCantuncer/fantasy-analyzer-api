@@ -165,6 +165,7 @@ WATCH_RERUNS = 3  # reports rebuilt per sweep, newest first
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
 NOT_LINKED = {"code": "not_linked", "message": "Verify your team in this league first."}
 NOT_YOUR_TEAM = {"code": "not_your_team", "message": "Only this team's verified manager can see its analysis."}
+NOT_FOLLOWING = {"code": "not_following", "message": "Add this league to your leagues first."}
 
 
 class AnalysisProgress:
@@ -775,6 +776,27 @@ def create_app(
             raise HTTPException(403, detail=NOT_LINKED)
         return seat
 
+    async def viewer(authorization: str | None, league_id: int, season: int, team_id: int) -> User:
+        """Who may see a team's analysis (moves, trade searches, offer checks).
+
+        Its verified manager, always. While nobody has verified the team, any account that added the
+        league and has not verified another team in it: a new manager sees their moves before the ESPN
+        code check. Verifying a team closes it to everyone else. Chat, votes, feedback and saved rules
+        stay with the verified manager (``linked``).
+        """
+        user = await current_user(authorization)
+        accounts = app.state.accounts
+        managers = await run_in_threadpool(accounts.managers, league_id, season)
+        owner = managers.get(team_id)
+        if owner == user.id:
+            return user
+        if owner is not None or user.id in managers.values():
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        followed = await run_in_threadpool(accounts.followed, user.id)
+        if not any(f.league_id == league_id and f.season == season for f in followed):
+            raise HTTPException(403, detail=NOT_FOLLOWING)
+        return user
+
     async def me_for(user: User) -> schemas.Me:
         accounts = app.state.accounts
         followed = await run_in_threadpool(accounts.followed, user.id)
@@ -943,10 +965,7 @@ def create_app(
     ) -> tuple:
         """Check the caller may see this team's analysis and return its cache key."""
         season = body.season or current_season()
-        # A team's analysis is for its verified manager only.
-        seat = await linked(authorization, body.league_id, season, required=True)
-        if seat.team_id != body.team_id:
-            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        await viewer(authorization, body.league_id, season, body.team_id)
         return (
             body.league_id,
             season,
@@ -1220,9 +1239,7 @@ def create_app(
         """Best deals across the league for one or more of your players."""
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
-        seat = await linked(authorization, body.league_id, season, required=True)
-        if seat.team_id != body.team_id:
-            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        await viewer(authorization, body.league_id, season, body.team_id)
         key = (
             "shop",
             body.league_id,
@@ -1709,7 +1726,7 @@ def create_app(
         responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
     )
     async def matchup_projection(
-        body: schemas.LeagueRequest,
+        body: schemas.MatchupProjectionRequest,
         authorization: str | None = Header(default=None),
         x_espn_s2: str | None = Header(default=None),
         x_espn_swid: str | None = Header(default=None),
@@ -1721,9 +1738,14 @@ def create_app(
         """
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
-        seat = await linked(authorization, body.league_id, season, required=True)
+        if body.team_id is None:
+            team_id = (await linked(authorization, body.league_id, season, required=True)).team_id
+        else:
+            # A team picked before the ESPN code check: the same rule as its moves.
+            await viewer(authorization, body.league_id, season, body.team_id)
+            team_id = body.team_id
         league = await load_league(body.league_id, season, creds, with_fa=False, with_calendar=True)
-        proj = await run_in_threadpool(project_matchup, league, seat.team_id)
+        proj = await run_in_threadpool(project_matchup, league, team_id)
         if proj is None:
             return None
 
@@ -1883,9 +1905,7 @@ def create_app(
     ) -> schemas.TargetReport:
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
-        seat = await linked(authorization, body.league_id, season, required=True)
-        if seat.team_id != body.team_id:
-            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        await viewer(authorization, body.league_id, season, body.team_id)
         lg = await load_league(body.league_id, season, creds, with_fa=True)
         if lg.team(body.team_id) is None:
             raise HTTPException(
@@ -1924,9 +1944,7 @@ def create_app(
         """Check any trade with another team, offered to you or one you plan to send: the verdict for both sides."""
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
-        seat = await linked(authorization, body.league_id, season, required=True)
-        if seat.team_id != body.team_id:
-            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        await viewer(authorization, body.league_id, season, body.team_id)
         key = (
             "offer",
             body.league_id,

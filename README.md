@@ -156,7 +156,7 @@ All settings are optional for local development.
 | POST | `/api/my-leagues/remove` | `{league_id, season?}` | Unfollows it |
 | POST | `/api/league-overview` | `{league_id, season?}` | League-only view: this week's matchups, the MVP candidate, league pulse, which teams have a manager |
 | POST | `/api/league` | `{league_id, season?}` | League name, categories and teams |
-| POST | `/api/analyze` | `{league_id, team_id, season?, keep_player_ids?}` | Full analysis report, only for the team you verified |
+| POST | `/api/analyze` | `{league_id, team_id, season?, keep_player_ids?}` | Full analysis report, for the team you verified or, before you verify, a team nobody has verified yet |
 | POST | `/api/analyze/job` | `{league_id, team_id, season?, keep_player_ids?}` | Starts the same analysis in the background and answers at once with `status`, `progress` and `stage`; call again until `done` (the report is included) or `failed` |
 | POST | `/api/shop` | `{league_id, team_id, season?, offer_player_ids, faab_max?, keep_player_ids?}` | Trade Park: each team's best deal for 1 to 4 of your players |
 | POST | `/api/trade-of-the-day` | `{league_id, season?}` | Today's best win-win trade between any two teams, with poll votes |
@@ -219,7 +219,7 @@ Only ESPN head-to-head category leagues are supported for now.
 
 ### Accounts and verified managers
 
-People sign up with an email and password (scrypt-hashed) or with Google, then add leagues by ID. Following a league shows only league-wide data (`/api/league-overview`, the moves feed). Anything about one team, like the analysis, the chat and reactions, needs the account to be that team's verified manager.
+People sign up with an email and password (scrypt-hashed) or with Google, then add leagues by ID. Following a league shows league-wide data (`/api/league-overview`, the moves feed) and lets a new manager pick their team and see its analysis right away: the moves, trade searches, offer checks and matchup projection of a team nobody has verified yet are open to any account that added the league. Verifying a team closes its analysis to everyone else, and an account that verified one team cannot look into the others. The chat, reactions, votes, trade feedback and saved trade rules always need the account to be that team's verified manager.
 
 ESPN has no login for other sites, so a manager proves a team is theirs by changing its abbreviation on ESPN to a 4-character code from `/api/team-link/start` and calling `/api/team-link/verify`. Only the team's owner and the league manager can edit it, and the API reads it back from ESPN's league data. The code rides in an HMAC-signed challenge bound to the account that asked, which expires after 30 minutes, so nothing is stored until the check passes.
 
