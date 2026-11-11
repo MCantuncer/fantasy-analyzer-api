@@ -209,6 +209,8 @@ def test_live_games_get_the_quarter_and_clock(recorded, schedule_raw, day4_playe
     asked = []
 
     def scoreboard(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/summary"):
+            return httpx.Response(404)
         asked.append(request.url.params["dates"])
         event = {
             "id": str(live["id"]),
@@ -222,6 +224,36 @@ def test_live_games_get_the_quarter_and_clock(recorded, schedule_raw, day4_playe
     game = next(g for g in body["games"] if g["id"] == live["id"])
     assert game["status"] == "live" and game["clock"] == "Q4 2:31"
     assert asked == [body["date"].replace("-", "")]
+
+
+def test_live_games_ask_espn_who_is_on_the_floor(recorded, schedule_raw, day4_players):
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, FRIDAY_NIGHT)
+    live = next(
+        g
+        for g in client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()["games"]
+        if g["status"] == "live"
+    )
+    boxes = []
+
+    def espn_site(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/summary"):
+            boxes.append(request.url.params["event"])
+            teams = [
+                {"statistics": [{"athletes": [{"athlete": {"id": str(b + i)}, "active": i < 5} for i in range(9)]}]}
+                for b in (9000, 9100)
+            ]
+            return httpx.Response(200, json={"boxscore": {"players": teams}})
+        event = {
+            "id": str(live["id"]),
+            "status": {"period": 2, "displayClock": "5:10", "type": {"state": "in", "shortDetail": "5:10 - 2nd"}},
+            "competitions": [{"competitors": []}],
+        }
+        return httpx.Response(200, json={"events": [event]})
+
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, FRIDAY_NIGHT, espn_site)
+    for _ in range(2):
+        assert client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).status_code == 200
+    assert boxes == [str(live["id"])]  # only the game in progress, and once while the scores are fresh
 
 
 def test_a_game_espn_calls_final_ends_right_away(recorded, schedule_raw, day4_players):

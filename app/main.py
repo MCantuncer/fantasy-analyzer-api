@@ -53,7 +53,7 @@ from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFou
 from app.espn.parse import League, parse_calendar, parse_league
 from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
-from app.gameclock import apply_clocks, fetch_clocks
+from app.gameclock import apply_clocks, apply_on_court, fetch_clocks, fetch_on_court
 from app.lineup import next_game, open_slots, parse_lineup, slot_name, team_days, week_of
 from app.memory import give_back_after, limit_arenas
 from app.news.extract import timeline
@@ -259,6 +259,8 @@ def create_app(
     app.state.week_sits = TTLCache(LEAGUE_TTL)
     # Quarter and clock from ESPN's scoreboard, by date; refreshed as often as live scores.
     app.state.clocks = TTLCache(LIVE_SCORES_TTL)
+    # Who is on the floor in each game in progress, from ESPN's box scores; as fresh as the clocks.
+    app.state.on_court = TTLCache(LIVE_SCORES_TTL)
     app.state.lineups = TTLCache(LINEUP_TTL)
     app.state.past_lineups = TTLCache(PAST_LINEUP_TTL)
     app.state.clock_transport = clock_transport
@@ -1862,7 +1864,15 @@ def create_app(
         if clocks is None:
             clocks = await fetch_clocks(day_date, app.state.clock_transport)
             app.state.clocks.set(day_date, clocks or {})
-        return apply_clocks(data, clocks) if clocks else data
+        if not clocks:
+            return data
+        data = apply_clocks(data, clocks)
+        live = tuple(sorted(g["id"] for g in data["games"] if g["status"] == "live"))
+        on_court = app.state.on_court.get(live)
+        if on_court is None:
+            on_court = await fetch_on_court(list(live), app.state.clock_transport)
+            app.state.on_court.set(live, on_court)
+        return apply_on_court(data, on_court) if on_court else data
 
     async def week_sits(
         league_id: int, season: int, creds: EspnCredentials | None, team_id: int
