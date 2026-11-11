@@ -26,7 +26,6 @@ CRASH = {
 
 @pytest.fixture
 def app(fake_espn, monkeypatch):
-    monkeypatch.setenv("ADMIN_EMAILS", " Boss@Example.com ,other@example.com")
     accounts = MemoryAccountStore()
     app = create_app(
         EspnClient(transport=httpx.MockTransport(fake_espn.handler)),
@@ -37,10 +36,11 @@ def app(fake_espn, monkeypatch):
     return app
 
 
-def admin(app) -> TestClient:
+def admin(app, user_type: str = "admin") -> TestClient:
     from app.social import hash_token
 
     user = app.state.accounts.create_user("boss@example.com", None)
+    user.user_type = user_type  # set by hand in the database in production
     app.state.accounts.save_session(hash_token("admin-token"), user.id)
     return TestClient(app, headers={"Authorization": "Bearer admin-token"})
 
@@ -167,15 +167,8 @@ def test_only_admins_read_and_resolve_reports(app):
     assert boss.post("/api/admin/errors/resolve", json={"id": 999}).status_code == 404
 
 
-def test_no_admins_without_the_setting(fake_espn, monkeypatch):
-    monkeypatch.delenv("ADMIN_EMAILS", raising=False)
-    app = create_app(
-        EspnClient(transport=httpx.MockTransport(fake_espn.handler)),
-        store=MemoryStore(),
-        accounts=MemoryAccountStore(),
-        error_store=MemoryErrorStore(),
-    )
-    assert admin(app).post("/api/admin/errors").status_code == 403
+def test_a_plain_account_is_not_an_admin(app):
+    assert admin(app, user_type="user").post("/api/admin/errors").status_code == 403
 
 
 def test_reporter_failures_are_swallowed(app, monkeypatch):

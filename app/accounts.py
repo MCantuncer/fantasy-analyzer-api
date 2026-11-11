@@ -23,6 +23,8 @@ from datetime import UTC, date, datetime
 from typing import Protocol
 
 SESSION_DAYS = 90
+# Set by hand in the database (update users set user_type = 'admin' where email = '...'); never by the API.
+ADMIN = "admin"
 PASSWORD_MIN = 8
 _SCRYPT = {"n": 2**14, "r": 8, "p": 1}
 
@@ -87,6 +89,11 @@ class User:
     email: str | None
     created_at: datetime
     has_google: bool = False
+    user_type: str = "user"  # "admin" can read the site's error reports and usage numbers
+
+    @property
+    def admin(self) -> bool:
+        return self.user_type == ADMIN
 
 
 @dataclass
@@ -121,6 +128,7 @@ create table if not exists users (
     google_sub text unique,
     created_at timestamptz not null default now()
 );
+alter table users add column if not exists user_type text not null default 'user';
 create table if not exists user_sessions (
     token_hash text primary key,
     user_id bigint not null references users(id) on delete cascade,
@@ -274,7 +282,7 @@ class PostgresAccountStore:
         with self._connect() as conn:
             conn.execute(SCHEMA)
 
-    _USER = "id, email, created_at, google_sub is not null"
+    _USER = "id, email, created_at, google_sub is not null, user_type"
 
     def create_user(self, email: str | None, password_hash: str | None, google_sub: str | None = None) -> User:
         import psycopg
@@ -292,7 +300,7 @@ class PostgresAccountStore:
     def login_lookup(self, email: str) -> tuple[User, str | None] | None:
         with self._connect() as conn:
             row = conn.execute(f"select {self._USER}, password_hash from users where email=%s", (email,)).fetchone()
-        return (User(*row[:4]), row[4]) if row else None
+        return (User(*row[:5]), row[5]) if row else None
 
     def user_by_google(self, sub: str) -> User | None:
         with self._connect() as conn:
@@ -310,7 +318,7 @@ class PostgresAccountStore:
     def session_user(self, token_hash: str) -> User | None:
         with self._connect() as conn:
             row = conn.execute(
-                f"select u.id, u.email, u.created_at, u.google_sub is not null from user_sessions s "
+                f"select u.id, u.email, u.created_at, u.google_sub is not null, u.user_type from user_sessions s "
                 f"join users u on u.id = s.user_id where s.token_hash=%s "
                 f"and s.created_at > now() - interval '{SESSION_DAYS} days'",
                 (token_hash,),

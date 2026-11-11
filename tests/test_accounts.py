@@ -1,4 +1,7 @@
+import os
+
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from app.espn.client import EspnClient
@@ -127,3 +130,29 @@ def test_verifying_unlocks_only_your_team(espn, stores):
     assert [t["id"] for t in overview["teams"] if t["mine"]] == [MY_TEAM]
     r = client.post("/api/analyze", json={**league, "team_id": 8}, headers=auth)
     assert r.status_code == 403 and r.json()["detail"]["code"] == "not_your_team"
+
+
+def test_new_accounts_are_plain_users():
+    from app.accounts import MemoryAccountStore
+
+    user = MemoryAccountStore().create_user("someone@example.com", None)
+    assert user.user_type == "user" and not user.admin
+
+
+@pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="set TEST_DATABASE_URL to test against Postgres")
+def test_admin_is_set_in_the_database():
+    from app.accounts import PostgresAccountStore, hash_password
+    from app.social import hash_token
+
+    accounts = PostgresAccountStore(os.environ["TEST_DATABASE_URL"])
+    with accounts._connect() as conn:
+        conn.execute("truncate users cascade")
+    user = accounts.create_user("boss@example.com", hash_password("longenough"))
+    assert user.user_type == "user" and not user.admin
+    with accounts._connect() as conn:
+        conn.execute("update users set user_type = 'admin' where email = %s", ("boss@example.com",))
+    accounts.save_session(hash_token("t"), user.id)
+    assert accounts.session_user(hash_token("t")).admin
+    found, password_hash = accounts.login_lookup("boss@example.com")
+    assert found.admin and password_hash.startswith("scrypt$")
+    PostgresAccountStore(os.environ["TEST_DATABASE_URL"])  # the column is added once; a restart is fine

@@ -12,7 +12,7 @@ kind of error and where it happened, with numbers taken out) and keep the latest
 message, a trimmed stack, the route or page, the build and the browser. No IP addresses,
 accounts, request bodies or cookies are kept, and emails and long tokens are masked in
 messages. A report not seen for 30 days is deleted. A report marked fixed opens again if it
-happens again. Only admins (``ADMIN_EMAILS``) can read them.
+happens again. Only admin accounts (``users.user_type = 'admin'``) can read them.
 
 **Storage.** The same Postgres as everything else (``DATABASE_URL``), in memory without it.
 """

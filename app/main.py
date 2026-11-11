@@ -322,7 +322,6 @@ def create_app(
     app.state.usage = Usage(usage_store or create_usage_store())
     app.state.errors = error_store or error_reports.create_error_store()
     error_reports.install(app.state.errors)
-    app.state.admins = {normalize_email(e) for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
     app.state.error_posts = defaultdict(deque)
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
@@ -817,7 +816,7 @@ def create_app(
         )
 
     def is_admin(user: User | None) -> bool:
-        return bool(user and user.email and normalize_email(user.email) in app.state.admins)
+        return bool(user and user.admin)
 
     async def admin_user(authorization: str | None) -> User:
         user = await current_user(authorization)
