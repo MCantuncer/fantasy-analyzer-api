@@ -625,6 +625,7 @@ class Me(BaseModel):
     has_google: bool
     leagues: list[MyLeague]
     notices: list[Notice]
+    admin: bool = Field(default=False, description="Can read the site's error reports (ADMIN_EMAILS)")
 
 
 class AuthResult(BaseModel):
@@ -1484,3 +1485,39 @@ class WeekRecap(BaseModel):
     free_agents: list[RecapFreeAgent] = Field(description="Best players who were free when the week began")
     teams: list[RecapTeam]
     weeks: list[RecapWeekRef] = Field(description="Every finished week, for a week picker")
+
+
+class ClientError(BaseModel):
+    """A crash or unhandled error in the website, sent so it shows up in the error reports."""
+
+    kind: Literal["crash", "error", "rejection"] = Field(
+        description="crash: a screen failed to draw; error: an uncaught error; rejection: an unhandled promise"
+    )
+    name: str = Field(default="Error", max_length=120, description="The error's type, e.g. TypeError")
+    message: str = Field(default="", max_length=2000)
+    stack: str = Field(default="", max_length=16000)
+    page: str = Field(default="", max_length=300, description="Path and tab, e.g. /?tab=moves; no other query")
+    build: str = Field(default="", max_length=40, description="The website build that sent it")
+
+
+class ErrorReport(BaseModel):
+    id: int
+    source: Literal["api", "web"]
+    title: str
+    message: str
+    stack: str
+    route: str = Field(description="The API request or website page it last happened on")
+    build: str
+    user_agent: str
+    count: int
+    first_seen: str
+    last_seen: str
+    resolved: bool = Field(description="Marked fixed and not seen since")
+
+
+class ErrorReports(BaseModel):
+    reports: list[ErrorReport]
+
+
+class ResolveErrorRequest(BaseModel):
+    id: int = Field(gt=0)

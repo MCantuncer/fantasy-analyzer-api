@@ -63,6 +63,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |
 | 💬 | **Moves feed and league chat:** transactions, posts, replies and reactions | `/api/feed`, `/api/posts` |
 | 🔐 | **Accounts and verified managers:** email or Google sign-in, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
+| 🚨 | **Error reports:** server errors and website crashes grouped with a count and the latest example, no personal data, readable by admins only | `/api/errors`, `/api/admin/errors` |
 
 ## Architecture
 
@@ -126,6 +127,7 @@ All settings are optional for local development.
 | `DB_POOL_IDLE_SECONDS` | `240` | An idle pooled connection closes after this, so a hosted database can suspend |
 | `SECRET_KEY` | random per start | Signs team verification challenges; set it so they survive a restart |
 | `GOOGLE_CLIENT_ID` | none | Google OAuth web client ID; Google sign-in stays off until it is set |
+| `ADMIN_EMAILS` | none | Comma-separated account emails that can read the error reports |
 | `ANTHROPIC_API_KEY` | none | Lets Claude Haiku read managers' notes on trade ideas so the checks start where the note points; notes are kept unread without it |
 | `LEAGUE_CACHE_SECONDS` | `600` | How long league data from ESPN is cached |
 | `DAILY_TRADE_WAIT_SECONDS` | `20` | How long a trade-of-the-day request waits before answering `pending` |
@@ -142,6 +144,9 @@ All settings are optional for local development.
 | POST | `/api/auth/logout` | | Ends the session |
 | POST | `/api/me` | | The account, its leagues (with the verified team, if any) and notices |
 | POST | `/api/me/notices/clear` | | Clears the notices |
+| POST | `/api/errors` | `{kind, name, message, stack, page, build}` | Records a website crash (no account needed; rate-limited) |
+| POST | `/api/admin/errors` | | Admins only: error reports, most recent first |
+| POST | `/api/admin/errors/resolve` | `{id}` | Admins only: marks a report fixed; it opens again if it happens again |
 | POST | `/api/my-leagues/add` | `{league_id, season?}` | Follows a league (no team yet) |
 | POST | `/api/my-leagues/remove` | `{league_id, season?}` | Unfollows it |
 | POST | `/api/league-overview` | `{league_id, season?}` | League-only view: this week's matchups, the MVP candidate, league pulse, which teams have a manager |
