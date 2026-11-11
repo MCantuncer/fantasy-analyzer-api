@@ -1,11 +1,21 @@
 import copy
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 import app.analysis.sim as sim
 from app.analysis.model import CategoryModel, norm_cdf
-from app.analysis.report import FINE_SIMS, PAPER_MAX_PARTNER_DROP, Analyzer, i_gain, partner_gains, worth_a_try
+from app.analysis.report import (
+    FINE_SIMS,
+    PAPER_MAX_PARTNER_DROP,
+    Analyzer,
+    _expected_rank,
+    expected_gain,
+    i_gain,
+    partner_gains,
+    worth_a_try,
+)
 from app.analysis.sim import SeasonSim, category_links, simulate_season
 from app.analysis.trades import SCREEN_MIN_THEIR_GAIN
 
@@ -166,6 +176,21 @@ def test_my_side_needs_a_visible_rise_too():
     assert not i_gain(0.52, 0.52)  # 52% -> 52% ±0 is no reason to trade
     assert not i_gain(0.52, 0.525)
     assert i_gain(0.52, 0.53)
+
+
+def test_trades_rank_by_the_expected_gain_the_row_prints():
+    def idea(acceptance, before, after):
+        return SimpleNamespace(acceptance=acceptance, playoff_pct_before=before, playoff_pct_after=after)
+
+    leader = idea(0.34, 0.47, 0.54)
+    long_shot = idea(0.09, 0.47, 0.505)
+    likelier = idea(0.32, 0.47, 0.479)
+    assert expected_gain(leader) == 2.4
+    # 0.315 and 0.288 both print +0.3, so the likelier yes goes first.
+    assert expected_gain(long_shot) == expected_gain(likelier) == 0.3
+    assert sorted([long_shot, likelier, leader], key=_expected_rank, reverse=True) == [leader, likelier, long_shot]
+    # A half rounds up, as the site prints it.
+    assert expected_gain(idea(0.5, 0.5, 0.505)) == 0.3
 
 
 def test_teams_drift_back_toward_the_average(league, monkeypatch):
