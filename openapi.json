@@ -84,6 +84,181 @@
         }
       }
     },
+    "/api/errors": {
+      "post": {
+        "summary": "Report Client Error",
+        "description": "The website's crashes. No account needed: a crash can happen before sign-in.",
+        "operationId": "report_client_error_api_errors_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientError"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Report Client Error Api Errors Post"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/errors": {
+      "post": {
+        "summary": "Admin Errors",
+        "operationId": "admin_errors_api_admin_errors_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorReports"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/errors/resolve": {
+      "post": {
+        "summary": "Resolve Error",
+        "operationId": "resolve_error_api_admin_errors_resolve_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveErrorRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Resolve Error Api Admin Errors Resolve Post"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/injury-impact": {
       "post": {
         "summary": "Injury Impact",
@@ -4360,6 +4535,59 @@
         ],
         "title": "CheckVerdict"
       },
+      "ClientError": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "crash",
+              "error",
+              "rejection"
+            ],
+            "title": "Kind",
+            "description": "crash: a screen failed to draw; error: an uncaught error; rejection: an unhandled promise"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Name",
+            "description": "The error's type, e.g. TypeError",
+            "default": "Error"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Message",
+            "default": ""
+          },
+          "stack": {
+            "type": "string",
+            "maxLength": 16000,
+            "title": "Stack",
+            "default": ""
+          },
+          "page": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Page",
+            "description": "Path and tab, e.g. /?tab=moves; no other query",
+            "default": ""
+          },
+          "build": {
+            "type": "string",
+            "maxLength": 40,
+            "title": "Build",
+            "description": "The website build that sent it",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "ClientError",
+        "description": "A crash or unhandled error in the website, sent so it shows up in the error reports."
+      },
       "CrowdedDay": {
         "properties": {
           "date": {
@@ -4548,6 +4776,96 @@
           "message"
         ],
         "title": "ErrorBody"
+      },
+      "ErrorReport": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "api",
+              "web"
+            ],
+            "title": "Source"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "stack": {
+            "type": "string",
+            "title": "Stack"
+          },
+          "route": {
+            "type": "string",
+            "title": "Route",
+            "description": "The API request or website page it last happened on"
+          },
+          "build": {
+            "type": "string",
+            "title": "Build"
+          },
+          "user_agent": {
+            "type": "string",
+            "title": "User Agent"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "first_seen": {
+            "type": "string",
+            "title": "First Seen"
+          },
+          "last_seen": {
+            "type": "string",
+            "title": "Last Seen"
+          },
+          "resolved": {
+            "type": "boolean",
+            "title": "Resolved",
+            "description": "Marked fixed and not seen since"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "title",
+          "message",
+          "stack",
+          "route",
+          "build",
+          "user_agent",
+          "count",
+          "first_seen",
+          "last_seen",
+          "resolved"
+        ],
+        "title": "ErrorReport"
+      },
+      "ErrorReports": {
+        "properties": {
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/ErrorReport"
+            },
+            "type": "array",
+            "title": "Reports"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reports"
+        ],
+        "title": "ErrorReports"
       },
       "FeedBid": {
         "properties": {
@@ -5960,6 +6278,12 @@
             },
             "type": "array",
             "title": "Notices"
+          },
+          "admin": {
+            "type": "boolean",
+            "title": "Admin",
+            "description": "Can read the site's error reports (ADMIN_EMAILS)",
+            "default": false
           }
         },
         "type": "object",
@@ -8679,6 +9003,20 @@
         ],
         "title": "ReportChange",
         "description": "Something that moved in the league since a saved report was built."
+      },
+      "ResolveErrorRequest": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "ResolveErrorRequest"
       },
       "ScoreDay": {
         "properties": {

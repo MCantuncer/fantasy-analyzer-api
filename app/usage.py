@@ -39,11 +39,6 @@ PAGES = frozenset(
 EVENTS = frozenset({"signup", "sign_in", "league_added", "verify", "analysis", "trade_feedback", "chat_post"})
 
 
-def visitor_address(forwarded_for: str, client) -> str:
-    """The visitor's address as Render's proxy saw it. Only ever hashed with the day's salt."""
-    return forwarded_for.split(",")[0].strip() or (client.host if client else "")
-
-
 def today() -> date:
     return datetime.now(UTC).date()
 
