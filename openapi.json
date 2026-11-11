@@ -191,6 +191,73 @@
         }
       }
     },
+    "/api/admin/usage": {
+      "post": {
+        "summary": "Admin Usage",
+        "description": "Admins only: daily visitors, page views and server events, and account totals.",
+        "operationId": "admin_usage_api_admin_usage_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UsageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageReport"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/errors/resolve": {
       "post": {
         "summary": "Resolve Error",
@@ -12191,6 +12258,100 @@
           "percent_change"
         ],
         "title": "TrendingPlayer"
+      },
+      "UsageDay": {
+        "properties": {
+          "day": {
+            "type": "string",
+            "title": "Day"
+          },
+          "visitors": {
+            "type": "integer",
+            "title": "Visitors",
+            "description": "Distinct visitors that day (a daily hash; never matched across days)"
+          },
+          "signed_in": {
+            "type": "integer",
+            "title": "Signed In",
+            "description": "Of those, how many were signed in"
+          },
+          "new_accounts": {
+            "type": "integer",
+            "title": "New Accounts"
+          },
+          "views": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Views",
+            "description": "Page views by page, e.g. moves, scores"
+          },
+          "events": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Events",
+            "description": "Things done on the server, e.g. signup, analysis"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day",
+          "visitors",
+          "signed_in",
+          "new_accounts",
+          "views",
+          "events"
+        ],
+        "title": "UsageDay"
+      },
+      "UsageReport": {
+        "properties": {
+          "accounts": {
+            "type": "integer",
+            "title": "Accounts"
+          },
+          "verified_teams": {
+            "type": "integer",
+            "title": "Verified Teams"
+          },
+          "followed_leagues": {
+            "type": "integer",
+            "title": "Followed Leagues"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/UsageDay"
+            },
+            "type": "array",
+            "title": "Days",
+            "description": "Most recent first; days with nothing are left out"
+          }
+        },
+        "type": "object",
+        "required": [
+          "accounts",
+          "verified_teams",
+          "followed_leagues",
+          "days"
+        ],
+        "title": "UsageReport"
+      },
+      "UsageRequest": {
+        "properties": {
+          "days": {
+            "type": "integer",
+            "maximum": 366.0,
+            "minimum": 1.0,
+            "title": "Days",
+            "description": "How many days back, today included",
+            "default": 30
+          }
+        },
+        "type": "object",
+        "title": "UsageRequest"
       },
       "ValidationError": {
         "properties": {

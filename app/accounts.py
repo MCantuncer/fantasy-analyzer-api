@@ -19,7 +19,7 @@ import hmac
 import os
 import secrets
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Protocol
 
 SESSION_DAYS = 90
@@ -152,6 +152,16 @@ create table if not exists user_notices (
 """
 
 
+@dataclass
+class AccountTotals:
+    """Counts for the admins' usage page: no emails, no ids."""
+
+    accounts: int
+    verified_teams: int
+    followed_leagues: int  # distinct leagues (and seasons) followed by any account
+    new_by_day: dict[date, int]  # accounts created each day since the date asked for
+
+
 class AccountStore(Protocol):
     def create_user(self, email: str | None, password_hash: str | None, google_sub: str | None = None) -> User: ...
     def login_lookup(self, email: str) -> tuple[User, str | None] | None: ...
@@ -169,6 +179,7 @@ class AccountStore(Protocol):
     def add_notice(self, user_id: int, text: str) -> None: ...
     def notices(self, user_id: int) -> list[Notice]: ...
     def clear_notices(self, user_id: int) -> None: ...
+    def totals(self, since: date) -> AccountTotals: ...
 
 
 def team_of(store: AccountStore, user_id: int, league_id: int, season: int) -> int | None:
@@ -244,6 +255,15 @@ class MemoryAccountStore:
 
     def clear_notices(self, user_id: int) -> None:
         self.notes.pop(user_id, None)
+
+    def totals(self, since: date) -> AccountTotals:
+        new: dict[date, int] = {}
+        for user, _, _ in self.users.values():
+            day = user.created_at.astimezone(UTC).date()
+            if day >= since:
+                new[day] = new.get(day, 0) + 1
+        leagues = {key for followed in self.leagues.values() for key in followed}
+        return AccountTotals(len(self.users), len(self.teams), len(leagues), new)
 
 
 class PostgresAccountStore:
@@ -368,6 +388,18 @@ class PostgresAccountStore:
     def clear_notices(self, user_id: int) -> None:
         with self._connect() as conn:
             conn.execute("delete from user_notices where user_id=%s", (user_id,))
+
+    def totals(self, since: date) -> AccountTotals:
+        with self._connect() as conn:
+            accounts, teams, leagues = conn.execute(
+                "select (select count(*) from users), (select count(*) from team_managers), "
+                "(select count(*) from (select distinct league_id, season from user_leagues) l)"
+            ).fetchone()
+            rows = conn.execute(
+                "select (created_at at time zone 'UTC')::date d, count(*) from users where created_at >= %s group by d",
+                (datetime.combine(since, datetime.min.time(), UTC),),
+            ).fetchall()
+        return AccountTotals(int(accounts), int(teams), int(leagues), {d: int(n) for d, n in rows})
 
 
 def create_account_store() -> AccountStore:

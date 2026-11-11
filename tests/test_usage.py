@@ -134,3 +134,70 @@ def test_postgres_store():
     [day, past] = store.days(old)
     assert day.counts == {"view:moves": 5, "signup": 1} and (day.visitors, day.signed_in) == (3, 2)
     assert past.counts == {"view:moves": 1} and past.visitors == 0
+
+
+def admin_client(app, monkeypatch) -> TestClient:
+    from app.social import hash_token
+
+    app.state.admins = {"boss@example.com"}
+    user = app.state.accounts.create_user("boss@example.com", None)
+    app.state.accounts.save_session(hash_token("boss-token"), user.id)
+    return TestClient(app, headers={"Authorization": "Bearer boss-token"})
+
+
+def test_admins_read_usage_with_account_totals(app, monkeypatch):
+    TestClient(app).post("/api/auth/signup", json={"email": "new@example.com", "password": "longenough"})
+    TestClient(app).post("/api/usage", json={"page": "moves"})
+    TestClient(app).post("/api/usage", json={"page": "moves"})
+    signed_in(app)  # a verified manager
+    boss = admin_client(app, monkeypatch)
+    r = boss.post("/api/admin/usage", json={"days": 7})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["accounts"] == 3 and body["verified_teams"] == 1
+    [today] = body["days"]
+    assert today["views"] == {"moves": 2} and today["events"] == {"signup": 1}  # flushed before reading
+    assert today["visitors"] == 1 and today["new_accounts"] == 3
+
+
+def test_usage_is_admins_only(app):
+    assert TestClient(app).post("/api/admin/usage", json={}).status_code == 401
+    assert signed_in(app).post("/api/admin/usage", json={}).status_code == 403
+    assert signed_in(app).post("/api/admin/usage", json={"days": 0}).status_code == 422
+
+
+def test_account_totals_in_memory():
+    from datetime import UTC, datetime
+
+    from app.accounts import FollowedLeague
+
+    accounts = MemoryAccountStore()
+    a = accounts.create_user("a@example.com", None)
+    b = accounts.create_user("b@example.com", None)
+    accounts.follow(a.id, FollowedLeague(1, 2027, "One"))
+    accounts.follow(b.id, FollowedLeague(1, 2027, "One"))
+    accounts.follow(b.id, FollowedLeague(2, 2027, "Two"))
+    accounts.set_manager(1, 2027, 3, a.id)
+    totals = accounts.totals(datetime.now(UTC).date())
+    assert (totals.accounts, totals.verified_teams, totals.followed_leagues) == (2, 1, 2)
+    assert sum(totals.new_by_day.values()) == 2
+
+
+@pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="set TEST_DATABASE_URL to test against Postgres")
+def test_postgres_account_totals():
+    from datetime import UTC, datetime
+
+    from app.accounts import FollowedLeague, PostgresAccountStore
+
+    accounts = PostgresAccountStore(os.environ["TEST_DATABASE_URL"])
+    with accounts._connect() as conn:
+        conn.execute("truncate users cascade")
+        conn.execute("delete from user_leagues")
+    a = accounts.create_user("a@example.com", None)
+    b = accounts.create_user("b@example.com", None)
+    accounts.follow(a.id, FollowedLeague(1, 2027, "One"))
+    accounts.follow(b.id, FollowedLeague(1, 2027, "One"))
+    accounts.set_manager(1, 2027, 3, a.id)
+    totals = accounts.totals(datetime.now(UTC).date())
+    assert (totals.accounts, totals.verified_teams, totals.followed_leagues) == (2, 1, 1)
+    assert totals.new_by_day == {datetime.now(UTC).date(): 2}

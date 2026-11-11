@@ -150,6 +150,7 @@ All settings are optional for local development.
 | POST | `/api/me/notices/clear` | | Clears the notices |
 | POST | `/api/errors` | `{kind, name, message, stack, page, build}` | Records a website crash (no account needed; rate-limited) |
 | POST | `/api/admin/errors` | | Admins only: error reports, most recent first |
+| POST | `/api/admin/usage` | `{days?}` | Admins only: daily visitors, page views, server events and new accounts, plus account totals |
 | POST | `/api/admin/errors/resolve` | `{id}` | Admins only: marks a report fixed; it opens again if it happens again |
 | POST | `/api/my-leagues/add` | `{league_id, season?}` | Follows a league (no team yet) |
 | POST | `/api/my-leagues/remove` | `{league_id, season?}` | Unfollows it |
