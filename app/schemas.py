@@ -1576,3 +1576,23 @@ class ErrorReports(BaseModel):
 
 class ResolveErrorRequest(BaseModel):
     id: int = Field(gt=0)
+
+
+class UsageRequest(BaseModel):
+    days: int = Field(default=30, ge=1, le=366, description="How many days back, today included")
+
+
+class UsageDay(BaseModel):
+    day: str
+    visitors: int = Field(description="Distinct visitors that day (a daily hash; never matched across days)")
+    signed_in: int = Field(description="Of those, how many were signed in")
+    new_accounts: int
+    views: dict[str, int] = Field(description="Page views by page, e.g. moves, scores")
+    events: dict[str, int] = Field(description="Things done on the server, e.g. signup, analysis")
+
+
+class UsageReport(BaseModel):
+    accounts: int
+    verified_teams: int
+    followed_leagues: int
+    days: list[UsageDay] = Field(description="Most recent first; days with nothing are left out")

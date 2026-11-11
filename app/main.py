@@ -629,6 +629,39 @@ def create_app(
             ]
         )
 
+    @app.post("/api/admin/usage", response_model=schemas.UsageReport, responses={403: {"model": schemas.ErrorBody}})
+    async def admin_usage(
+        body: schemas.UsageRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.UsageReport:
+        """Admins only: daily visitors, page views and server events, and account totals."""
+        await admin_user(authorization)
+        with suppress(Exception):  # the last minute's counts too, when the database takes them
+            await run_in_threadpool(app.state.usage.flush)
+        since = app.state.now().date() - timedelta(days=body.days - 1)
+        rows = await run_in_threadpool(app.state.usage.store.days, since)
+        totals = await run_in_threadpool(app.state.accounts.totals, since)
+        by_day = {r.day: r for r in rows}
+        days = []
+        for day in sorted(set(by_day) | set(totals.new_by_day), reverse=True):
+            r = by_day.get(day)
+            counts = r.counts if r else {}
+            days.append(
+                schemas.UsageDay(
+                    day=day.isoformat(),
+                    visitors=r.visitors if r else 0,
+                    signed_in=r.signed_in if r else 0,
+                    new_accounts=totals.new_by_day.get(day, 0),
+                    views={k.removeprefix("view:"): n for k, n in counts.items() if k.startswith("view:")},
+                    events={k: n for k, n in counts.items() if not k.startswith("view:")},
+                )
+            )
+        return schemas.UsageReport(
+            accounts=totals.accounts,
+            verified_teams=totals.verified_teams,
+            followed_leagues=totals.followed_leagues,
+            days=days,
+        )
+
     @app.post("/api/admin/errors/resolve", responses={403: {"model": schemas.ErrorBody}})
     async def resolve_error(
         body: schemas.ResolveErrorRequest, authorization: str | None = Header(default=None)
