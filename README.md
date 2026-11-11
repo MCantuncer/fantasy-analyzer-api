@@ -50,6 +50,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🔭 | **Vision trades:** buy players off to a slow start before they bounce back, for a stronger playoff run, checked on past seasons | `/api/analyze` |
 | 🛍️ | **Trade Park:** shop up to four of your players to every team at once, with each team's best deal | `/api/shop` |
 | 🎯 | **Trade for one player:** fit, his owner's needs and the best three offers | `/api/target` |
+| ⚖️ | **Check any trade:** name the players on both sides of an offer you got (or plan to send) and see the verdict for both teams: playoff odds, categories, playoff weeks, value on paper, forced cuts and red flags | `/api/offer-check` |
 | 🛒 | **FA Targets:** every healthy free agent against every possible drop | `/api/analyze` |
 | 🎲 | **Season simulation:** 12,000 runs of the remaining schedule in the league's real format | `/api/analyze` |
 | ⭐ | **Trade of the day:** one league-wide win-win deal a day, with a poll | `/api/trade-of-the-day` |
@@ -173,6 +174,7 @@ All settings are optional for local development.
 | POST | `/api/player-card` | `{league_id, season?, player_id, core?}` | One player: latest games, health, news and every move of him in this league; `core` leaves out the slower parts |
 | POST | `/api/player-card/extras` | `{league_id, season?, player_id}` | The slower part of a card: his news and the names of players in his moves |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
+| POST | `/api/offer-check` | `{league_id, team_id, partner_team_id, give_player_ids, get_player_ids, my_drop_player_ids?, direction?, season?, keep_player_ids?}` | Any trade with one other team (1 to 3 players a side, offered to you or one you plan to send): a take / close / pass call for you with the simulation noise, the other team's odds and paper value, both teams' categories and playoff weeks, the cuts and pickups it forces, and the flags the data confirms |
 | POST | `/api/scores` | `{league_id, season?, day?, team_id?, with_sits?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |
 | POST | `/api/scores/games` | `{league_id, season?, day?, team_id?}` | The same day at once from the NBA calendar, with no stats call: teams, tip-off and status, plus this week's fixtures. `complete` is false until the scores are in; ask `/api/scores` for them |
 | POST | `/api/recap` | `{league_id, season?, period?}` | A finished week in review (default: the last one): matchups by category, top players by 9-cat value with their owner, free agents who stood out (who added them, which day, still free?), each team's MVP, best add and bench, and `weeks` for a picker. Built once per league and week, then stored; 404 `week_not_finished` before any week is over |
