@@ -1484,3 +1484,9 @@ class WeekRecap(BaseModel):
     free_agents: list[RecapFreeAgent] = Field(description="Best players who were free when the week began")
     teams: list[RecapTeam]
     weeks: list[RecapWeekRef] = Field(description="Every finished week, for a week picker")
+
+
+class PageView(BaseModel):
+    """A page the website opened, for the usage numbers. Only the page name: no ids, no query."""
+
+    page: str = Field(max_length=40, description="A tab or screen, e.g. moves, scores, my-leagues")

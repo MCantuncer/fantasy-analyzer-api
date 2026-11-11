@@ -60,6 +60,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🩹 | **Injury impact:** which teammates gain while a player is out | `/api/injury-impact` |
 | 🃏 | **Player cards:** any player's latest games, health, news and every move of him in the league | `/api/player-card` |
 | 📝 | **Trade feedback and rules:** rate a trade idea and have it checked against today's league; your own rules hide ideas that break them | `/api/trade-feedback`, `/api/trade-check`, `/api/trade-rules` |
+| 📈 | **Usage numbers:** daily visitors, page views and sign-ups, with no cookies or ids: a visitor is a hash under a salt that is deleted each day | `/api/usage` |
 | 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |
 | 💬 | **Moves feed and league chat:** transactions, posts, replies and reactions | `/api/feed`, `/api/posts` |
 | 🔐 | **Accounts and verified managers:** email or Google sign-in, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
@@ -130,6 +131,7 @@ All settings are optional for local development.
 | `LEAGUE_CACHE_SECONDS` | `600` | How long league data from ESPN is cached |
 | `DAILY_TRADE_WAIT_SECONDS` | `20` | How long a trade-of-the-day request waits before answering `pending` |
 | `DAILY_TRADE_RECHECK_SECONDS` | `10800` | How often the day's pick is checked again |
+| `USAGE_FLUSH_SECONDS` | `60` | How often usage counts held in memory are written to the database |
 
 ## API reference
 
@@ -140,6 +142,7 @@ All settings are optional for local development.
 | POST | `/api/auth/login` | `{email, password}` | `{token, me}` |
 | POST | `/api/auth/google` | `{credential}` | `{token, me}` from a Google Identity Services ID token |
 | POST | `/api/auth/logout` | | Ends the session |
+| POST | `/api/usage` | `{page}` | Counts a page view from the website (known page names only) |
 | POST | `/api/me` | | The account, its leagues (with the verified team, if any) and notices |
 | POST | `/api/me/notices/clear` | | Clears the notices |
 | POST | `/api/my-leagues/add` | `{league_id, season?}` | Follows a league (no team yet) |
