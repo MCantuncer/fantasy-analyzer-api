@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from app.espn.client import EspnClient
-from app.lineup import Spot, open_slots, slot_name
+from app.lineup import Spot, next_game, open_slots, season_average, slot_name, team_days, week_of
 from app.main import create_app
 from app.scores import build_day, game_status, parse_lines, parse_schedule, settled, week_fixtures
 from app.store import MemoryStore
@@ -365,6 +365,15 @@ def test_lineup_reads_one_teams_slots_for_the_day(recorded, schedule_raw, day4_p
     assert any(s["game_id"] for s in body["spots"])
     # Slots each can fill, among the league's starting slots: UTIL fits everyone, never BE or IR.
     assert all("UTIL" in s["eligible"] and not {"BE", "IR"} & set(s["eligible"]) for s in body["spots"])
+    # The week the day falls in (opening night Tue 20 to Sun 25 Oct), each player's game days and his next game.
+    assert [w["date"] for w in body["week"]] == [f"2026-10-{d}" for d in range(20, 26)]
+    week = [w["day"] for w in body["week"]]
+    for s in body["spots"]:
+        assert s["week_games"] == [
+            d for d in week if any(s["pro_team_id"] in (g.away, g.home) for g in sched.games.get(d, []))
+        ]
+        nxt = s["next_game"]
+        assert nxt is not None and nxt["day"] > 4 and nxt["opponent"]["pro_team_id"] != s["pro_team_id"]
 
 
 def test_lineup_follows_espn_within_its_cache(recorded, schedule_raw, day4_players):
@@ -402,3 +411,48 @@ def test_open_starting_slots():
     ]
     assert open_slots(spots, {0: 1, 4: 1, 11: 3}) == [4, 11, 11]
     assert [slot_name(s) for s in (0, 11, 12, 13, 99)] == ["PG", "UTIL", "BE", "IR", "Slot 99"]
+
+
+def test_season_average_is_his_real_line_this_season():
+    player = {
+        "stats": [
+            {"seasonId": 2027, "statSourceId": 1, "statSplitTypeId": 0, "averageStats": {"0": 30.0, "42": 82}},
+            {"seasonId": 2026, "statSourceId": 0, "statSplitTypeId": 0, "averageStats": {"0": 20.0, "42": 70}},
+            {"seasonId": 2027, "statSourceId": 0, "statSplitTypeId": 1, "averageStats": {"0": 40.0, "42": 1}},
+            {
+                "seasonId": 2027,
+                "statSourceId": 0,
+                "statSplitTypeId": 0,
+                "averageStats": {"0": 27.111, "6": 6.0, "13": 8.22, "14": 19.56, "40": 33.78, "42": 9},
+            },
+        ]
+    }
+    avg = season_average(player, 2027)
+    assert avg is not None
+    assert (avg["gp"], avg["pts"], avg["reb"], avg["fgm"], avg["fga"], avg["min"], avg["ast"]) == (
+        9,
+        27.11,
+        6.0,
+        8.22,
+        19.56,
+        33.78,
+        0.0,
+    )
+    # No games yet, or no line this season: nothing rather than a projection.
+    none_yet = {"stats": [{"seasonId": 2027, "statSourceId": 0, "statSplitTypeId": 0, "averageStats": {"42": 0}}]}
+    assert season_average(none_yet, 2027) is None
+    assert season_average({"stats": player["stats"][:2]}, 2027) is None
+
+
+def test_next_game_and_week_days(schedule_raw):
+    sched = parse_schedule(schedule_raw)
+    hou_days = sorted(d for d, gs in sched.games.items() if any(HOU in (g.away, g.home) for g in gs))
+    assert hou_days == [4, 5, 7]  # the recorded first week
+    g = next_game(sched, HOU, 5)
+    assert g is not None and g.day == 7 and HOU in (g.away, g.home)
+    assert next_game(sched, HOU, 7) is None  # the record ends there
+    # Day 4 is Fri 23 Oct: its week runs from opening night (Tue 20, day 1) to Sun 25 Oct (day 6).
+    week = week_of(sched, 4)
+    assert week == [1, 2, 3, 4, 5, 6]
+    assert team_days(sched, HOU, week) == [4, 5]
+    assert week_of(sched, 7) == list(range(7, 14))  # Mon 26 Oct to Sun 1 Nov

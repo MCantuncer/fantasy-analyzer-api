@@ -910,6 +910,37 @@ class LineupRequest(LeagueRequest):
     )
 
 
+class SeasonAverage(BaseModel):
+    """A player's real per-game line this season (not a projection)."""
+
+    gp: int = Field(description="Games played this season")
+    min: float
+    fgm: float
+    fga: float
+    ftm: float
+    fta: float
+    tpm: float
+    reb: float
+    ast: float
+    stl: float
+    blk: float
+    to: float
+    pts: float
+
+
+class LineupDay(BaseModel):
+    day: int
+    date: str | None = None
+
+
+class NextGame(BaseModel):
+    day: int
+    date: str | None = None
+    start: str = Field(description="Tip-off, UTC ISO 8601")
+    opponent: GameSide
+    home: bool
+
+
 class LineupSpot(BaseModel):
     player_id: int
     name: str
@@ -922,6 +953,13 @@ class LineupSpot(BaseModel):
     eligible: list[str] = Field(
         default_factory=list, description="Starting slots he can fill, so a bench player who plays can be moved up"
     )
+    season_avg: SeasonAverage | None = Field(
+        default=None, description="His per-game line this season; none before his first game"
+    )
+    next_game: NextGame | None = Field(default=None, description="His NBA team's first game after this day")
+    week_games: list[int] = Field(
+        default_factory=list, description="Days of this Monday-to-Sunday week (see DayLineup.week) his NBA team plays"
+    )
 
 
 class DayLineup(BaseModel):
@@ -932,6 +970,7 @@ class DayLineup(BaseModel):
     date: str | None = None
     spots: list[LineupSpot] = Field(description="Starting slots in ESPN's order, then the bench, then IR")
     open_slots: list[str] = Field(description="Starting slots nobody fills that day, one entry per empty seat")
+    week: list[LineupDay] = Field(default_factory=list, description="The Monday-to-Sunday week this day falls in")
     fetched_at: str = Field(description="When this lineup was read from ESPN, UTC ISO 8601")
 
 
