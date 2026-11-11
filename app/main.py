@@ -44,6 +44,7 @@ from app.analysis.durability import attach as attach_durability
 from app.analysis.injury import LAST_SEASON_WEIGHT, Season, parse_gamelogs
 from app.analysis.injury import analyze as analyze_absence
 from app.analysis.model import CategoryModel
+from app.analysis.offer import OfferChecker, OfferError
 from app.analysis.projection import crowded_days, project_matchup
 from app.analysis.report import Analyzer, league_summary
 from app.analysis.shop import ShopAnalyzer, ShopError
@@ -1717,6 +1718,74 @@ def create_app(
             return await run_in_threadpool(give_back_after, run)
         except TargetError as exc:
             raise HTTPException(400, detail={"code": exc.code, "message": str(exc)}) from exc
+
+    @app.post(
+        "/api/offer-check",
+        response_model=schemas.OfferCheck,
+        responses={
+            400: {"model": schemas.ErrorBody},
+            401: {"model": schemas.ErrorBody},
+            403: {"model": schemas.ErrorBody},
+            422: {"model": schemas.ErrorBody},
+        },
+    )
+    async def offer_check(
+        body: schemas.OfferCheckRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.OfferCheck:
+        """Check any trade with another team, offered to you or one you plan to send: the verdict for both sides."""
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        seat = await linked(authorization, body.league_id, season, required=True)
+        if seat.team_id != body.team_id:
+            raise HTTPException(403, detail=NOT_YOUR_TEAM)
+        key = (
+            "offer",
+            body.league_id,
+            season,
+            body.team_id,
+            body.partner_team_id,
+            tuple(sorted(body.give_player_ids)),
+            tuple(sorted(body.get_player_ids)),
+            tuple(sorted(body.my_drop_player_ids)),
+            tuple(sorted(body.keep_player_ids)),
+            tuple(sorted(body.not_for_sale_player_ids)),
+            body.direction,
+            credentials_key(creds),
+        )
+        cached = app.state.reports.get(key)
+        if cached is not None:
+            return cached
+        lg = await load_league(body.league_id, season, creds, with_fa=True)
+        if lg.team(body.team_id) is None:
+            raise HTTPException(
+                404, detail={"code": "team_not_found", "message": "No team with that ID in this league."}
+            )
+        summary = league_summary(lg)
+        if not summary.supported:
+            raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
+
+        def run() -> schemas.OfferCheck:
+            return OfferChecker(
+                lg,
+                body.team_id,
+                body.partner_team_id,
+                body.give_player_ids,
+                body.get_player_ids,
+                body.my_drop_player_ids,
+                body.keep_player_ids,
+                body.not_for_sale_player_ids,
+                body.direction,
+            ).check()
+
+        try:
+            result = await run_in_threadpool(give_back_after, run)
+        except OfferError as exc:
+            raise HTTPException(400, detail={"code": exc.code, "message": str(exc)}) from exc
+        app.state.reports.set(key, result)
+        return result
 
     @app.post(
         "/api/trade-check",

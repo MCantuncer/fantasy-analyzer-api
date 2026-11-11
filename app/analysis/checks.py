@@ -64,8 +64,8 @@ class StaleIdea(ValueError):
 class Rebuilt:
     give: list[Player]
     get: list[Player]
-    my_add: Player | None
-    my_drop: Player | None
+    my_adds: list[Player]  # free agents I pick up for the spots the deal opens
+    my_drops: list[Player]  # who I cut to fit the extra players I get
     partner_idx: int
     my_roster: list[Player]
     their_roster: list[Player]
@@ -118,7 +118,8 @@ class IdeaChecker(Analyzer):
         their_roster = [p for p in self.teams[partner_idx].roster if p.id not in gone] + give
         if len(get) > len(give) and self.finder.filler is not None:
             their_roster.append(self.finder.filler)  # as the finder does: they fill the open spot
-        return Rebuilt(give, get, my_add, my_drop, partner_idx, my_roster, their_roster)
+        adds, drops = [my_add] if my_add else [], [my_drop] if my_drop else []
+        return Rebuilt(give, get, adds, drops, partner_idx, my_roster, their_roster)
 
     # ---- checks --------------------------------------------------------------------------
 
@@ -142,9 +143,9 @@ class IdeaChecker(Analyzer):
         return self.after - self.before
 
     def free_pickup(self) -> tuple[str, str]:
-        add = self.deal.my_add
-        if add is None:
+        if not self.deal.my_adds:
             return "not_supported", "The deal doesn't rely on a free agent pickup."
+        add = self.deal.my_adds[0]
         # The pickup alone: the same free agent for my weakest droppable player.
         options = droppable(self.me.roster, self.keep) or list(self.deal.give)
         drop = min(options, key=self.model.value)
@@ -177,15 +178,14 @@ class IdeaChecker(Analyzer):
         """Is the talent coming in better than the talent going out, apart from the free pickup?"""
         v = self.model.value
         net = sum(v(p) for p in self.deal.get) - sum(v(p) for p in self.deal.give)
-        if self.deal.my_drop is not None:
-            net -= v(self.deal.my_drop)
-        if self.deal.my_add is not None:
-            # The open spot's pickup needs no trade: it would replace my weakest droppable player anyway.
+        net -= sum(v(p) for p in self.deal.my_drops)
+        if self.deal.my_adds:
+            # An open spot's pickup needs no trade: it would replace one of my weakest droppable players anyway.
             options = droppable(self.me.roster, self.keep) or list(self.deal.give)
-            net += v(min(options, key=v))
+            net += sum(v(p) for p in sorted(options, key=v)[: len(self.deal.my_adds)])
         names = lambda ps: " + ".join(f"{p.name} ({v(p):+.1f})" for p in ps)  # noqa: E731
         text = f"Model value in: {names(self.deal.get)}; out: {names(self.deal.give)}; net {net:+.1f}"
-        text += ", counting the free pickup as something you could do anyway." if self.deal.my_add else "."
+        text += ", counting the free pickup as something you could do anyway." if self.deal.my_adds else "."
         return ("confirmed" if net <= LATERAL else "not_supported"), text
 
     def build_conflict(self) -> tuple[str, str]:
@@ -203,7 +203,7 @@ class IdeaChecker(Analyzer):
         return "not_supported", "No category you win at least half the time drops by 5 points or more."
 
     def _incoming(self) -> list[Player]:
-        return self.deal.get + ([self.deal.my_add] if self.deal.my_add else [])
+        return self.deal.get + self.deal.my_adds
 
     def small_sample(self) -> tuple[str, str]:
         thin = [p for p in self._incoming() if not p.has_prior and p.games_played < 2 * MIN_SAMPLE_GAMES]

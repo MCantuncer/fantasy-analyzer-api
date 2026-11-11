@@ -2198,6 +2198,125 @@
         }
       }
     },
+    "/api/offer-check": {
+      "post": {
+        "summary": "Offer Check",
+        "description": "Check any trade with another team, offered to you or one you plan to send: the verdict for both sides.",
+        "operationId": "offer_check_api_offer_check_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OfferCheckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferCheck"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        }
+      }
+    },
     "/api/trade-check": {
       "post": {
         "summary": "Trade Check",
@@ -5037,6 +5156,18 @@
             "title": "Starter",
             "description": "In his team's starting five",
             "default": false
+          },
+          "on_court": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Court",
+            "description": "On the floor right now; set only while the game is live and ESPN says"
           }
         },
         "type": "object",
@@ -6563,6 +6694,313 @@
           "at"
         ],
         "title": "Notice"
+      },
+      "OfferCheck": {
+        "properties": {
+          "direction": {
+            "type": "string",
+            "enum": [
+              "received",
+              "sending"
+            ],
+            "title": "Direction"
+          },
+          "team_id": {
+            "type": "integer",
+            "title": "Team Id"
+          },
+          "team_name": {
+            "type": "string",
+            "title": "Team Name"
+          },
+          "partner_team_id": {
+            "type": "integer",
+            "title": "Partner Team Id"
+          },
+          "partner_team_name": {
+            "type": "string",
+            "title": "Partner Team Name"
+          },
+          "partner_record": {
+            "type": "string",
+            "title": "Partner Record"
+          },
+          "call": {
+            "type": "string",
+            "enum": [
+              "take",
+              "close",
+              "pass"
+            ],
+            "title": "Call",
+            "description": "For you: take (odds up a point beyond noise), pass (down a point beyond noise), close otherwise"
+          },
+          "call_reason": {
+            "type": "string",
+            "title": "Call Reason",
+            "description": "Why, in a sentence"
+          },
+          "odds_noise": {
+            "type": "number",
+            "title": "Odds Noise",
+            "description": "Simulation noise on your odds change (two standard errors, 0-1)"
+          },
+          "helps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Helps",
+            "description": "Your categories whose weekly win chance rises 2+ points, biggest first"
+          },
+          "hurts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hurts",
+            "description": "Your categories whose weekly win chance drops 2+ points, biggest first"
+          },
+          "partner_call": {
+            "type": "string",
+            "enum": [
+              "gain",
+              "even",
+              "lose"
+            ],
+            "title": "Partner Call",
+            "description": "Their playoff odds: up a point, flat, down"
+          },
+          "partner_reason": {
+            "type": "string",
+            "title": "Partner Reason"
+          },
+          "partner_helps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Partner Helps",
+            "description": "Their categories that rise, ignoring the ones they punt"
+          },
+          "partner_hurts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Partner Hurts"
+          },
+          "partner_punts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Partner Punts",
+            "description": "Categories they win less than 30% of the time"
+          },
+          "paper_win": {
+            "type": "boolean",
+            "title": "Paper Win",
+            "description": "They get at least the trade value they send, owner premium included"
+          },
+          "my_drops": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "My Drops",
+            "description": "Who you cut to fit the extra players you get"
+          },
+          "my_drop_options": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "My Drop Options",
+            "description": "Players you could cut instead, cheapest first (kept players left out)"
+          },
+          "my_adds": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "My Adds",
+            "description": "Free agents you pick up for the spots the trade opens"
+          },
+          "their_drops": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Their Drops",
+            "description": "Who they would likely cut"
+          },
+          "their_adds": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerRef"
+            },
+            "type": "array",
+            "title": "Their Adds",
+            "description": "Free agents they pick up for the spots the trade opens"
+          },
+          "vs_pickup": {
+            "type": "boolean",
+            "title": "Vs Pickup",
+            "description": "Your odds are measured against picking up your free agents without the trade"
+          },
+          "flags": {
+            "items": {
+              "$ref": "#/components/schemas/CheckVerdict"
+            },
+            "type": "array",
+            "title": "Flags",
+            "description": "Concerns the data confirms, e.g. a category you compete in drops"
+          },
+          "idea": {
+            "$ref": "#/components/schemas/TradeIdea",
+            "description": "The full picture: both teams' odds, categories, playoff weeks, value, pitch"
+          },
+          "sims": {
+            "type": "integer",
+            "title": "Sims",
+            "description": "Simulated seasons behind the odds"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          },
+          "elapsed_ms": {
+            "type": "integer",
+            "title": "Elapsed Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "direction",
+          "team_id",
+          "team_name",
+          "partner_team_id",
+          "partner_team_name",
+          "partner_record",
+          "call",
+          "call_reason",
+          "odds_noise",
+          "helps",
+          "hurts",
+          "partner_call",
+          "partner_reason",
+          "partner_helps",
+          "partner_hurts",
+          "partner_punts",
+          "paper_win",
+          "my_drops",
+          "my_adds",
+          "their_drops",
+          "their_adds",
+          "vs_pickup",
+          "flags",
+          "idea",
+          "sims",
+          "generated_at",
+          "elapsed_ms"
+        ],
+        "title": "OfferCheck"
+      },
+      "OfferCheckRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          },
+          "keep_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Keep Player Ids",
+            "description": "Players never offered in trades or suggested as drops"
+          },
+          "not_for_sale_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Not For Sale Player Ids",
+            "description": "Other teams' players their owners won't move: never targeted in trades"
+          },
+          "partner_team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Partner Team Id",
+            "description": "The other team in the trade"
+          },
+          "give_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Give Player Ids",
+            "description": "Your players in the trade"
+          },
+          "get_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Get Player Ids",
+            "description": "Their players in the trade"
+          },
+          "my_drop_player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "title": "My Drop Player Ids",
+            "description": "Who you'd cut to fit the extra players you get; your least valuable droppable players if empty"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "received",
+              "sending"
+            ],
+            "title": "Direction",
+            "description": "received: they offered it to you. sending: you plan to propose it",
+            "default": "received"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id",
+          "partner_team_id",
+          "give_player_ids",
+          "get_player_ids"
+        ],
+        "title": "OfferCheckRequest"
       },
       "OverviewMatchup": {
         "properties": {

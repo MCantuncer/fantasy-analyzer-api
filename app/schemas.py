@@ -1328,6 +1328,55 @@ class TradeCheck(BaseModel):
     read_as: NoteRead | None = Field(default=None, description="How the manager's note was read, when it was")
 
 
+class OfferCheckRequest(AnalyzeRequest):
+    partner_team_id: int = Field(gt=0, description="The other team in the trade")
+    give_player_ids: list[int] = Field(min_length=1, max_length=3, description="Your players in the trade")
+    get_player_ids: list[int] = Field(min_length=1, max_length=3, description="Their players in the trade")
+    my_drop_player_ids: list[int] = Field(
+        default_factory=list,
+        max_length=2,
+        description="Who you'd cut to fit the extra players you get; your least valuable droppable players if empty",
+    )
+    direction: Literal["received", "sending"] = Field(
+        default="received", description="received: they offered it to you. sending: you plan to propose it"
+    )
+
+
+class OfferCheck(BaseModel):
+    direction: Literal["received", "sending"]
+    team_id: int
+    team_name: str
+    partner_team_id: int
+    partner_team_name: str
+    partner_record: str
+    call: Literal["take", "close", "pass"] = Field(
+        description="For you: take (odds up a point beyond noise), pass (down a point beyond noise), close otherwise"
+    )
+    call_reason: str = Field(description="Why, in a sentence")
+    odds_noise: float = Field(description="Simulation noise on your odds change (two standard errors, 0-1)")
+    helps: list[str] = Field(description="Your categories whose weekly win chance rises 2+ points, biggest first")
+    hurts: list[str] = Field(description="Your categories whose weekly win chance drops 2+ points, biggest first")
+    partner_call: Literal["gain", "even", "lose"] = Field(description="Their playoff odds: up a point, flat, down")
+    partner_reason: str
+    partner_helps: list[str] = Field(description="Their categories that rise, ignoring the ones they punt")
+    partner_hurts: list[str]
+    partner_punts: list[str] = Field(description="Categories they win less than 30% of the time")
+    paper_win: bool = Field(description="They get at least the trade value they send, owner premium included")
+    my_drops: list[PlayerRef] = Field(description="Who you cut to fit the extra players you get")
+    my_drop_options: list[PlayerRef] = Field(
+        default_factory=list, description="Players you could cut instead, cheapest first (kept players left out)"
+    )
+    my_adds: list[PlayerRef] = Field(description="Free agents you pick up for the spots the trade opens")
+    their_drops: list[PlayerRef] = Field(description="Who they would likely cut")
+    their_adds: list[PlayerRef] = Field(description="Free agents they pick up for the spots the trade opens")
+    vs_pickup: bool = Field(description="Your odds are measured against picking up your free agents without the trade")
+    flags: list[CheckVerdict] = Field(description="Concerns the data confirms, e.g. a category you compete in drops")
+    idea: TradeIdea = Field(description="The full picture: both teams' odds, categories, playoff weeks, value, pitch")
+    sims: int = Field(description="Simulated seasons behind the odds")
+    generated_at: str
+    elapsed_ms: int
+
+
 TradeRuleKind = Literal["protect_category", "skip_team", "no_injury_prone"]
 
 
