@@ -1343,8 +1343,19 @@ class OfferCheckRequest(AnalyzeRequest):
     )
 
 
+class OfferCutOption(BaseModel):
+    player: PlayerRef = Field(description="tier says whether he is droppable or has trade value")
+    chosen: bool = Field(description="The cut this check used")
+    playoff_pct_after: float | None = Field(
+        default=None,
+        description="Your playoff odds after the trade with this cut; given for the cheapest few of a one-player cut",
+    )
+
+
 class OfferCheck(BaseModel):
-    direction: Literal["received", "sending"]
+    direction: Literal["received", "sending"] = Field(
+        description="received: idea.acceptance and idea.pitch are still filled but don't apply, since they offered it"
+    )
     team_id: int
     team_name: str
     partner_team_id: int
@@ -1362,9 +1373,10 @@ class OfferCheck(BaseModel):
     partner_helps: list[str] = Field(description="Their categories that rise, ignoring the ones they punt")
     partner_hurts: list[str]
     partner_punts: list[str] = Field(description="Categories they win less than 30% of the time")
+    my_punts: list[str] = Field(default_factory=list, description="Categories you win less than 30% of the time")
     paper_win: bool = Field(description="They get at least the trade value they send, owner premium included")
     my_drops: list[PlayerRef] = Field(description="Who you cut to fit the extra players you get")
-    my_drop_options: list[PlayerRef] = Field(
+    my_drop_options: list[OfferCutOption] = Field(
         default_factory=list, description="Players you could cut instead, cheapest first (kept players left out)"
     )
     my_adds: list[PlayerRef] = Field(description="Free agents you pick up for the spots the trade opens")
@@ -1372,6 +1384,10 @@ class OfferCheck(BaseModel):
     their_adds: list[PlayerRef] = Field(description="Free agents they pick up for the spots the trade opens")
     vs_pickup: bool = Field(description="Your odds are measured against picking up your free agents without the trade")
     flags: list[CheckVerdict] = Field(description="Concerns the data confirms, e.g. a category you compete in drops")
+    checks: list[CheckVerdict] = Field(
+        default_factory=list,
+        description="Every data check that ran, confirmed or clear, so a page can name the clear ones",
+    )
     idea: TradeIdea = Field(description="The full picture: both teams' odds, categories, playoff weeks, value, pitch")
     sims: int = Field(description="Simulated seasons behind the odds")
     generated_at: str

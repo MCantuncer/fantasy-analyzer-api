@@ -39,6 +39,7 @@ NOISE_SE = 2.0  # a change inside this many standard errors of zero is a close c
 PINNED = 1 - LOCK_ODDS  # odds this close to 0 or 1 can't move: judge on weekly categories instead
 CATS_CALL = 0.10  # expected categories won per week that make a call when odds are pinned
 CAT_MOVE = 0.02  # change in weekly win chance worth naming
+CUT_OPTIONS = 4  # cheapest cuts that get their own odds, for a one-player cut
 FLAG_CHECKS = ["build_conflict", "injury", "small_sample", "lateral_swap"]
 
 Call = Literal["take", "close", "pass"]
@@ -284,11 +285,14 @@ class OfferChecker(IdeaChecker):
             return "lose", f"Their playoff odds go down {_pts(-move)}, {joint} {on_paper}."
         return "even", f"Their playoff odds barely move, and {on_paper}."
 
-    def _flags(self) -> list[schemas.CheckVerdict]:
+    def _flags(self) -> tuple[list[schemas.CheckVerdict], list[schemas.CheckVerdict]]:
+        """The concerns the data confirms, and every check that ran (so a page can say which came back clear)."""
+
         def flag(check: str, title: str, evidence: str) -> schemas.CheckVerdict:
             return schemas.CheckVerdict(check=check, title=title, status="confirmed", evidence=evidence)
 
-        flags = [v for v in self.run(FLAG_CHECKS) if v.status == "confirmed"]
+        checks = self.run(FLAG_CHECKS)
+        flags = [v for v in checks if v.status == "confirmed"]
         kept = [p.name for p in self.give if p.id in self.keep]
         if kept:
             flags.append(flag("keep", "You keep him", f"You marked {', '.join(kept)} as a keeper."))
@@ -297,15 +301,41 @@ class OfferChecker(IdeaChecker):
         if cut:
             text = f"To fit the players you get you'd cut {', '.join(cut)}, who has trade value: trade him instead."
             flags.append(flag("forced_cut", "Forced cut", text))
-        return flags
+        return flags, checks
 
-    def _drop_options(self) -> list[schemas.PlayerRef]:
-        """Players I could cut instead, cheapest first, when the deal brings in more than it sends."""
-        if len(self.get) <= len(self.give):
+    def _drop_options(self) -> list[schemas.OfferCutOption]:
+        """Players I could cut instead, cheapest first, when the deal brings in more than it sends.
+
+        For a one-player cut, each of the cheapest CUT_OPTIONS comes with my playoff odds if I cut him
+        instead, on the same simulated seasons, so the page can show what a different cut costs.
+        """
+        need = len(self.get) - len(self.give)
+        if need <= 0:
             return []
         give_ids = {p.id for p in self.give}
-        options = [p for p in self.me.roster if p.id not in give_ids and p.id not in self.keep]
-        return [self.ref(p) for p in sorted(options, key=self.model.value)]
+        chosen = {p.id for p in self.my_drops}
+        options = sorted(
+            (p for p in self.me.roster if p.id not in give_ids and p.id not in self.keep), key=self.model.value
+        )
+        out = []
+        for rank, p in enumerate(options):
+            odds = None
+            if p.id in chosen:
+                odds = self.after
+            elif need == 1 and rank < CUT_OPTIONS:
+                roster = [q for q in self.deal.my_roster if q.id != p.id] + self.my_drops
+                dists = list(self.deal_dists)
+                dists[self.idx] = self.model.dist(roster)
+                result = self.season_result(dists, {self.idx: roster, self.j: self.deal.their_roster}, fine=True)
+                odds = float(result.playoff_pct[self.idx])
+            out.append(
+                schemas.OfferCutOption(
+                    player=self.ref(p),
+                    chosen=p.id in chosen,
+                    playoff_pct_after=None if odds is None else round(odds, 3),
+                )
+            )
+        return out
 
     def check(self) -> schemas.OfferCheck:
         started = time.perf_counter()
@@ -324,6 +354,7 @@ class OfferChecker(IdeaChecker):
         call, why = self._call(d.my_gain, helps, hurts)
         paper = d.give_value >= d.get_value - 1e-9
         their_call, their_why = self._partner_call(*theirs, paper)
+        flags, checks = self._flags()
         return schemas.OfferCheck(
             direction=self.direction,
             team_id=self.me.id,
@@ -341,6 +372,7 @@ class OfferChecker(IdeaChecker):
             partner_helps=their_helps,
             partner_hurts=their_hurts,
             partner_punts=[self.cat_names[c] for c in np.flatnonzero(self.finder.punts[j])],
+            my_punts=[self.cat_names[c] for c in np.flatnonzero(self.finder.punts[self.idx])],
             paper_win=paper,
             my_drops=[self.ref(p) for p in self.my_drops],
             my_drop_options=self._drop_options(),
@@ -348,7 +380,8 @@ class OfferChecker(IdeaChecker):
             their_drops=[self.ref(p) for p in self.their_drops],
             their_adds=[self.ref(p) for p in self.their_adds],
             vs_pickup=self.free_roster is not None,
-            flags=self._flags(),
+            flags=flags,
+            checks=checks,
             idea=idea,
             sims=FINE_SIMS,
             generated_at=datetime.now(UTC).isoformat(timespec="seconds"),

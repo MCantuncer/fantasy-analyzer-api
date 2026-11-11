@@ -29,6 +29,12 @@ def test_two_for_two_reads_both_sides(league):
     assert c.call_reason and c.partner_reason
     assert 0 < c.odds_noise < 0.02
     assert c.sims >= 10000
+    assert {v.check for v in c.checks} == {"build_conflict", "injury", "small_sample", "lateral_swap"}
+    assert [f.check for f in c.flags if f.check in {v.check for v in c.checks}] == [
+        v.check for v in c.checks if v.status == "confirmed"
+    ]
+    assert isinstance(c.my_punts, list)
+    assert not c.my_drop_options  # an even trade needs no cut
 
 
 def test_call_follows_the_odds(league):
@@ -55,12 +61,18 @@ def test_one_for_two_cuts_my_cheapest_and_lets_me_choose(league):
     assert len(c.my_drops) == 1
     auto = c.my_drops[0]
     assert auto.tier == "droppable"
-    assert c.my_drop_options and c.my_drop_options[0].id == auto.id
+    options = c.my_drop_options
+    assert options and options[0].player.id == auto.id and options[0].chosen
+    assert options[0].playoff_pct_after == c.idea.playoff_pct_after
+    priced = [o for o in options if o.playoff_pct_after is not None]
+    assert 2 <= len(priced) <= 5
     assert len(c.their_adds) == 1  # they fill the spot from free agency
-    other = next(p for p in c.my_drop_options if p.id != auto.id)
-    mine = check(league, JZE, ["Jarrett Allen"], ["Desmond Bane", "Fred VanVleet"], my_drop_ids=[other.id])
-    assert [p.id for p in mine.my_drops] == [other.id]
-    assert mine.idea.my_drop.id == other.id
+    other = next(o for o in priced if not o.chosen)
+    mine = check(league, JZE, ["Jarrett Allen"], ["Desmond Bane", "Fred VanVleet"], my_drop_ids=[other.player.id])
+    assert [p.id for p in mine.my_drops] == [other.player.id]
+    assert mine.idea.my_drop.id == other.player.id
+    # The option's odds are the odds of the check that makes that cut, on the same simulated seasons.
+    assert mine.idea.playoff_pct_after == other.playoff_pct_after
 
 
 def test_two_for_one_is_measured_against_the_free_pickup(league):
