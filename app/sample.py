@@ -6,6 +6,7 @@ numbers without naming the people who run those teams. This module is pure: it t
 reports and returns masked copies, and picks the team with the clearest move of the day.
 """
 
+import math
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -120,7 +121,11 @@ class Move:
 
 def best_move(report: AnalysisReport) -> Move | None:
     """The move the Best move card leads with (mirrors the web's bestMoveOf): top trade or top
-    straight add/drop, whichever raises the odds more, a pickup winning a tie. None means hold.
+    straight add/drop, whichever is worth more, a pickup winning a tie. None means hold.
+
+    A trade needs a yes, so it is weighed by its expected gain (its gain times the chance they
+    accept, to one decimal of a point, as its row prints); a pickup needs no one and counts in
+    full. ``Move.gain`` stays the full odds change, the number the card shows.
 
     A trade only counts when the partner's odds rise too, so the sample never shows a deal
     the other team gains nothing from.
@@ -131,12 +136,18 @@ def best_move(report: AnalysisReport) -> Move | None:
     pickup = next((p for p in report.pickups if not p.open_spot_by_trade), None)
     trade_gain = trade.playoff_pct_after - trade.playoff_pct_before if trade else -1.0
     pickup_gain = pickup.playoff_pct_after - pickup.playoff_pct_before if pickup else -1.0
-    if trade_gain <= 0 and pickup_gain <= 0:
+    expected = trade.acceptance * trade_gain if trade else -1.0
+    if expected <= 0 and pickup_gain <= 0:
         return None
-    if pickup is not None and pickup_gain >= trade_gain:
+    if pickup is not None and pickup_gain > 0 and (expected <= 0 or _tenths(pickup_gain) >= _tenths(expected)):
         return Move("pickup", pickup_gain, pickup.playoff_pct_before)
     assert trade is not None
     return Move("trade", trade_gain, trade.playoff_pct_before)
+
+
+def _tenths(gain: float) -> int:
+    """An odds change (0-1) in tenths of a point, rounded half up like the web's Math.round."""
+    return math.floor(gain * 1000 + 0.5)
 
 
 def _partner_gains(trade) -> bool:

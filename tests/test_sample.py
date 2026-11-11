@@ -94,8 +94,14 @@ def _pickup(before: float, after: float, by_trade: bool = False) -> dict:
     }
 
 
-def _trade(before: float, after: float, partner: tuple[float | None, float | None] = (0.3, 0.35)) -> dict:
+def _trade(
+    before: float,
+    after: float,
+    partner: tuple[float | None, float | None] = (0.3, 0.35),
+    acceptance: float = 1.0,
+) -> dict:
     return {
+        "acceptance": acceptance,
         "playoff_pct_before": before,
         "playoff_pct_after": after,
         "partner_playoff_pct_before": partner[0],
@@ -121,6 +127,22 @@ def test_best_move_mirrors_the_card():
     assert move is not None and move.kind == "trade"
     # a pickup that needs a trade first doesn't count as a straight add/drop
     assert best_move(_report(pickups=[_pickup(0.4, 0.6, by_trade=True)])) is None
+
+
+def test_best_move_weighs_the_chance_a_trade_is_accepted():
+    # +8 at 27% is worth +2.2: the sure +4 pickup leads
+    move = best_move(_report(pickups=[_pickup(0.48, 0.52)], trades=[_trade(0.48, 0.56, acceptance=0.27)]))
+    assert move is not None and move.kind == "pickup"
+    # +12 at 50% is worth +6: the trade leads, and its gain is the full change the card shows
+    move = best_move(_report(pickups=[_pickup(0.48, 0.52)], trades=[_trade(0.48, 0.60, acceptance=0.5)]))
+    assert move is not None and move.kind == "trade"
+    assert move.gain == pytest.approx(0.12)
+    # +8 at 50% is worth +4, the same as the pickup: the pickup wins the tie
+    move = best_move(_report(pickups=[_pickup(0.47, 0.51)], trades=[_trade(0.47, 0.55, acceptance=0.5)]))
+    assert move is not None and move.kind == "pickup"
+    # a pickup that lowers the odds never leads
+    move = best_move(_report(pickups=[_pickup(0.48, 0.4798)], trades=[_trade(0.48, 0.50, acceptance=0.01)]))
+    assert move is not None and move.kind == "trade"
 
 
 def test_best_move_skips_trades_the_partner_gains_nothing_from():
