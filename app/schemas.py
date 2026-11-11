@@ -625,7 +625,9 @@ class Me(BaseModel):
     has_google: bool
     leagues: list[MyLeague]
     notices: list[Notice]
-    admin: bool = Field(default=False, description="Can read the site's error reports (ADMIN_EMAILS)")
+    admin: bool = Field(
+        default=False, description="An admin account (users.user_type = 'admin'): can read error reports and usage"
+    )
 
 
 class AuthResult(BaseModel):

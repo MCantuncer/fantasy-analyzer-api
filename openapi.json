@@ -6468,7 +6468,7 @@
           "admin": {
             "type": "boolean",
             "title": "Admin",
-            "description": "Can read the site's error reports (ADMIN_EMAILS)",
+            "description": "An admin account (users.user_type = 'admin'): can read error reports and usage",
             "default": false
           }
         },

@@ -22,9 +22,6 @@ services:
       # Google OAuth web client ID. Google sign-in stays off until it is set.
       - key: GOOGLE_CLIENT_ID
         sync: false
-      # Comma-separated account emails that can read the site's error reports.
-      - key: ADMIN_EMAILS
-        sync: false
       # Anthropic API key. Claude Haiku reads managers' notes on trade ideas; notes stay unread until it is set.
       - key: ANTHROPIC_API_KEY
         sync: false

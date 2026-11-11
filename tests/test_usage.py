@@ -139,8 +139,8 @@ def test_postgres_store():
 def admin_client(app, monkeypatch) -> TestClient:
     from app.social import hash_token
 
-    app.state.admins = {"boss@example.com"}
     user = app.state.accounts.create_user("boss@example.com", None)
+    user.user_type = "admin"
     app.state.accounts.save_session(hash_token("boss-token"), user.id)
     return TestClient(app, headers={"Authorization": "Bearer boss-token"})
 
