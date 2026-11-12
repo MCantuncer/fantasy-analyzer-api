@@ -8215,6 +8215,24 @@
             "title": "Won",
             "description": "Whether his team won; none while the game may still be going or when unknown"
           },
+          "played": {
+            "type": "boolean",
+            "title": "Played",
+            "description": "False when his team played and he sat out; stats are then all 0",
+            "default": true
+          },
+          "missed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missed Reason",
+            "description": "Why he sat out, when ESPN says (his current injury, e.g. 'Ankle', or 'Suspended'); only on the games he has missed since he last played"
+          },
           "stats": {
             "$ref": "#/components/schemas/GameStats"
           }

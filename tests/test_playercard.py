@@ -62,7 +62,7 @@ def entry() -> dict:
             "ownership": {"percentOwned": 64.25},
             "stats": [
                 game(11, 1, 30),
-                game(13, 3, 0),  # DNP: no line in the card
+                game(13, 3, 0),  # sat out
                 game(14, 4, 34, **{"0": 31}),
                 game(900, 170, 28, season=2026),
                 {"statSplitTypeId": 0, "statSourceId": 1, "seasonId": 2027, "stats": {"42": 70}},  # projection
@@ -113,13 +113,17 @@ def entry() -> dict:
     }
 
 
-def test_card_keeps_games_he_played_newest_first_with_opponents():
+def test_card_keeps_his_teams_games_newest_first_with_opponents():
     card = parse_card(entry(), 2027, {2027: parse_schedule(SCHEDULE)})
-    assert [g.game_id for g in card.games] == [14, 11, 900]
+    assert [g.game_id for g in card.games] == [14, 13, 11, 900]
+    assert [g.played for g in card.games] == [True, False, True, True]
     last = card.games[0]
     assert last.opponent_id == BOS and last.home is False and last.stats["pts"] == 31
-    assert card.games[1].home is True and card.games[1].opponent_id == BOS
-    assert card.games[2].opponent_id == 0 and card.games[2].start_ms is None, "no calendar for last season"
+    missed = card.games[1]
+    assert missed.opponent_id == BOS and missed.home is False and missed.start_ms == 1792972800000
+    assert missed.missed_reason is None, "he played after it, so his current injury doesn't explain it"
+    assert card.games[2].home is True and card.games[2].opponent_id == BOS
+    assert card.games[3].opponent_id == 0 and card.games[3].start_ms is None, "no calendar for last season"
     assert card.season_line.games == 2 and card.season_line.per_game["pts"] == 25.5
     assert round(card.season_line.fg_pct, 3) == 0.533 and card.season_line.ft_pct == 0.75
     assert card.injury_status == "DAY_TO_DAY" and card.on_team_id == 4 and card.percent_owned == 64.2
@@ -135,13 +139,48 @@ def test_team_result_shows_once_the_game_is_surely_over():
     tip = datetime.fromtimestamp(1793059200, UTC)  # game 14
 
     during = parse_card(raw, 2027, {2027: sched}, now=tip + timedelta(hours=1))
-    assert [g.won for g in during.games] == [None, True, True], "a game that may still be going has no result yet"
+    played = [g for g in during.games if g.played]
+    assert [g.won for g in played] == [None, True, True], "a game that may still be going has no result yet"
 
     after = parse_card(raw, 2027, {2027: sched}, now=tip + timedelta(hours=6))
-    assert [g.won for g in after.games] == [False, True, True]
+    assert [g.won for g in after.games if g.played] == [False, True, True]
 
     raw["player"]["stats"][2]["stats"].pop("43")
     assert parse_card(raw, 2027, {2027: sched}, now=tip + timedelta(hours=6)).games[0].won is None, "no stat, no result"
+
+
+def test_missed_games_show_once_over_and_carry_his_current_injury():
+    raw = entry()
+    p = raw["player"]
+    p["injuryStatus"] = "OUT"
+    p["injuryDetails"] = {"type": "Ankle", "outForSeason": False}
+    stats = p["stats"]
+    stats[2] = {**stats[2], "stats": {}}  # game 14: ESPN's empty line, he sat out
+    sched = parse_schedule(SCHEDULE)
+    tip = datetime.fromtimestamp(1793059200, UTC)  # game 14
+
+    during = parse_card(raw, 2027, {2027: sched}, now=tip + timedelta(hours=1))
+    assert [g.game_id for g in during.games] == [13, 11, 900], "he may still check in to a game in progress"
+    assert during.games[0].missed_reason == "Ankle"
+
+    after = parse_card(raw, 2027, {2027: sched}, now=tip + timedelta(hours=6))
+    assert [(g.game_id, g.played, g.missed_reason) for g in after.games] == [
+        (14, False, "Ankle"),
+        (13, False, "Ankle"),
+        (11, True, None),
+        (900, True, None),
+    ]
+    assert after.games[0].stats["minutes"] == 0 and after.games[0].won is None
+
+    p["injuryStatus"] = "SUSPENSION"
+    assert parse_card(raw, 2027, {2027: sched}, now=tip + timedelta(hours=6)).games[0].missed_reason == "Suspended"
+    p["injuryStatus"], p["injuryDetails"] = "OUT", {"type": "Other"}
+    assert parse_card(raw, 2027, {2027: sched}, now=tip + timedelta(hours=6)).games[0].missed_reason is None
+    p["injuryStatus"] = "ACTIVE"
+    p["injuryDetails"] = {"type": "Ankle"}
+    assert parse_card(raw, 2027, {2027: sched}, now=tip + timedelta(hours=6)).games[0].missed_reason is None, (
+        "healthy now: a rest night or a coach's call, reason unknown"
+    )
 
 
 def test_moves_are_executed_ones_newest_first():
@@ -226,7 +265,9 @@ def test_player_card_endpoint():
     d = r.json()
     assert d["name"] == "Test Center" and d["position"] == "C" and d["pro_team"] == "NY"
     assert d["injury_status"] == "DAY_TO_DAY" and d["owner_team_id"] == 4
-    assert [g["game_id"] for g in d["games"]] == [14, 11], "only this season once he has played in it"
+    assert [g["game_id"] for g in d["games"]] == [14, 13, 11], "only this season once he has played in it"
+    assert [g["played"] for g in d["games"]] == [True, False, True], "the game he sat out stays in the log"
+    assert d["games"][1]["missed_reason"] is None and d["games"][1]["stats"]["pts"] == 0
     assert d["games"][0]["opponent"] == "BOS" and d["games"][0]["home"] is False
     assert [m["kind"] for m in d["moves"]] == ["trade", "draft"]
     assert d["moves"][0]["others"] == [{"player_id": 99, "name": "Other Guy", "kind": "trade", "to_team_id": 2}]
