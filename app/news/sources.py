@@ -31,7 +31,7 @@ from typing import Literal
 import httpx
 
 SourceKind = Literal["fact", "outlet", "tip"]
-USER_AGENT = "fantasy-analyzer/1.0 (+https://fantasy-analyzer-web.vercel.app)"
+USER_AGENT = "court/1.0 (+https://courtfantasy.app)"
 # ESPN's site API refuses (403) a user agent that carries a link, while Reddit rate-limits
 # browser-like ones, so ESPN gets its own.
 ESPN_USER_AGENT = "Mozilla/5.0 (compatible; fantasy-analyzer/1.0)"
