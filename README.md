@@ -65,6 +65,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |
 | 💬 | **Moves feed and league chat:** transactions, posts, replies and reactions | `/api/feed`, `/api/posts` |
 | 🔐 | **Accounts and verified managers:** email or Google sign-in, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
+| 👀 | **Sample league:** a visitor sees a real public league's moves before signing up, team names swapped for play calls, analysed once a day | `/api/sample` |
 | 🚨 | **Error reports:** server errors and website crashes grouped with a count and the latest example, no personal data, readable by admin accounts only (`users.user_type = 'admin'`, set in the database) | `/api/errors`, `/api/admin/errors` |
 
 ## Architecture
@@ -134,6 +135,8 @@ All settings are optional for local development.
 | `DAILY_TRADE_WAIT_SECONDS` | `20` | How long a trade-of-the-day request waits before answering `pending` |
 | `DAILY_TRADE_RECHECK_SECONDS` | `10800` | How often the day's pick is checked again |
 | `USAGE_FLUSH_SECONDS` | `60` | How often usage counts held in memory are written to the database |
+| `SAMPLE_LEAGUE_ID` | none | A public ESPN 9-cat league shown to visitors before they sign in, team names masked; the sample is off until it is set |
+| `SAMPLE_SEASON` | current season | Freezes the sample on one season |
 
 ## API reference
 
@@ -187,9 +190,12 @@ All settings are optional for local development.
 | POST | `/api/news` | `{league_id?, season?, include_held?}` | Checked NBA news from every source, each player tagged with his fantasy team in `league_id`; source health; today's most-added players |
 | GET | `/api/news/refresh` | | Starts a check of every news source if the last is over 15 minutes old. For the scheduled ping |
 | POST | `/api/news/check` | | A reader's refresh: checks every news source now, at most once every 2 minutes for everyone; says when the last check was and when the next may start |
+| GET | `/api/sample` | | The sample league for visitors who haven't signed in: its teams under masked names, each one's projected place and whether it has a move, and the team to scout first. 404 `sample_off` when there is none |
+| GET | `/api/sample/teams/{team_id}` | `?day=` | One sample team's analysis (the `/api/analyze` report), team names masked; `day` is the index's `analysed_on` |
+| GET | `/api/sample/refresh` | | Starts today's sample run if it is due. For the scheduled ping |
 | GET | `/api/health` | | `{ok: true}` |
 
-Every endpoint except `/api/health`, `/api/news/refresh` and `/api/auth/*` needs `Authorization: Bearer <token>` from sign-up or sign-in. `season` defaults to the current ESPN season (2026-27 is `2027`). `keep_player_ids` are never offered in trades or suggested as drops.
+Every endpoint except `/api/health`, `/api/news/refresh`, `/api/sample*` and `/api/auth/*` needs `Authorization: Bearer <token>` from sign-up or sign-in. `season` defaults to the current ESPN season (2026-27 is `2027`). `keep_player_ids` are never offered in trades or suggested as drops.
 
 The full schema is in [`openapi.json`](openapi.json), and served live at `/docs`. Regenerate it after changing `app/schemas.py`:
 
@@ -266,6 +272,12 @@ Each item is tagged with the players its headline names in full (ESPN's own athl
 When sources disagree on how bad an injury is (for example ESPN lists day-to-day and an outlet reports a fracture), the story's `conflict` says so, naming each source, and `severity` is the worst one. Headlines and summaries are always the sources' own; a story with only ESPN data gets a plain line from that data ("ESPN lists X as out").
 
 A check runs at most every 15 minutes, started by any request when due. The News page's refresh button (`/api/news/check`) can start one sooner, but never more than once every 2 minutes in total, since every reader shares one feed. Items are stored in `news_items` (kept 14 days), and the last player snapshot, source health and trending players in `news_state`. On the free Render plan the server sleeps, so the `News refresh` GitHub workflow calls `/api/news/refresh` every 30 minutes; set the repository variable `API_URL` (e.g. `https://fantasy-analyzer-api.onrender.com`) to turn it on.
+
+### Sample league
+
+Visitors who haven't signed in see one real public ESPN league (`SAMPLE_LEAGUE_ID`), analysed once a day (`app/sample.py`). The `Sample league refresh` GitHub workflow calls `/api/sample/refresh` after the night's games are final; the API then analyses every team, one after another and after any manager's own analysis, and stores each masked report in `sample_runs` (kept 7 days). The day's index is saved last, so a run that stops halfway is never shown, and a failed run is retried at most every 3 hours.
+
+Masking swaps every fantasy team's name and abbreviation for a basketball play call (Horns, Hammer, Spain…) fixed by sorted team id, including inside free text, and sets the league to id 0, "Sample league". Players and numbers stay real. The visitor starts on the team with the clearest move of the day: a gain of at least 2 points (else 1), the largest first, a pickup before a trade, then odds nearest a coin flip. On a day with no move anywhere, the last day with one (up to 3 days old) is shown instead; before a new season's first run, last season's final sample shows with `phase: "offseason"`. Both endpoints are public and cacheable (`max-age=300`) and set no cookies.
 
 ### Who gains from an injury
 

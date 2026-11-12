@@ -1,0 +1,19 @@
+name: Sample league refresh
+
+# Once a day, after the night's NBA games are final, the API analyses the public sample league
+# (every team, one after another) for visitors who haven't signed in. The second ping is a retry:
+# it does nothing if the morning's run finished. Nothing runs until SAMPLE_LEAGUE_ID is set on the API.
+on:
+  schedule:
+    - cron: "0 9 * * *"
+    - cron: "0 13 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    if: ${{ vars.API_URL != '' }}
+    steps:
+      - run: curl -fsS --max-time 90 -o /dev/null "${{ vars.API_URL }}/api/sample/refresh" || true

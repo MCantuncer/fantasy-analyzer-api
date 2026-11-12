@@ -2235,7 +2235,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LeagueRequest"
+                "$ref": "#/components/schemas/MatchupProjectionRequest"
               }
             }
           }
@@ -3267,6 +3267,123 @@
                   "additionalProperties": true,
                   "type": "object",
                   "title": "Response News Refresh Api News Refresh Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sample/refresh": {
+      "get": {
+        "summary": "Sample Refresh",
+        "description": "Wakes the server and starts today's sample run if it is due (all teams, one after\nanother). Returns nothing about the sample.",
+        "operationId": "sample_refresh_api_sample_refresh_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Sample Refresh Api Sample Refresh Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sample": {
+      "get": {
+        "summary": "Sample",
+        "description": "The sample league visitors see before signing in: its teams under masked names, and the\nteam to scout first. Public and cacheable; each team's report is at /api/sample/teams/{id}.",
+        "operationId": "sample_api_sample_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SampleIndex"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sample/teams/{team_id}": {
+      "get": {
+        "summary": "Sample Team",
+        "description": "One sample team's analysis, team names masked. ``day`` is the index's ``analysed_on``\n(without it, the day /api/sample shows now).",
+        "operationId": "sample_team_api_sample_teams__team_id__get",
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Team Id"
+            }
+          },
+          {
+            "name": "day",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Day"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisReport"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -6382,6 +6499,45 @@
           "their_crowded"
         ],
         "title": "MatchupProjection"
+      },
+      "MatchupProjectionRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id",
+            "description": "The team to project. Default: the team this account verified"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id"
+        ],
+        "title": "MatchupProjectionRequest"
       },
       "MatchupSide": {
         "properties": {
@@ -9558,6 +9714,133 @@
           "id"
         ],
         "title": "ResolveErrorRequest"
+      },
+      "SampleIndex": {
+        "properties": {
+          "analysed_on": {
+            "type": "string",
+            "title": "Analysed On",
+            "description": "The day the sample was analysed (UTC date); its teams' reports are from it"
+          },
+          "fresh": {
+            "type": "boolean",
+            "title": "Fresh",
+            "description": "Analysed today or yesterday; false means today's run is late"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "season",
+              "offseason"
+            ],
+            "title": "Phase",
+            "description": "offseason: last season's final sample, until the new season's first run"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "league": {
+            "$ref": "#/components/schemas/SampleLeague"
+          },
+          "default_team_id": {
+            "type": "integer",
+            "title": "Default Team Id",
+            "description": "The team a visitor scouts first: the clearest move of the day"
+          },
+          "teams": {
+            "items": {
+              "$ref": "#/components/schemas/SampleTeam"
+            },
+            "type": "array",
+            "title": "Teams"
+          }
+        },
+        "type": "object",
+        "required": [
+          "analysed_on",
+          "fresh",
+          "phase",
+          "season",
+          "league",
+          "default_team_id",
+          "teams"
+        ],
+        "title": "SampleIndex"
+      },
+      "SampleLeague": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Always \"Sample league\": the real name is masked"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "scoring": {
+            "type": "string",
+            "title": "Scoring",
+            "description": "ESPN's scoring type, e.g. H2H_EACH_CATEGORY"
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "playoff_teams": {
+            "type": "integer",
+            "title": "Playoff Teams"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "size",
+          "scoring",
+          "categories",
+          "playoff_teams"
+        ],
+        "title": "SampleLeague"
+      },
+      "SampleTeam": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Masked: a basketball play call (Horns, Hammer, ...), fixed for the season"
+          },
+          "abbrev": {
+            "type": "string",
+            "title": "Abbrev"
+          },
+          "projected_rank": {
+            "type": "integer",
+            "title": "Projected Rank",
+            "description": "Projected final place, 1 = first, from each team's own season outlook"
+          },
+          "has_move": {
+            "type": "boolean",
+            "title": "Has Move",
+            "description": "Its best move gains at least 1 playoff-odds point"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "abbrev",
+          "projected_rank",
+          "has_move"
+        ],
+        "title": "SampleTeam"
       },
       "ScoreDay": {
         "properties": {
