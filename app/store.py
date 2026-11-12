@@ -82,11 +82,25 @@ create table if not exists saved_reports (
     built_at timestamptz not null
 );
 create index if not exists saved_reports_league on saved_reports (league_id, season);
+-- The public sample league (app/sample.py): one day's run, each team's masked report and,
+-- under team 0, the day's index. Written by the daily job; read by anyone.
+create table if not exists sample_runs (
+    season int not null,
+    day date not null,
+    team_id int not null,
+    body jsonb not null,
+    saved_at timestamptz not null default now(),
+    primary key (season, day, team_id)
+);
 """
 # News older than this is deleted when new items are saved.
 NEWS_KEEP_DAYS = 14
 # Saved reports nobody opened again for this long are deleted when another is saved.
 REPORT_KEEP_DAYS = 7
+# Sample league runs older than this are deleted when a new day's index is saved.
+SAMPLE_KEEP_DAYS = 7
+# Team 0 in sample_runs is the day's index, not a team.
+SAMPLE_INDEX = 0
 
 
 class Store(Protocol):
@@ -105,6 +119,9 @@ class Store(Protocol):
     def get_report(self, key: str) -> dict | None: ...
     def save_report(self, key: str, league_id: int, season: int, team_id: int, row: dict) -> None: ...
     def recent_reports(self, since: datetime) -> list[dict]: ...
+    def save_sample(self, season: int, day: str, team_id: int, body: dict) -> None: ...
+    def get_sample(self, season: int, day: str, team_id: int) -> dict | None: ...
+    def sample_days(self, season: int) -> list[str]: ...
 
 
 class MemoryStore:
@@ -116,6 +133,7 @@ class MemoryStore:
         self.news: dict[str, dict] = {}
         self.news_state: dict[str, dict] = {}
         self.reports: dict[str, dict] = {}
+        self.samples: dict[tuple[int, str, int], dict] = {}
 
     def get_trade(self, key: TradeKey) -> dict | None:
         return self.trades.get(key)
@@ -172,6 +190,16 @@ class MemoryStore:
             for key, r in self.reports.items()
             if datetime.fromisoformat(r["built_at"]) >= since
         ]
+
+    def save_sample(self, season: int, day: str, team_id: int, body: dict) -> None:
+        self.samples[(season, day, team_id)] = body
+
+    def get_sample(self, season: int, day: str, team_id: int) -> dict | None:
+        return self.samples.get((season, day, team_id))
+
+    def sample_days(self, season: int) -> list[str]:
+        """Days with a finished run (an index), newest first."""
+        return sorted({d for s, d, t in self.samples if s == season and t == SAMPLE_INDEX}, reverse=True)
 
 
 class PostgresStore:
@@ -310,6 +338,33 @@ class PostgresStore:
             {"key": k, "league_id": lg, "season": s, "team_id": t, "fingerprint": fp, "built_at": b.isoformat()}
             for k, lg, s, t, fp, b in rows
         ]
+
+    def save_sample(self, season: int, day: str, team_id: int, body: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "insert into sample_runs (season, day, team_id, body) values (%s, %s, %s, %s) "
+                "on conflict (season, day, team_id) do update set body = excluded.body, saved_at = now()",
+                (season, day, team_id, json.dumps(body)),
+            )
+            if team_id == SAMPLE_INDEX:
+                conn.execute(
+                    f"delete from sample_runs where season=%s and day < current_date - {SAMPLE_KEEP_DAYS}", (season,)
+                )
+
+    def get_sample(self, season: int, day: str, team_id: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "select body from sample_runs where season=%s and day=%s and team_id=%s", (season, day, team_id)
+            ).fetchone()
+        return row[0] if row else None
+
+    def sample_days(self, season: int) -> list[str]:
+        """Days with a finished run (an index), newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select day from sample_runs where season=%s and team_id=%s order by day desc", (season, SAMPLE_INDEX)
+            ).fetchall()
+        return [d.isoformat() for (d,) in rows]
 
 
 def create_store() -> Store:

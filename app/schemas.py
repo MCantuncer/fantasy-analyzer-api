@@ -377,6 +377,34 @@ class AnalysisReport(BaseModel):
     )
 
 
+class SampleLeague(BaseModel):
+    name: str = Field(description='Always "Sample league": the real name is masked')
+    size: int
+    scoring: str = Field(description="ESPN's scoring type, e.g. H2H_EACH_CATEGORY")
+    categories: list[str]
+    playoff_teams: int
+
+
+class SampleTeam(BaseModel):
+    id: int
+    name: str = Field(description="Masked: a basketball play call (Horns, Hammer, ...), fixed for the season")
+    abbrev: str
+    projected_rank: int = Field(description="Projected final place, 1 = first, from each team's own season outlook")
+    has_move: bool = Field(description="Its best move gains at least 1 playoff-odds point")
+
+
+class SampleIndex(BaseModel):
+    analysed_on: str = Field(description="The day the sample was analysed (UTC date); its teams' reports are from it")
+    fresh: bool = Field(description="Analysed today or yesterday; false means today's run is late")
+    phase: Literal["season", "offseason"] = Field(
+        description="offseason: last season's final sample, until the new season's first run"
+    )
+    season: int
+    league: SampleLeague
+    default_team_id: int = Field(description="The team a visitor scouts first: the clearest move of the day")
+    teams: list[SampleTeam]
+
+
 class ErrorBody(BaseModel):
     code: str
     message: str

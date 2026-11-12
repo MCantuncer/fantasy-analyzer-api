@@ -25,3 +25,7 @@ services:
       # Anthropic API key. Claude Haiku reads managers' notes on trade ideas; notes stay unread until it is set.
       - key: ANTHROPIC_API_KEY
         sync: false
+      # A public ESPN 9-cat league shown, team names masked, to visitors before they sign in.
+      # Analysed once a day (.github/workflows/sample.yml). The sample stays off until it is set.
+      - key: SAMPLE_LEAGUE_ID
+        sync: false

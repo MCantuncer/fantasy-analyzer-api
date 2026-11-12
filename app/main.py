@@ -73,6 +73,7 @@ from app.recap import VERSION as RECAP_VERSION
 from app.recap import Week as RecapWeek
 from app.recap import build_recap, is_final
 from app.rules import MAX_RULES, Rule, RuleStore, create_rule_store
+from app.sample import HOLD_FALLBACK_DAYS, best_move, mask_report, masked_names, sample_index, serving_day
 from app.saved import (
     Saved,
     changes,
@@ -97,7 +98,7 @@ from app.social import (
     sign_challenge,
     valid_reaction,
 )
-from app.store import Store, TradeKey, create_store
+from app.store import SAMPLE_INDEX, Store, TradeKey, create_store
 from app.timing import Stopwatch
 from app.usage import EVENTS as USAGE_EVENTS
 from app.usage import PAGES as USAGE_PAGES
@@ -166,6 +167,12 @@ NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
 NOT_LINKED = {"code": "not_linked", "message": "Verify your team in this league first."}
 NOT_YOUR_TEAM = {"code": "not_your_team", "message": "Only this team's verified manager can see its analysis."}
 NOT_FOLLOWING = {"code": "not_following", "message": "Add this league to your leagues first."}
+SAMPLE_OFF = {"code": "sample_off", "message": "There is no sample league right now."}
+SAMPLE_NO_TEAM = {"code": "team_not_found", "message": "No team with that ID in the sample league."}
+# The sample league is the same for everyone and changes once a day: browsers keep it five
+# minutes, a shared cache an hour, and either may serve a day-old copy while it refetches.
+SAMPLE_CACHE = {"Cache-Control": "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400"}
+SAMPLE_RETRY_SECONDS = 3 * 3600.0  # a failed sample run is tried again at most this often
 
 
 class AnalysisProgress:
@@ -191,6 +198,15 @@ def current_season(now: datetime | None = None) -> int:
     """ESPN names a season by the year it ends: 2026-27 is 2027."""
     now = now or datetime.now(UTC)
     return now.year + 1 if now.month >= 8 else now.year
+
+
+def env_int(name: str) -> int | None:
+    raw = os.getenv(name, "").strip()
+    try:
+        return int(raw) if raw else None
+    except ValueError:
+        logging.getLogger(__name__).warning("%s is not a number: %r", name, raw)
+        return None
 
 
 def read_credentials(espn_s2: str | None, swid: str | None) -> EspnCredentials | None:
@@ -323,6 +339,13 @@ def create_app(
     app.state.errors = error_store or error_reports.create_error_store()
     error_reports.install(app.state.errors)
     app.state.error_posts = defaultdict(deque)
+    # The public sample league (app/sample.py): a public ESPN league, analysed once a day.
+    app.state.sample_league_id = env_int("SAMPLE_LEAGUE_ID")
+    app.state.sample_season = env_int("SAMPLE_SEASON")  # unset: the current season
+    app.state.sample_job: asyncio.Task | None = None
+    app.state.sample_started: float | None = None  # monotonic time of the last run's start
+    app.state.sample_reads = TTLCache(300, max_items=128)
+    app.state.sample_analyse = lambda lg, team_id: Analyzer(lg, team_id, now=app.state.now()).report()
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
     app.add_middleware(
@@ -2539,6 +2562,152 @@ def create_app(
         """Wakes the server and starts a check of every news source if one is due. Returns nothing about news."""
         refreshing = await app.state.news.ensure_fresh(current_season(), app.state.now())
         return {"ok": True, "refreshing": refreshing}
+
+    # --- the public sample league: no sign-in, no cookies, one run a day ---
+
+    def sample_seasons() -> list[tuple[int, str]]:
+        """Seasons to look in for a stored run, with their phase: a fixed SAMPLE_SEASON, else this
+        season and, until its first run, last season's final sample."""
+        if app.state.sample_season is not None:
+            return [(app.state.sample_season, "season")]
+        season = current_season(app.state.now())
+        return [(season, "season"), (season - 1, "offseason")]
+
+    async def sample_read(season: int, day: str, team_id: int) -> dict | None:
+        key = (season, day, team_id)
+        body = app.state.sample_reads.get(key)
+        if body is None:
+            body = await run_in_threadpool(app.state.store.get_sample, season, day, team_id)
+            if body is not None:
+                app.state.sample_reads.set(key, body)
+        return body
+
+    async def sample_days(season: int) -> list[str]:
+        key = ("days", season)
+        days = app.state.sample_reads.get(key)
+        if days is None:
+            days = await run_in_threadpool(app.state.store.sample_days, season)
+            app.state.sample_reads.set(key, days)
+        return days
+
+    async def sample_day() -> tuple[int, str, str]:
+        """The (season, day, phase) visitors see now. 404 sample_off without a sample."""
+        if app.state.sample_league_id is None:
+            raise HTTPException(404, detail=SAMPLE_OFF)
+        for season, phase in sample_seasons():
+            days = await sample_days(season)
+            if not days:
+                continue
+            moved: set[str] = set()
+            # A run a day: the newest day and the ones the no-move fallback may reach.
+            for day in days[: HOLD_FALLBACK_DAYS + 1]:
+                index = await sample_read(season, day, SAMPLE_INDEX)
+                if index and any(t["has_move"] for t in index["teams"]):
+                    moved.add(day)
+            day = serving_day(days, moved.__contains__, app.state.now().date())
+            if day is not None:
+                return season, day, phase
+        raise HTTPException(404, detail=SAMPLE_OFF)
+
+    async def sample_run(league_id: int, season: int, day: str) -> None:
+        """Analyse every team of the sample league, one after another, and store the masked reports.
+
+        The day's index is saved last, so a run that stops halfway is never served.
+        """
+        lg = await load_league(league_id, season, None, with_fa=True)
+        summary = league_summary(lg)
+        if not summary.supported:
+            raise RuntimeError(f"the sample league is not supported: {summary.unsupported_reason}")
+        names = masked_names(t.id for t in summary.teams)
+        moves, ranks = {}, {}
+        for team in summary.teams:
+            await all_analyses_done()  # a manager waiting on their own analysis goes first
+            report = await run_in_threadpool(give_back_after, app.state.sample_analyse, lg, team.id)
+            masked = mask_report(report, names)
+            await run_in_threadpool(app.state.store.save_sample, season, day, team.id, masked.model_dump(mode="json"))
+            moves[team.id] = best_move(report)
+            ranks[team.id] = next((r.mean_rank for r in report.season if r.team_id == team.id), len(summary.teams))
+            del report, masked
+        index = sample_index(day, season, summary, moves, ranks, names)
+        await run_in_threadpool(app.state.store.save_sample, season, day, SAMPLE_INDEX, index)
+        app.state.sample_reads.clear()
+
+    async def all_analyses_done() -> None:
+        running = [job.task for job in list(app.state.analysis_jobs.values()) if not job.task.done()]
+        if running:
+            await asyncio.wait(running)
+
+    async def start_sample_run() -> bool:
+        """Start today's sample run if it is due. True while a run is going."""
+        job = app.state.sample_job
+        if job is not None and not job.done():
+            return True
+        league_id = app.state.sample_league_id
+        if league_id is None:
+            return False
+        season = app.state.sample_season or current_season(app.state.now())
+        day = app.state.now().date().isoformat()
+        if day in (await run_in_threadpool(app.state.store.sample_days, season))[:1]:
+            return False  # today's run is done
+        started = app.state.sample_started
+        if started is not None and time.monotonic() - started < SAMPLE_RETRY_SECONDS:
+            return False  # today's run failed not long ago: don't hammer ESPN or the CPU
+        job = app.state.sample_job
+        if job is not None and not job.done():
+            return True  # started by another request while this one read the store
+        app.state.sample_started = time.monotonic()
+        job = asyncio.create_task(sample_run(league_id, season, day))
+        app.state.sample_job = job
+
+        def done(task: asyncio.Task) -> None:
+            if not task.cancelled() and task.exception() is not None:
+                logging.getLogger(__name__).error("sample run failed", exc_info=task.exception())
+
+        job.add_done_callback(done)
+        return True
+
+    @app.get("/api/sample/refresh")
+    async def sample_refresh() -> dict:
+        """Wakes the server and starts today's sample run if it is due (all teams, one after
+        another). Returns nothing about the sample."""
+        return {"ok": True, "running": await start_sample_run()}
+
+    @app.get("/api/sample", response_model=schemas.SampleIndex, responses={404: {"model": schemas.ErrorBody}})
+    async def sample() -> JSONResponse:
+        """The sample league visitors see before signing in: its teams under masked names, and the
+        team to scout first. Public and cacheable; each team's report is at /api/sample/teams/{id}."""
+        season, day, phase = await sample_day()
+        index = await sample_read(season, day, SAMPLE_INDEX)
+        if index is None:
+            raise HTTPException(404, detail=SAMPLE_OFF)
+        age = (app.state.now().date() - date.fromisoformat(day)).days
+        body = schemas.SampleIndex(**index, fresh=age <= 1, phase=phase).model_dump(mode="json")
+        return JSONResponse(body, headers=SAMPLE_CACHE)
+
+    @app.get(
+        "/api/sample/teams/{team_id}",
+        response_model=schemas.AnalysisReport,
+        responses={404: {"model": schemas.ErrorBody}},
+    )
+    async def sample_team(team_id: int, day: date | None = None) -> JSONResponse:
+        """One sample team's analysis, team names masked. ``day`` is the index's ``analysed_on``
+        (without it, the day /api/sample shows now)."""
+        if team_id == SAMPLE_INDEX:
+            raise HTTPException(404, detail=SAMPLE_NO_TEAM)
+        if day is None:
+            season, found, _ = await sample_day()
+            body = await sample_read(season, found, team_id)
+        else:
+            if app.state.sample_league_id is None:
+                raise HTTPException(404, detail=SAMPLE_OFF)
+            body = None
+            for season, _ in sample_seasons():
+                body = await sample_read(season, day.isoformat(), team_id)
+                if body is not None:
+                    break
+        if body is None:
+            raise HTTPException(404, detail=SAMPLE_NO_TEAM)
+        return JSONResponse(body, headers=SAMPLE_CACHE)
 
     @app.post("/api/news/check", response_model=schemas.NewsCheck, responses={401: {"model": schemas.ErrorBody}})
     async def news_check(authorization: str | None = Header(default=None)) -> schemas.NewsCheck:

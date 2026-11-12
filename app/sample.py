@@ -8,8 +8,9 @@ reports and returns masked copies, and picks the team with the clearest move of 
 
 import math
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Literal
 
 from app.schemas import AnalysisReport, LeagueSummary
@@ -46,6 +47,9 @@ _NAME_KEYS = frozenset({"team_name", "partner_team_name", "opponent_name"})
 # A gain counts as a clear move from this many playoff-odds points (odds are 0-1 fractions).
 CLEAR_GAIN = 0.02
 SMALL_GAIN = 0.01
+
+# On a day no team has a move, the sample shows the last day that had one, if it is this recent.
+HOLD_FALLBACK_DAYS = 3
 
 
 @dataclass(frozen=True)
@@ -156,16 +160,21 @@ def _partner_gains(trade) -> bool:
 
 
 def first_team(reports: Mapping[int, AnalysisReport]) -> int | None:
-    """The team a visitor scouts first: the clearest move of the day.
+    """The team a visitor scouts first: the clearest move of the day (see ``first_of``)."""
+    return first_of({team_id: best_move(report) for team_id, report in reports.items()})
+
+
+def first_of(moves: Mapping[int, Move | None]) -> int | None:
+    """The team a visitor scouts first, from each team's best move (None = hold).
 
     Teams whose best move gains at least 2 points (else at least 1), then the largest gain,
     then a pickup over a trade (no one has to agree), then odds nearest a coin flip, then the
     lowest team id so every visitor gets the same team. None when no team has such a move.
     """
-    moves = {team_id: m for team_id, report in reports.items() if (m := best_move(report)) is not None}
+    found_any = {team_id: m for team_id, m in moves.items() if m is not None}
     for floor in (CLEAR_GAIN, SMALL_GAIN):
         # Round so float noise (0.51 - 0.47) doesn't drop a move that is exactly on the floor.
-        found = [(team_id, m) for team_id, m in moves.items() if round(m.gain, 6) >= floor]
+        found = [(team_id, m) for team_id, m in found_any.items() if round(m.gain, 6) >= floor]
         if found:
             found.sort(
                 key=lambda tm: (
@@ -177,3 +186,68 @@ def first_team(reports: Mapping[int, AnalysisReport]) -> int | None:
             )
             return found[0][0]
     return None
+
+
+def has_move(move: Move | None) -> bool:
+    """A move worth leading with: it gains at least the small floor."""
+    return move is not None and round(move.gain, 6) >= SMALL_GAIN
+
+
+def sample_index(
+    day: str,
+    season: int,
+    league: LeagueSummary,
+    moves: Mapping[int, Move | None],
+    mean_ranks: Mapping[int, float],
+    names: Mapping[int, MaskedTeam],
+) -> dict:
+    """The day's index as stored: every team's masked name, projected place and whether it has a move.
+
+    ``league`` is the real league summary (only its shape is kept); ``mean_ranks`` is each team's
+    projected average finish from its own report. With no move anywhere, the visitor starts on the
+    lowest team id and sees its hold card.
+    """
+    order = sorted(mean_ranks, key=lambda team_id: (mean_ranks[team_id], team_id))
+    place = {team_id: i + 1 for i, team_id in enumerate(order)}
+    teams = sorted(t.id for t in league.teams)
+    default = first_of(moves)
+    return {
+        "analysed_on": day,
+        "season": season,
+        "league": {
+            "name": SAMPLE_LEAGUE_NAME,
+            "size": len(teams),
+            "scoring": league.scoring_type,
+            "categories": list(league.categories),
+            "playoff_teams": league.playoff_teams,
+        },
+        "default_team_id": default if default is not None else teams[0],
+        "teams": [
+            {
+                "id": team_id,
+                "name": names[team_id].name,
+                "abbrev": names[team_id].abbrev,
+                "projected_rank": place.get(team_id, len(teams)),
+                "has_move": has_move(moves.get(team_id)),
+            }
+            for team_id in teams
+        ],
+    }
+
+
+def serving_day(days: Sequence[str], any_move: Callable[[str], bool], today: date) -> str | None:
+    """Which stored day to show, from the days with a finished run (newest first).
+
+    The newest, unless no team had a move that day: then the newest day up to
+    ``HOLD_FALLBACK_DAYS`` old that had one, else the newest anyway (its hold cards are real).
+    """
+    if not days:
+        return None
+    if any_move(days[0]):
+        return days[0]
+    for day in days[1:]:
+        if (today - date.fromisoformat(day)).days > HOLD_FALLBACK_DAYS:
+            break
+        if any_move(day):
+            return day
+    return days[0]

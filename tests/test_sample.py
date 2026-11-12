@@ -179,3 +179,46 @@ def test_first_team_on_a_real_report(report):
     move = best_move(report)
     expected = MY_TEAM if move is not None and round(move.gain, 6) >= 0.01 else None
     assert first_team({MY_TEAM: report}) == expected
+
+
+# --- the day's index and which day is shown ---
+
+
+def test_sample_index_ranks_names_and_flags_moves(report, names):
+    from app.sample import Move, sample_index
+
+    ids = sorted(t.id for t in report.league.teams)
+    ranks = {team_id: float(len(ids) - i) for i, team_id in enumerate(ids)}  # the highest id projects first
+    moves = {ids[0]: Move("pickup", 0.03, 0.5), ids[1]: Move("pickup", 0.005, 0.5)}
+    index = sample_index("2026-11-12", 2027, report.league, moves, ranks, names)
+    assert index["default_team_id"] == ids[0]
+    teams = {t["id"]: t for t in index["teams"]}
+    assert teams[ids[-1]]["projected_rank"] == 1 and teams[ids[0]]["projected_rank"] == len(ids)
+    assert teams[ids[0]]["has_move"] and not teams[ids[1]]["has_move"] and not teams[ids[2]]["has_move"]
+    assert teams[ids[0]]["name"] == names[ids[0]].name
+    assert index["league"]["name"] == SAMPLE_LEAGUE_NAME and index["league"]["size"] == len(ids)
+    assert report.league.name not in str(index)
+
+
+def test_sample_index_with_no_move_starts_on_the_lowest_id(report, names):
+    from app.sample import sample_index
+
+    ids = sorted(t.id for t in report.league.teams)
+    index = sample_index("2026-11-12", 2027, report.league, {}, {i: 1.0 for i in ids}, names)
+    assert index["default_team_id"] == ids[0]
+    assert not any(t["has_move"] for t in index["teams"])
+
+
+def test_serving_day_falls_back_to_a_recent_day_with_a_move():
+    from datetime import date
+
+    from app.sample import serving_day
+
+    today = date(2026, 11, 12)
+    days = ["2026-11-12", "2026-11-11", "2026-11-10", "2026-11-07"]
+    assert serving_day([], lambda d: True, today) is None
+    assert serving_day(days, lambda d: True, today) == "2026-11-12"
+    assert serving_day(days, lambda d: d == "2026-11-10", today) == "2026-11-10"
+    # 5 days old is past the fallback: today's hold cards are shown
+    assert serving_day(days, lambda d: d == "2026-11-07", today) == "2026-11-12"
+    assert serving_day(days, lambda d: False, today) == "2026-11-12"
