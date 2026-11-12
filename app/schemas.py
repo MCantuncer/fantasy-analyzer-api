@@ -1233,6 +1233,12 @@ class PlayerGame(BaseModel):
     won: bool | None = Field(
         default=None, description="Whether his team won; none while the game may still be going or when unknown"
     )
+    played: bool = Field(default=True, description="False when his team played and he sat out; stats are then all 0")
+    missed_reason: str | None = Field(
+        default=None,
+        description="Why he sat out, when ESPN says (his current injury, e.g. 'Ankle', or 'Suspended'); "
+        "only on the games he has missed since he last played",
+    )
     stats: GameStats
 
 

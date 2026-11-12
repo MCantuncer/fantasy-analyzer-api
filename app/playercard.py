@@ -4,6 +4,11 @@ ESPN's ``kona_playercard`` view returns all of it in one league call: a line for
 his latest games (``statSplitTypeId`` 5), his season totals and averages (split 0) and
 every executed transaction that touched him in this league (draft, waiver claims,
 free-agent adds and drops, trades). Opponents and dates come from the NBA calendar.
+
+The game lines cover his team's latest games, so a game he sat out comes back as an
+empty line. Those stay on the card as missed games. ESPN keeps no reason per game, only
+his current injury, so that reason goes on the run of games he has missed since he last
+played and nowhere else.
 """
 
 from __future__ import annotations
@@ -48,6 +53,8 @@ class GameRow:
     home: bool | None
     stats: dict[str, float]
     won: bool | None = None  # his team's result; None while the game may still be going, or unknown
+    played: bool = True  # False: his team played and he sat out
+    missed_reason: str | None = None  # why he sat out, when ESPN says ("Ankle", "Suspended"); None otherwise
 
 
 @dataclass
@@ -92,6 +99,27 @@ def _line(raw: dict) -> dict[str, float]:
     return {k: float(raw.get(str(sid), 0) or 0) for k, sid in STATS.items()}
 
 
+def _over(game: ScheduledGame | None, past_season: bool, now: datetime) -> bool:
+    """Whether a game is surely over: ESPN marked its stats official or it tipped off ``SETTLE`` ago.
+
+    A game the calendar lacks is trusted only from a past season.
+    """
+    if game is None:
+        return past_season
+    return game.official or now >= game.start + SETTLE
+
+
+def _absence(player: dict) -> str | None:
+    """What keeps him out now, in a word or two, when ESPN says: the injury, or a suspension."""
+    status = str(player.get("injuryStatus") or "ACTIVE")
+    if status == "ACTIVE":
+        return None
+    if status == "SUSPENSION":
+        return "Suspended"
+    kind = str((player.get("injuryDetails") or {}).get("type") or "").strip()
+    return kind if kind and kind.lower() not in ("other", "undisclosed", "unknown") else None
+
+
 def _won(raw: dict, game: ScheduledGame | None, past_season: bool, now: datetime) -> bool | None:
     """His team's result from ESPN's team-win stat, once the game is surely over.
 
@@ -102,17 +130,15 @@ def _won(raw: dict, game: ScheduledGame | None, past_season: bool, now: datetime
     flag = raw.get(str(TEAM_WIN))
     if flag is None:
         return None
-    if game is None:
-        decided = past_season
-    else:
-        decided = game.official or now >= game.start + SETTLE
-    return bool(flag) if decided else None
+    return bool(flag) if _over(game, past_season, now) else None
 
 
 def parse_card(entry: dict, season: int, schedules: dict[int, Schedule], now: datetime | None = None) -> Card:
     """Turn one ``kona_playercard`` entry into a card.
 
-    Only games he played (minutes > 0) are kept, newest first. ``schedules`` holds the
+    His team's games come newest first: the ones he played (minutes > 0) with his line,
+    and the ones he sat out once they are surely over (a game still going may yet see him
+    check in). ``schedules`` holds the
     NBA calendar by season, for opponents and tip-off times; a season without one still
     lists its games, without them.
     """
@@ -132,17 +158,20 @@ def parse_card(entry: dict, season: int, schedules: dict[int, Schedule], now: da
         if split == GAME_SPLIT and st.get("externalId"):
             raw = st.get("stats") or {}
             stats = _line(raw)
-            if stats["minutes"] <= 0:
-                continue
             gid = int(st["externalId"])
-            team = int(st.get("proTeamId") or p.get("proTeamId") or 0)
+            row_season = int(st.get("seasonId") or season)
             game = by_game.get(gid)
+            played = stats["minutes"] > 0
+            if not played and not _over(game, row_season < season, now):
+                continue
+            if not played:
+                stats = dict.fromkeys(stats, 0.0)  # an empty line, but never half a line
+            team = int(st.get("proTeamId") or p.get("proTeamId") or 0)
             opp, home, start = 0, None, None
             if game is not None:
                 home = game.home == team
                 opp = game.away if home else game.home
                 start = int(game.start.timestamp() * 1000)
-            row_season = int(st.get("seasonId") or season)
             games.append(
                 GameRow(
                     game_id=gid,
@@ -153,6 +182,7 @@ def parse_card(entry: dict, season: int, schedules: dict[int, Schedule], now: da
                     home=home,
                     stats=stats,
                     won=_won(raw, game, row_season < season, now),
+                    played=played,
                 )
             )
         elif split == SEASON_SPLIT and st.get("seasonId") == season:
@@ -169,6 +199,12 @@ def parse_card(entry: dict, season: int, schedules: dict[int, Schedule], now: da
                     ft_pct=float(total.get("15", 0) or 0) / fta if fta else None,
                 )
     games.sort(key=lambda g: (g.season, g.day, g.start_ms or 0), reverse=True)
+    # His current injury explains the games he has missed since he last played, not older ones.
+    reason = _absence(p)
+    for g in games:
+        if g.played or g.season != season:
+            break
+        g.missed_reason = reason
 
     own = p.get("ownership") or {}
     return Card(

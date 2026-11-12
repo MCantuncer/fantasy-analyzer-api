@@ -59,7 +59,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🏀 | **Live scores:** NBA scores and box scores tagged with fantasy teams | `/api/scores` |
 | 📰 | **Checked NBA news:** stories confirmed across sources before they show | `/api/news` |
 | 🩹 | **Injury impact:** which teammates gain while a player is out | `/api/injury-impact` |
-| 🃏 | **Player cards:** any player's latest games, health, news and every move of him in the league | `/api/player-card` |
+| 🃏 | **Player cards:** any player's latest team games (missed ones marked, with his current injury), health, news and every move of him in the league | `/api/player-card` |
 | 📝 | **Trade feedback and rules:** rate a trade idea and have it checked against today's league; your own rules hide ideas that break them | `/api/trade-feedback`, `/api/trade-check`, `/api/trade-rules` |
 | 📈 | **Usage numbers:** daily visitors, page views and sign-ups, with no cookies or ids: a visitor is a hash under a salt that is deleted each day | `/api/usage` |
 | 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |

@@ -2963,8 +2963,10 @@ def create_app(
         card, teams = await load_card(body.league_id, season, body.player_id, creds)
         timer.mark("espn")
 
-        # This season's games; last season's only until he plays one.
-        games = [g for g in card.games if g.season == season] or [g for g in card.games if g.season == season - 1]
+        # This season's games, missed ones included; last season's only until he plays one.
+        this = [g for g in card.games if g.season == season]
+        last = [g for g in card.games if g.season == season - 1]
+        games = this if any(g.played for g in this) or not any(g.played for g in last) else last
         other_ids = {pid for m in card.moves for pid, _, _ in m.others}
         if body.core:
             # The card shows now; news and any names not yet known come from /extras alongside.
@@ -3009,6 +3011,8 @@ def create_app(
                     opponent=teams.get(g.opponent_id, ""),
                     home=g.home,
                     won=g.won,
+                    played=g.played,
+                    missed_reason=g.missed_reason,
                     stats=stats(g.stats),
                 )
                 for g in games[:CARD_GAMES]
