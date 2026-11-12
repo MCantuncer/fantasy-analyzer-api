@@ -278,7 +278,7 @@ def create_app(
     error_store: error_reports.ErrorStore | None = None,
 ) -> FastAPI:
     limit_arenas()  # before any worker thread starts: see app/memory.py
-    app = FastAPI(title="Fantasy Analyzer API", version="0.1.0")
+    app = FastAPI(title="COURT API", version="0.1.0")
     app.state.espn = espn or EspnClient()
     app.state.leagues = TTLCache(LEAGUE_TTL)
     # League loads under way, so a second request for the same league waits for the first.

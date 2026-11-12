@@ -1,12 +1,12 @@
 <div align="center">
 
-# Fantasy Analyzer · API
+# COURT · API
 
-**The engine behind Fantasy Analyzer: trades, FA targets and playoff odds for ESPN fantasy basketball.**
+**The engine behind COURT: trades, FA targets and playoff odds for ESPN fantasy basketball.**
 
 [![CI](https://github.com/MCantuncer/fantasy-analyzer-api/actions/workflows/ci.yml/badge.svg)](https://github.com/MCantuncer/fantasy-analyzer-api/actions/workflows/ci.yml)
 [![News refresh](https://github.com/MCantuncer/fantasy-analyzer-api/actions/workflows/news.yml/badge.svg)](https://github.com/MCantuncer/fantasy-analyzer-api/actions/workflows/news.yml)
-[![Live app](https://img.shields.io/badge/live-fantasy--analyzer--web.vercel.app-5b5bd6?logo=vercel&logoColor=white)](https://fantasy-analyzer-web.vercel.app)
+[![Live app](https://img.shields.io/badge/live-courtfantasy.app-5b5bd6?logo=vercel&logoColor=white)](https://courtfantasy.app)
 [![Deployed on Render](https://img.shields.io/badge/deployed_on-Render-46E3B7?logo=render&logoColor=black)](https://fantasy-analyzer-api.onrender.com/api/health)
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org)
@@ -18,7 +18,7 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![pytest](https://img.shields.io/badge/tested_with-pytest-0A9EDC?logo=pytest&logoColor=white)](https://docs.pytest.org)
 
-[Live app](https://fantasy-analyzer-web.vercel.app) · [Web client](https://github.com/MCantuncer/fantasy-analyzer-web) · [Report a bug](https://github.com/MCantuncer/fantasy-analyzer-api/issues)
+[Live app](https://courtfantasy.app) · [Web client](https://github.com/MCantuncer/fantasy-analyzer-web) · [Report a bug](https://github.com/MCantuncer/fantasy-analyzer-api/issues)
 
 </div>
 
@@ -40,7 +40,7 @@
 
 A FastAPI backend for ESPN **9-category head-to-head** fantasy basketball. Give it a league ID and team ID and it returns moves ranked by how much they change your playoff odds: trades the other owner should accept, free agents paired with the right drop, your category outlook, every team's build, and a full season simulation.
 
-The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fantasy-analyzer-web) and runs at **https://fantasy-analyzer-web.vercel.app**.
+The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fantasy-analyzer-web) and runs at **https://courtfantasy.app**.
 
 ## Features
 
@@ -359,4 +359,4 @@ On League A, slow starters played about as well as projected in both seasons (+0
 
 Deployed on [Render](https://render.com) at **https://fantasy-analyzer-api.onrender.com** (health check: `/api/health`).
 
-`render.yaml` deploys the API to [Render](https://render.com): New > Blueprint, pick this repo, then set `CORS_ORIGINS` to the web app's URL (for example `https://fantasy-analyzer-web.vercel.app`). For the trade of the day to stay the same all day and for poll votes to be kept across restarts, also set `DATABASE_URL` to a Postgres connection string (a free [Neon](https://neon.tech) database is plenty; the tables are created on start). Without it, picks and votes live in memory and reset when the server sleeps. `plan` is `starter` (always on, 0.5 CPU); the free plan sleeps when idle and has a fifth of the CPU, which makes the analysis take minutes. Access logs are turned off so request details are never written to Render's logs.
+`render.yaml` deploys the API to [Render](https://render.com): New > Blueprint, pick this repo, then set `CORS_ORIGINS` to the web app's URL (for example `https://courtfantasy.app`; list several origins with commas while the old `https://fantasy-analyzer-web.vercel.app` address is still in use). For the trade of the day to stay the same all day and for poll votes to be kept across restarts, also set `DATABASE_URL` to a Postgres connection string (a free [Neon](https://neon.tech) database is plenty; the tables are created on start). Without it, picks and votes live in memory and reset when the server sleeps. `plan` is `starter` (always on, 0.5 CPU); the free plan sleeps when idle and has a fifth of the CPU, which makes the analysis take minutes. Access logs are turned off so request details are never written to Render's logs.
