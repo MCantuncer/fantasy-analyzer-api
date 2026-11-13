@@ -1,4 +1,5 @@
 import copy
+import dataclasses
 
 import pytest
 
@@ -494,3 +495,44 @@ def test_pitch_needs_spell_out_the_pitch(league):
         assert len(needs) <= 2
         for n in needs:
             assert n.category in pitch and 1 <= n.league_rank <= len(league.teams)
+
+
+def _my_finder(league, mode="fair"):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    return TradeFinder(league, model, me, keep=set(), mode=mode)
+
+
+@pytest.mark.parametrize("mode", ["fair", "edge"])
+def test_waiver_players_never_pay_for_a_trade(league, mode):
+    finder = _my_finder(league, mode)
+    assert finder.wire, "the fixture roster has waiver-level players"
+    deals = finder.candidates()
+    assert deals
+    pv = finder.perceived
+    for d in deals:
+        paying = [p for p in d.give if p.id not in finder.wire]
+        assert paying, [p.name for p in d.give]
+        assert d.give_value == pytest.approx(pv.package(paying))
+        if len(d.give) == len(d.get):
+            assert len(paying) == len(d.give), "a throw-in is not half of an even trade"
+
+
+def test_a_player_i_just_picked_up_is_a_throw_in(league):
+    finder = _my_finder(league)
+    led = [d for d in finder.candidates() if len(d.give) == 1 and d.give[0].acquisition_type != "ADD"]
+    assert led
+    p = led[0].give[0]
+    team = league.team(3)
+    fresh = dataclasses.replace(p, acquisition_type="ADD", acquired_ms=finder.premium.now_ms - 2 * 86_400_000)
+    team.roster[team.roster.index(p)] = fresh
+    try:
+        finder = _my_finder(league)
+        assert fresh.id in finder.wire
+        assert finder.give_price(fresh) == 0.0
+        deals = finder.candidates()
+        assert not [d for d in deals if {q.id for q in d.give} == {fresh.id}]
+        facts = [f for d in deals for f in d.facts if f.player_id == fresh.id]
+        assert not any(f.kind == "sell_high" for f in facts)
+    finally:
+        team.roster[team.roster.index(fresh)] = p

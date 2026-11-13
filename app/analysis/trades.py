@@ -23,6 +23,10 @@ replacing him is free, so it isn't the trade's gain. And it goes for the other t
 when a deal opens a spot on their roster, their side is measured against the pickup
 they could make today.
 
+A player of mine who came off the waiver wire (no market, or added from free agency in the
+last few weeks, see tiers.py) is not currency: the other owner could have had him for free.
+He counts for nothing on paper, so he can ride along in a deal but never pays for it.
+
 Trade shapes: 1-for-1, 2-for-2, 2-for-1 and 1-for-2. Real offers show owners treat
 them differently at the same value (scripts/trade_shape_backtest.py): a 2-for-2 is a
 normal trade, while a 2-for-1 that makes the other owner cut someone to fit two players
@@ -53,7 +57,7 @@ from app import schemas
 from app.analysis.badges import OwnerPremium, best_pickup
 from app.analysis.model import CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
-from app.analysis.tiers import droppable
+from app.analysis.tiers import droppable, off_the_wire
 from app.espn.parse import League, Player, Team
 
 MIN_MY_GAIN = 0.05  # expected categories won per week
@@ -286,6 +290,8 @@ class TradeFinder:
         self.punts = [cats < PUNT_WIN for cats in self.base_cats]
         self.standing: dict[int, int] = {}  # team index -> place in the standings, once games are played
         self.struggling = self._outside_playoffs()
+        # My players the other owners could have for free: throw-ins, worth nothing to them on paper.
+        self.wire = {p.id for p in self.teams[me_idx].roster if off_the_wire(p, self.premium.now_ms)}
         self.filler = best_pickup(league, model)
         self.free_move, self.free_roster, self.free_base = self._free_move()
         cal = league.calendar
@@ -421,6 +427,10 @@ class TradeFinder:
         options = droppable([p for p in roster if p.id not in protected], self.keep)
         return min(options, key=self.model.value) if options else None
 
+    def give_price(self, p: Player) -> float:
+        """What one of my players is worth to the other owner: nothing when he came off the waiver wire."""
+        return 0.0 if p.id in self.wire else self.perceived.value(p)
+
     def _evaluate(
         self,
         j: int,
@@ -444,7 +454,7 @@ class TradeFinder:
             their_drop = self._worst(their_roster, give_ids)
             their_roster = [p for p in their_roster if p is not their_drop]
 
-        give_v = pv.package(give) + extra_give_value  # e.g. FAAB dollars sent with the players
+        give_v = pv.package(give, self.give_price) + extra_give_value  # e.g. FAAB dollars sent with the players
         get_v = pv.package(get, self.premium.price)
         premium = get_v - pv.package(get)
         if their_drop is not None:
@@ -651,6 +661,8 @@ class TradeFinder:
         at = "at" if self.league.is_auction else "like"  # "at $12" / "like a 4th-round pick"
         for kind, players in (("sell_high", give), ("buy_low", get)):
             for p in players:
+                if kind == "sell_high" and p.id in self.wire:
+                    continue  # nobody pays for a player who was free last week
                 owners, ours = pv.value(p), self.model_dollars.get(p.id, 0.0)
                 gap = owners - ours if kind == "sell_high" else ours - owners
                 if gap >= MISPRICED and pv.describe(owners) != pv.describe(ours):
@@ -739,7 +751,7 @@ class TradeFinder:
     def _three_player(self, j: int, mine: list[Player], theirs: list[Player], cores: list[Deal]) -> list[Deal]:
         """3-for-3s and 2-for-3s grown from the best 2-for-2s with team ``j``: one more player on their
         side, and maybe one more on mine. A deal is kept only when it does more for me than its core."""
-        mine = [p for p in mine if p not in droppable(mine, self.keep)]
+        mine = [p for p in mine if p.id not in self.wire]
         theirs = [p for p in theirs if p not in droppable(theirs)]
         out: list[Deal] = []
         seen: set[tuple[frozenset[int], frozenset[int]]] = set()
@@ -771,7 +783,7 @@ class TradeFinder:
         pv = self.perceived
         lo = EDGE_MIN_RATIO if self.mode == "edge" else MIN_VALUE_RATIO
         # A player off the waiver wire is a throw-in, not half of a 2-for-2: that deal is a 2-for-1.
-        mine = [p for p in mine if p not in droppable(mine, self.keep)]
+        mine = [p for p in mine if p.id not in self.wire]
         theirs = [p for p in theirs if p not in droppable(theirs)]
         gives = [(pair, pv.package(list(pair))) for pair in combinations(mine, 2)]
         gets = [(pair, pv.package(list(pair), self.premium.price)) for pair in combinations(theirs, 2)]
