@@ -333,19 +333,86 @@ def test_two_for_one_is_measured_against_the_free_pickup(league):
         after = model.strength(me, d.dists)
         assert d.my_gain == pytest.approx(after - finder.free_base)
         assert any(add.name in r and "needs no trade" in r for r in d.reasons)
-    assert all(d.vs_pickup is None for d in deals if d.my_add is None)
+    # Any other deal starts from today's roster, unless it spends the spot the pickup needs.
+    for d in deals:
+        if d.my_add is None and drop not in d.give and d.my_drop is not drop:
+            assert d.vs_pickup is None
+
+
+def test_cutting_the_player_the_free_pickup_replaces_is_not_the_trades_gain(league):
+    """A 1-for-2 that makes room by cutting my weakest player, or a deal that sends him, is measured
+    against swapping him for the best free agent: that needs no trade."""
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set())
+    add, drop = finder.free_move
+    loose = {"min_my_gain": float("-inf"), "min_their_gain": float("-inf"), "min_ratio": 0.0}
+    mine = league.teams[me].roster
+    give = next(p for p in mine if p is not drop and p not in droppable(mine))
+    found = 0
+    for j, team in enumerate(league.teams):
+        if j == me:
+            continue
+        cut = [
+            d
+            for pair in zip(team.roster, team.roster[1:], strict=False)
+            if (d := finder._evaluate(j, [give], list(pair), **loose)) is not None and d.my_drop is drop
+        ]
+        sent = [d for get in team.roster if (d := finder._evaluate(j, [drop], [get], **loose)) is not None]
+        for d in cut + sent:
+            found += 1
+            assert d.vs_pickup == (add, drop)
+            assert d.my_gain == pytest.approx(model.strength(me, d.dists) - finder.free_base)
+            assert d.my_gain < model.strength(me, d.dists) - finder.base[me]
+            assert any(add.name in r and "needs no trade" in r for r in d.reasons)
+    assert found
+
+
+def test_a_spot_opened_on_their_roster_is_measured_against_their_own_pickup(league):
+    """Their open spot takes the best free agent, whom they could add today: their odds start from that."""
+    a = Analyzer(league, 3)
+    finder = TradeFinder(league, a.model, a.idx, keep=set(), mode="edge", premium=a.premium)
+    deals = finder.candidates()
+    opened = [d for d in deals if len(d.get) > len(d.give)]
+    assert opened
+    for d in deals:
+        if len(d.get) > len(d.give):
+            assert d.their_pickup == finder.their_free_move(d.partner_idx)
+        else:
+            assert d.their_pickup is None
+    helped = next(d for d in opened if d.their_pickup is not None)
+    add, drop = helped.their_pickup
+    assert add is finder.filler and drop in droppable(league.teams[helped.partner_idx].roster)
+    assert any("Their odds are measured against" in r and add.name in r for r in helped.reasons)
+    j = helped.partner_idx
+    today = float(a.playoff_odds(a.dists)[j])
+    _, (before, _) = a.deal_odds(helped)
+    assert before >= today
+    roster = [p for p in league.teams[j].roster if p.id != drop.id] + [add]
+    dists = list(a.dists)
+    dists[j] = a.model.dist(roster)
+    assert before == pytest.approx(max(today, float(a.playoff_odds(dists, {j: roster})[j])))
+    # The finer run the list shows starts from the same place.
+    _, _, (fine_before, _), _ = a.recheck(helped)
+    assert fine_before >= float(a.playoff_odds(a.dists, fine=True)[j]) - 1e-9
+    # A deal that opens no spot on their roster starts from their roster today.
+    even = next(d for d in deals if len(d.get) == len(d.give) and d.partner_idx == j)
+    assert a.deal_odds(even)[1][0] == pytest.approx(today)
 
 
 def test_trade_odds_start_from_the_free_pickup_when_the_deal_uses_it(league):
     a = Analyzer(league, 3)
     today = a.playoff_pct(a.dists, fine=True)  # listed odds come from the finer run
+    finder = TradeFinder(league, a.model, a.idx, keep=set())
+    _, drop = finder.free_move
     ideas = a.trades("fair") + a.trades("edge")
     assert ideas
     for t in ideas:
-        if t.my_add is None:
-            assert t.playoff_pct_before == pytest.approx(today, abs=1e-3)
-        else:
+        spends_spot = t.my_add is not None or (t.my_drop is not None and t.my_drop.id == drop.id)
+        if spends_spot or any(p.id == drop.id for p in t.give):
             assert t.playoff_pct_before > today
+        else:
+            assert t.playoff_pct_before == pytest.approx(today, abs=1e-3)
         assert t.playoff_pct_after >= t.playoff_pct_before
 
 

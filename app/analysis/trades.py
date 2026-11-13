@@ -17,7 +17,11 @@ the top of what the finder sees.
 A 2-for-1 fills the spot it opens with the best free agent. That pickup needs no
 trade: you could cut your weakest player for him today. So such a deal is measured
 against your roster after that free pickup, not against today's roster, and the trade
-gets credit only for what it adds on top.
+gets credit only for what it adds on top. The same goes for a deal that cuts or sends
+the player you'd drop for that free agent (a 1-for-2 that makes room by cutting him):
+replacing him is free, so it isn't the trade's gain. And it goes for the other team:
+when a deal opens a spot on their roster, their side is measured against the pickup
+they could make today.
 
 Trade shapes: 1-for-1, 2-for-2, 2-for-1 and 1-for-2. Real offers show owners treat
 them differently at the same value (scripts/trade_shape_backtest.py): a 2-for-2 is a
@@ -149,8 +153,12 @@ class Deal:
     faab: int = 0  # FAAB dollars I send with the players
     premium: float = 0.0  # owner premium included in get_value, in dollars
     warnings: list[str] = field(default_factory=list)  # what I give up that's hard to replace
-    # The free pickup (add, drop) the deal is measured against, when the deal's own open spot uses it.
+    # The free pickup (add, drop) the deal is measured against, when the deal spends the spot it needs:
+    # its own open spot takes that free agent, or it cuts or sends the player I'd drop for him.
     vs_pickup: tuple[Player, Player] | None = None
+    # The same for them: the free pickup (add, drop) they could make today, when the spot the deal
+    # opens on their roster takes that free agent.
+    their_pickup: tuple[Player, Player] | None = None
     playoff_gain: float = 0.0  # vision mode: change in my expected categories won per playoff week
     vision: list[str] = field(default_factory=list)  # vision mode: why the players I get are worth more later
     # Change in their expected categories won counting every category, as the season simulation does.
@@ -289,7 +297,8 @@ class TradeFinder:
             self.playoff_strength({self.me_idx: self.free_roster}) if mode == "vision" and self.free_roster else None
         )
         self.rivals = self._rivals()
-        self._their_free: dict[int, np.ndarray] = {}  # team index -> category win rates after its free pickup
+        # team index -> its category win rates after its best free pickup, and that pickup (add, drop) if it helps
+        self._their_free: dict[int, tuple[np.ndarray, tuple[Player, Player] | None]] = {}
         self._gains: dict[tuple[int, int, int], float] = {}  # (partner, mine, theirs) -> my gain from that 1-for-1
         # Our projection in dollars: a player's model-value rank priced on ESPN's rank curve.
         pool = [p for t in self.teams for p in t.roster] + list(league.free_agents)
@@ -376,8 +385,15 @@ class TradeFinder:
         The same free agent fills the spot a 1-for-2 opens on their roster, so a deal gets
         credit only for what it adds on top of that pickup, as it does on my side.
         """
+        return self._their_free_move(j)[0]
+
+    def their_free_move(self, j: int) -> tuple[Player, Player] | None:
+        """The pickup (add, drop) behind ``their_free_cats``; None when no free pickup helps team j."""
+        return self._their_free_move(j)[1]
+
+    def _their_free_move(self, j: int) -> tuple[np.ndarray, tuple[Player, Player] | None]:
         if j not in self._their_free:
-            best = self.base_cats[j]
+            best, move = self.base_cats[j], None
             if self.filler is not None:
                 roster = self.teams[j].roster
                 top = self.base[j]
@@ -386,8 +402,8 @@ class TradeFinder:
                     dists[j] = self.model.dist([p for p in roster if p.id != drop.id] + [self.filler])
                     strength = self.model.strength(j, dists)
                     if strength > top:
-                        top, best = strength, self._avg_win(j, dists)
-            self._their_free[j] = best
+                        top, best, move = strength, self._avg_win(j, dists), (self.filler, drop)
+            self._their_free[j] = (best, move)
         return self._their_free[j]
 
     def _worst(self, roster: list[Player], protected: set[int]) -> Player | None:
@@ -459,8 +475,14 @@ class TradeFinder:
         dists = list(self.dists)
         dists[self.me_idx] = self.model.dist(my_roster)
         dists[j] = self.model.dist(their_roster)
-        # A deal whose open spot takes the free pickup is compared with just making that pickup.
-        vs_pickup = self.free_move if my_add is not None and self.free_move is not None else None
+        # A deal that spends the spot my free pickup needs is compared with just making that pickup:
+        # its open spot takes the same free agent, or it cuts or sends the player I'd drop for him.
+        # Either way the pickup's gain is mine without the trade.
+        free = self.free_move
+        spends_spot = free is not None and (
+            my_add is not None or free[1].id in give_ids or (my_drop is not None and my_drop.id == free[1].id)
+        )
+        vs_pickup = free if spends_spot else None
         baseline = self.free_base if vs_pickup is not None else self.base[self.me_idx]
         my_gain = self.model.strength(self.me_idx, dists) - baseline
         if len(give) == len(get) == 1:
@@ -470,7 +492,8 @@ class TradeFinder:
         if my_gain < min_my_gain:
             return None
         # When the deal's open spot on their side takes the free agent, compare with just making that pickup.
-        their_base = self.their_free_cats(j) if len(get) > len(give) else None
+        opens_their_spot = len(get) > len(give)
+        their_base = self.their_free_cats(j) if opens_their_spot else None
         their_gain = self.fit_gain(j, dists, their_base)
         edge = self.mode == "edge"
         if min_their_gain is None:
@@ -527,6 +550,18 @@ class TradeFinder:
                     player=add,
                 )
             )
+        their_pickup = self.their_free_move(j) if opens_their_spot else None
+        if their_pickup is not None:
+            add, drop = their_pickup
+            facts.append(
+                _fact(
+                    "vs_pickup",
+                    "note",
+                    f"Their odds are measured against them just adding {add.name} for {drop.name}, which needs "
+                    "no trade: the free agent in their open spot isn't counted as the trade's doing.",
+                    player=add,
+                )
+            )
         reasons = [f.text for f in facts]
         return Deal(
             partner_idx=j,
@@ -548,6 +583,7 @@ class TradeFinder:
             premium=premium,
             warnings=self._warnings(give),
             vs_pickup=vs_pickup,
+            their_pickup=their_pickup,
             playoff_gain=playoff_gain,
             vision=[line for p in get for line in self.vision_signals(p)] if vision else [],
             their_strength=self.fit_gain(j, dists, their_base, every_category=True),

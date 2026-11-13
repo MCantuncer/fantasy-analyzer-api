@@ -21,8 +21,8 @@ def test_fit_and_owner_read(league):
 
 
 def test_offers_are_distinct_and_help_me(league):
-    giddey = player(league, "Josh Giddey")
-    report = TargetAnalyzer(league, MY_TEAM, giddey.id).target_report()
+    target = player(league, "Tyler Herro")
+    report = TargetAnalyzer(league, MY_TEAM, target.id).target_report()
     offers = report.offers
     assert 1 <= len(offers) <= 3
     assert offers[0].angle == "best"
@@ -30,16 +30,18 @@ def test_offers_are_distinct_and_help_me(league):
     gives = [(frozenset(p.id for p in o.give), frozenset(p.id for p in o.get)) for o in offers]
     assert len(set(gives)) == len(gives)
     for o in offers:
-        assert giddey.id in {p.id for p in o.get}
+        assert target.id in {p.id for p in o.get}
         assert o.playoff_pct_after - o.playoff_pct_before >= 0.0099
         assert o.pitch
 
 
 def test_keep_players_are_never_offered(league):
-    giddey = player(league, "Josh Giddey")
-    amen = player(league, "Amen Thompson")
-    report = TargetAnalyzer(league, MY_TEAM, giddey.id, [amen.id]).target_report()
-    assert all(amen.id not in {p.id for p in o.give} for o in report.offers)
+    herro = player(league, "Tyler Herro")
+    allen = player(league, "Jarrett Allen")
+    offered = TargetAnalyzer(league, MY_TEAM, herro.id).target_report().offers
+    assert any(allen.id in {p.id for p in o.give} for o in offered)
+    report = TargetAnalyzer(league, MY_TEAM, herro.id, [allen.id]).target_report()
+    assert all(allen.id not in {p.id for p in o.give} for o in report.offers)
 
 
 def test_own_player_rejected(league):
@@ -49,8 +51,8 @@ def test_own_player_rejected(league):
 
 
 def test_target_endpoint(client, league):
-    giddey = player(league, "Josh Giddey")
-    r = client.post("/api/target", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM, "player_id": giddey.id})
+    herro = player(league, "Tyler Herro")
+    r = client.post("/api/target", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM, "player_id": herro.id})
     assert r.status_code == 200
     assert r.json()["offers"]
     bad = client.post("/api/target", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM, "player_id": 1})
