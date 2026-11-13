@@ -69,7 +69,7 @@ SCREEN_MIN_THEIR_GAIN = -0.05
 MIN_VALUE_RATIO = 0.85  # they must get back at least this share of perceived value
 MAX_VALUE_RATIO = 1.4  # never overpay by more than this on paper
 MAX_PER_TARGET = 2
-MAX_PER_PARTNER = 4
+MAX_PER_PARTNER = 2  # a list is ideas across the league, not one owner four times
 MAX_PER_GIVE = 3  # each of my players goes in at most this many deals on a list, so it isn't one idea ten times
 # Uneven trades (2-for-1, 1-for-2) are only a small part of any list: they look good on paper
 # but rarely get done. Even trades (1-for-1, 2-for-2) fill the rest. When there aren't enough
@@ -211,6 +211,9 @@ def keystone_odds(p: float) -> float:
 class Picks:
     """Deals picked so far, within the per-target, per-partner, per-player and shape limits of a list of ``n``.
 
+    One deal per core idea: the same main player each way with the same owner is one idea, whatever
+    else is added to it ("Allen for Avdija" and "Allen + Mitchell for Avdija + George").
+
     Used while simulating down the queue: a deal that couldn't make the list isn't simulated.
     """
 
@@ -222,15 +225,21 @@ class Picks:
         self.per_target: dict[int, int] = {}
         self.per_partner: dict[int, int] = {}
         self.per_give: dict[int, int] = {}
+        self.cores: set[tuple[int, int, int]] = set()
 
     def _target(self, d: Deal) -> int:
         return max(d.get, key=self.value).id
+
+    def _core(self, d: Deal) -> tuple[int, int, int]:
+        """The idea behind a deal: the owner, the main player I send and the main player I get."""
+        return d.partner_idx, max(d.give, key=self.value).id, self._target(d)
 
     def room(self, d: Deal) -> bool:
         if len(d.give) != len(d.get) and self.uneven >= self.uneven_cap:
             return False
         return (
-            self.per_target.get(self._target(d), 0) < MAX_PER_TARGET
+            self._core(d) not in self.cores
+            and self.per_target.get(self._target(d), 0) < MAX_PER_TARGET
             and self.per_partner.get(d.partner_idx, 0) < MAX_PER_PARTNER
             and all(self.per_give.get(p.id, 0) < MAX_PER_GIVE for p in d.give)
         )
@@ -245,6 +254,7 @@ class Picks:
         self.per_partner[d.partner_idx] = self.per_partner.get(d.partner_idx, 0) + 1
         for p in d.give:
             self.per_give[p.id] = self.per_give.get(p.id, 0) + 1
+        self.cores.add(self._core(d))
 
     @property
     def full(self) -> bool:
