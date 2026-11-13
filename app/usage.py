@@ -36,7 +36,9 @@ PAGES = frozenset(
     }
 )  # fmt: skip
 # Things done on the server, counted where they happen.
-EVENTS = frozenset({"signup", "sign_in", "league_added", "verify", "analysis", "trade_feedback", "chat_post"})
+EVENTS = frozenset(
+    {"signup", "sign_in", "league_added", "password_reset", "verify", "analysis", "trade_feedback", "chat_post"}
+)
 
 
 def today() -> date:

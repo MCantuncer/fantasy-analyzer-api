@@ -10,6 +10,12 @@ after losing an account.
 An account also saves the players it keeps on a team (never offered in trades), so the
 choice follows the person across devices and the league-wide trade scan can respect it.
 
+A forgotten password is reset through a link emailed to the account's address: the token in it
+works once, for ``RESET_MINUTES``, and only its SHA-256 hash is stored. A reset ends every
+session. Sign-up never checks the email, so an address counts as proven only after a reset link
+or Google vouched for it; Google joining an account whose email was never proven turns its
+password off (see ``attach_google``), so nobody can sit in an account made on someone else's address.
+
 Passwords are stored as scrypt hashes and session tokens as SHA-256 hashes. With
 ``DATABASE_URL`` everything is in Postgres, otherwise in memory.
 """
@@ -23,13 +29,18 @@ import json
 import os
 import secrets
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 
 SESSION_DAYS = 90
 # Set by hand in the database (update users set user_type = 'admin' where email = '...'); never by the API.
 ADMIN = "admin"
 PASSWORD_MIN = 8
+RESET_MINUTES = 30
+PASSWORD_OFF_NOTICE = (
+    "You signed in with Google, so the password on this account was turned off to keep it safe. "
+    "Use Forgot password on the sign-in page to set one again."
+)
 _SCRYPT = {"n": 2**14, "r": 8, "p": 1}
 
 
@@ -133,6 +144,15 @@ create table if not exists users (
     created_at timestamptz not null default now()
 );
 alter table users add column if not exists user_type text not null default 'user';
+alter table users add column if not exists email_verified boolean not null default false;
+update users set email_verified = true where google_sub is not null and not email_verified;
+create table if not exists password_resets (
+    token_hash text primary key,
+    user_id bigint not null references users(id) on delete cascade,
+    expires_at timestamptz not null,
+    used_at timestamptz
+);
+create index if not exists password_resets_user on password_resets (user_id);
 create table if not exists user_sessions (
     token_hash text primary key,
     user_id bigint not null references users(id) on delete cascade,
@@ -187,7 +207,9 @@ class AccountStore(Protocol):
     def create_user(self, email: str | None, password_hash: str | None, google_sub: str | None = None) -> User: ...
     def login_lookup(self, email: str) -> tuple[User, str | None] | None: ...
     def user_by_google(self, sub: str) -> User | None: ...
-    def attach_google(self, user_id: int, sub: str) -> None: ...
+    def attach_google(self, user_id: int, sub: str) -> bool: ...
+    def start_reset(self, user_id: int, token_hash: str, expires_at: datetime) -> None: ...
+    def finish_reset(self, token_hash: str, password_hash: str) -> User | None: ...
     def save_session(self, token_hash: str, user_id: int) -> None: ...
     def session_user(self, token_hash: str) -> User | None: ...
     def drop_session(self, token_hash: str) -> None: ...
@@ -206,6 +228,10 @@ class AccountStore(Protocol):
     def totals(self, since: date) -> AccountTotals: ...
 
 
+def reset_expiry(now: datetime) -> datetime:
+    return now + timedelta(minutes=RESET_MINUTES)
+
+
 def team_of(store: AccountStore, user_id: int, league_id: int, season: int) -> int | None:
     return next((t for t, u in store.managers(league_id, season).items() if u == user_id), None)
 
@@ -213,6 +239,8 @@ def team_of(store: AccountStore, user_id: int, league_id: int, season: int) -> i
 class MemoryAccountStore:
     def __init__(self) -> None:
         self.users: dict[int, tuple[User, str | None, str | None]] = {}  # id -> (user, password hash, google sub)
+        self.proven: set[int] = set()  # accounts whose email a reset link or Google proved
+        self.resets: dict[str, tuple[int, datetime]] = {}  # token hash -> (user id, expires at); gone once used
         self.sessions: dict[str, int] = {}
         self.leagues: dict[int, dict[tuple[int, int], FollowedLeague]] = {}
         self.teams: dict[tuple[int, int, int], int] = {}
@@ -224,6 +252,8 @@ class MemoryAccountStore:
             raise EmailTaken(email)
         user = User(len(self.users) + 1, email, datetime.now(UTC), has_google=google_sub is not None)
         self.users[user.id] = (user, password_hash, google_sub)
+        if google_sub is not None:
+            self.proven.add(user.id)
         return user
 
     def login_lookup(self, email: str) -> tuple[User, str | None] | None:
@@ -232,10 +262,33 @@ class MemoryAccountStore:
     def user_by_google(self, sub: str) -> User | None:
         return next((u for u, _, g in self.users.values() if g == sub), None)
 
-    def attach_google(self, user_id: int, sub: str) -> None:
+    def attach_google(self, user_id: int, sub: str) -> bool:
         user, pw, _ = self.users[user_id]
         user.has_google = True
+        password_off = pw is not None and user_id not in self.proven
+        if password_off:
+            # Whoever set that password never proved the email: their password and sessions go.
+            pw = None
+            self.sessions = {t: u for t, u in self.sessions.items() if u != user_id}
         self.users[user_id] = (user, pw, sub)
+        self.proven.add(user_id)
+        return password_off
+
+    def start_reset(self, user_id: int, token_hash: str, expires_at: datetime) -> None:
+        self.resets = {t: r for t, r in self.resets.items() if r[0] != user_id}  # only the newest link works
+        self.resets[token_hash] = (user_id, expires_at)
+
+    def finish_reset(self, token_hash: str, password_hash: str) -> User | None:
+        found = self.resets.pop(token_hash, None)
+        if found is None or found[1] <= datetime.now(UTC) or found[0] not in self.users:
+            return None
+        user_id = found[0]
+        user, _, sub = self.users[user_id]
+        self.users[user_id] = (user, password_hash, sub)
+        self.proven.add(user_id)
+        self.sessions = {t: u for t, u in self.sessions.items() if u != user_id}
+        self.resets = {t: r for t, r in self.resets.items() if r[0] != user_id}
+        return user
 
     def save_session(self, token_hash: str, user_id: int) -> None:
         self.sessions[token_hash] = user_id
@@ -339,9 +392,49 @@ class PostgresAccountStore:
             row = conn.execute(f"select {self._USER} from users where google_sub=%s", (sub,)).fetchone()
         return User(*row) if row else None
 
-    def attach_google(self, user_id: int, sub: str) -> None:
-        with self._connect() as conn:
-            conn.execute("update users set google_sub=%s where id=%s", (sub, user_id))
+    def attach_google(self, user_id: int, sub: str) -> bool:
+        with self._connect() as conn, conn.transaction():
+            row = conn.execute(
+                "update users u set google_sub=%s, email_verified=true, "
+                "password_hash=case when old.email_verified then u.password_hash end "
+                "from users old where u.id=%s and old.id=u.id "
+                "returning old.password_hash is not null and not old.email_verified",
+                (sub, user_id),
+            ).fetchone()
+            password_off = bool(row and row[0])
+            if password_off:
+                conn.execute("delete from user_sessions where user_id=%s", (user_id,))
+        return password_off
+
+    def start_reset(self, user_id: int, token_hash: str, expires_at: datetime) -> None:
+        with self._connect() as conn, conn.transaction():
+            # Only the newest link works; links used or expired long ago are cleared on the way.
+            conn.execute(
+                "delete from password_resets where user_id=%s or expires_at < now() - interval '1 day'", (user_id,)
+            )
+            conn.execute(
+                "insert into password_resets (token_hash, user_id, expires_at) values (%s, %s, %s)",
+                (token_hash, user_id, expires_at),
+            )
+
+    def finish_reset(self, token_hash: str, password_hash: str) -> User | None:
+        with self._connect() as conn, conn.transaction():
+            # One statement marks the link used, so two clicks at once can't both pass.
+            row = conn.execute(
+                "update password_resets set used_at=now() "
+                "where token_hash=%s and used_at is null and expires_at > now() returning user_id",
+                (token_hash,),
+            ).fetchone()
+            if row is None:
+                return None
+            user_id = row[0]
+            found = conn.execute(
+                f"update users set password_hash=%s, email_verified=true where id=%s returning {self._USER}",
+                (password_hash, user_id),
+            ).fetchone()
+            conn.execute("delete from user_sessions where user_id=%s", (user_id,))
+            conn.execute("delete from password_resets where user_id=%s and token_hash<>%s", (user_id, token_hash))
+        return User(*found) if found else None
 
     def save_session(self, token_hash: str, user_id: int) -> None:
         with self._connect() as conn:

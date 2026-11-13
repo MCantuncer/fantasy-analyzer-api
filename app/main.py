@@ -15,7 +15,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, date, datetime, timedelta
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -24,6 +24,8 @@ from app import errors as error_reports
 from app import schemas
 from app.accounts import (
     PASSWORD_MIN,
+    PASSWORD_OFF_NOTICE,
+    RESET_MINUTES,
     AccountStore,
     EmailTaken,
     FollowedLeague,
@@ -33,6 +35,7 @@ from app.accounts import (
     create_account_store,
     hash_password,
     normalize_email,
+    reset_expiry,
     team_of,
     verify_google,
 )
@@ -57,6 +60,7 @@ from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, 
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.gameclock import apply_clocks, apply_on_court, fetch_clocks, fetch_on_court
 from app.lineup import next_game, open_slots, parse_lineup, slot_name, team_days, week_of
+from app.mail import Mailer, create_mailer, reset_email, site_url
 from app.memory import give_back_after, limit_arenas
 from app.news.extract import timeline
 from app.news.facts import PlayerState, parse_states
@@ -127,6 +131,9 @@ USAGE_FLUSH_SECONDS = float(os.getenv("USAGE_FLUSH_SECONDS", "60"))
 # Website error reports: a visitor sends at most this many per window; new kinds a day are capped.
 ERROR_POSTS_PER_WINDOW = 20
 ERROR_POST_WINDOW = 600.0
+# Reset links asked for per address and per visitor, and reset tries per visitor, each hour.
+RESET_WINDOW = 3600.0
+RESETS_PER_WINDOW = {"email": 3, "ip": 10, "try": 20}
 NEW_WEB_ERRORS_PER_DAY = 200
 # A team's game logs: this season's change after every game night, last season's never.
 GAMELOG_TTL = 3 * 3600.0
@@ -276,6 +283,7 @@ def create_app(
     clock_transport=None,
     usage_store: UsageStore | None = None,
     error_store: error_reports.ErrorStore | None = None,
+    mailer: Mailer | None = None,
 ) -> FastAPI:
     limit_arenas()  # before any worker thread starts: see app/memory.py
     app = FastAPI(title="COURT API", version="0.1.0")
@@ -300,6 +308,8 @@ def create_app(
     app.state.deep_read_last = None
     app.state.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip() or None
     app.state.login_attempts = defaultdict(deque)
+    app.state.mailer = mailer if mailer is not None else create_mailer()
+    app.state.reset_requests = defaultdict(deque)  # by email and by IP: a link asked for, in the last hour
     app.state.basics = TTLCache(60)
     app.state.overviews = TTLCache(120)
     app.state.tx_recent = TTLCache(60)
@@ -861,9 +871,28 @@ def create_app(
             raise HTTPException(429, detail={"code": "slow_down", "message": "Too many tries. Wait a few minutes."})
         recent.append(now)
 
+    def throttle_resets(*keys: str) -> None:
+        """Reset links asked for: a few an hour per address and per visitor, so the form can't
+        flood someone's inbox or the email quota. Keys seen more than an hour ago are dropped."""
+        buckets = app.state.reset_requests
+        now = time.monotonic()
+        if len(buckets) > 5000:
+            for key in [k for k, q in buckets.items() if not q or now - q[-1] > RESET_WINDOW]:
+                del buckets[key]
+        for key in keys:
+            recent = buckets[key]
+            while recent and now - recent[0] > RESET_WINDOW:
+                recent.popleft()
+            if len(recent) >= RESETS_PER_WINDOW[key.split(":")[0]]:
+                raise HTTPException(429, detail={"code": "slow_down", "message": "Too many tries. Wait a while."})
+        for key in keys:
+            buckets[key].append(now)
+
     @app.get("/api/auth/config", response_model=schemas.AuthConfig)
     async def auth_config() -> schemas.AuthConfig:
-        return schemas.AuthConfig(google_client_id=app.state.google_client_id)
+        return schemas.AuthConfig(
+            google_client_id=app.state.google_client_id, password_reset=app.state.mailer is not None
+        )
 
     @app.post("/api/auth/signup", response_model=schemas.AuthResult, responses={409: {"model": schemas.ErrorBody}})
     async def signup(body: schemas.SignUpRequest) -> schemas.AuthResult:
@@ -896,6 +925,58 @@ def create_app(
         counted("sign_in")
         return await signed_in(found[0])
 
+    async def send_reset_link(email: str) -> None:
+        """Runs after the answer went out, so a known and an unknown address look the same."""
+        try:
+            found = await run_in_threadpool(app.state.accounts.login_lookup, email)
+            if found is None or app.state.mailer is None:
+                return
+            token = secrets.token_urlsafe(32)
+            expires = reset_expiry(app.state.now())
+            await run_in_threadpool(app.state.accounts.start_reset, found[0].id, hash_token(token), expires)
+            # The token rides after '#', so it never reaches a server log or another site's Referer.
+            link = f"{site_url()}/#reset={token}"
+            await app.state.mailer.send(reset_email(email, link, RESET_MINUTES))
+        except Exception:  # noqa: BLE001 - the person already got their answer; keep the reason in the logs
+            logging.getLogger(__name__).exception("could not send a password reset link")
+
+    @app.post(
+        "/api/auth/forgot",
+        status_code=202,
+        responses={429: {"model": schemas.ErrorBody}, 503: {"model": schemas.ErrorBody}},
+    )
+    async def forgot_password(body: schemas.ForgotPasswordRequest, request: Request, tasks: BackgroundTasks) -> dict:
+        """Emails a reset link when the address has an account. The answer is the same either way,
+        so the form can't be used to find out who has an account."""
+        if app.state.mailer is None:
+            raise HTTPException(503, detail={"code": "reset_off", "message": "Password reset isn't turned on yet."})
+        email = normalize_email(body.email)
+        throttle_resets(f"email:{email}", f"ip:{client_ip(request)}")
+        tasks.add_task(send_reset_link, email)
+        return {"ok": True}
+
+    @app.post(
+        "/api/auth/reset",
+        response_model=schemas.AuthResult,
+        responses={400: {"model": schemas.ErrorBody}, 429: {"model": schemas.ErrorBody}},
+    )
+    async def reset_password(body: schemas.ResetPasswordRequest, request: Request) -> schemas.AuthResult:
+        """Sets a new password from an emailed link, signs out every device, and signs in here."""
+        throttle_resets(f"try:{client_ip(request)}")
+        user = await run_in_threadpool(
+            app.state.accounts.finish_reset, hash_token(body.token), hash_password(body.password)
+        )
+        if user is None:
+            raise HTTPException(
+                400,
+                detail={
+                    "code": "bad_reset_link",
+                    "message": "This link has expired or was already used. Ask for a new one.",
+                },
+            )
+        counted("password_reset")
+        return await signed_in(user)
+
     @app.post(
         "/api/auth/google",
         response_model=schemas.AuthResult,
@@ -917,7 +998,8 @@ def create_app(
             found = await run_in_threadpool(accounts.login_lookup, who.email)
             if found is not None:
                 user = found[0]
-                await run_in_threadpool(accounts.attach_google, user.id, who.sub)
+                if await run_in_threadpool(accounts.attach_google, user.id, who.sub):
+                    await run_in_threadpool(accounts.add_notice, user.id, PASSWORD_OFF_NOTICE)
                 user.has_google = True
         if user is None:
             user = await run_in_threadpool(accounts.create_user, who.email, None, who.sub)

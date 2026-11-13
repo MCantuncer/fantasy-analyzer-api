@@ -64,7 +64,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 📈 | **Usage numbers:** daily visitors, page views and sign-ups, with no cookies or ids: a visitor is a hash under a salt that is deleted each day | `/api/usage` |
 | 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |
 | 💬 | **Moves feed and league chat:** transactions, posts, replies and reactions | `/api/feed`, `/api/posts` |
-| 🔐 | **Accounts and verified managers:** email or Google sign-in, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
+| 🔐 | **Accounts and verified managers:** email or Google sign-in, password reset by email, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
 | 📌 | **Keepers on the account:** the players you never want offered are saved with your account, so they follow you to every device and the trade of the day leaves them alone | `/api/keepers` |
 | 👀 | **Sample league:** a visitor sees a real public league's moves before signing up, team names swapped for play calls, analysed once a day | `/api/sample` |
 | 🚨 | **Error reports:** server errors and website crashes grouped with a count and the latest example, no personal data, readable by admin accounts only (`users.user_type = 'admin'`, set in the database) | `/api/errors`, `/api/admin/errors` |
@@ -131,6 +131,9 @@ All settings are optional for local development.
 | `DB_POOL_IDLE_SECONDS` | `240` | An idle pooled connection closes after this, so a hosted database can suspend |
 | `SECRET_KEY` | random per start | Signs team verification challenges; set it so they survive a restart |
 | `GOOGLE_CLIENT_ID` | none | Google OAuth web client ID; Google sign-in stays off until it is set |
+| `RESEND_API_KEY` | none | Resend API key for the password reset email; Forgot password stays off until it is set |
+| `EMAIL_FROM` | `COURT <no-reply@courtfantasy.app>` | Sender of the reset email, on a domain verified in Resend |
+| `SITE_URL` | `https://courtfantasy.app` | Website the reset link opens |
 | `ANTHROPIC_API_KEY` | none | Lets Claude Haiku read managers' notes on trade ideas so the checks start where the note points; notes are kept unread without it |
 | `LEAGUE_CACHE_SECONDS` | `600` | How long league data from ESPN is cached |
 | `DAILY_TRADE_WAIT_SECONDS` | `20` | How long a trade-of-the-day request waits before answering `pending` |
@@ -143,10 +146,12 @@ All settings are optional for local development.
 
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
-| GET | `/api/auth/config` | | `{google_client_id}`, null while Google sign-in is off |
+| GET | `/api/auth/config` | | `{google_client_id, password_reset}`: the client ID is null while Google sign-in is off, `password_reset` is false until reset emails can be sent |
 | POST | `/api/auth/signup` | `{email, password}` | `{token, me}` for a new account |
 | POST | `/api/auth/login` | `{email, password}` | `{token, me}` |
 | POST | `/api/auth/google` | `{credential}` | `{token, me}` from a Google Identity Services ID token |
+| POST | `/api/auth/forgot` | `{email}` | 202 whether or not the address has an account; emails a reset link when it does (3 an hour per address, 10 per visitor) |
+| POST | `/api/auth/reset` | `{token, password}` | `{token, me}`: sets the new password, ends every other session; 400 `bad_reset_link` once the link is used or expired |
 | POST | `/api/auth/logout` | | Ends the session |
 | POST | `/api/usage` | `{page}` | Counts a page view from the website (known page names only) |
 | POST | `/api/me` | | The account, its leagues (with the verified team, if any) and notices |
@@ -232,6 +237,8 @@ People sign up with an email and password (scrypt-hashed) or with Google, then a
 ESPN has no login for other sites, so a manager proves a team is theirs by changing its abbreviation on ESPN to a 4-character code from `/api/team-link/start` and calling `/api/team-link/verify`. Only the team's owner and the league manager can edit it, and the API reads it back from ESPN's league data. The code rides in an HMAC-signed challenge bound to the account that asked, which expires after 30 minutes, so nothing is stored until the check passes.
 
 Each team has one manager and each account manages one team per league. The newest successful check wins: if another account verified the team before, it loses the team and gets a notice. This also recovers a team after a lost password. Sessions are random tokens kept for 90 days; only their SHA-256 hash is stored. No ESPN password or cookie is kept.
+
+A forgotten password is reset by email (`app/mail.py`, sent through Resend). `/api/auth/forgot` answers the same for any address, and the email goes out after the answer, so the form can't tell anyone who has an account. The link carries a random token after `#` (never in server logs or a Referer), works once, for 30 minutes, and only its SHA-256 hash is stored; asking again replaces it. Setting the new password ends every session of the account. Sign-up doesn't check the email, so an address is proven only by a reset link or by Google: when Google joins a password account whose email was never proven, that password and its sessions are turned off and the account gets a notice, so nobody can keep an account made on someone else's address.
 
 Set `SECRET_KEY` (any long random string) so challenges survive a restart, and `GOOGLE_CLIENT_ID` (a Google OAuth web client ID) to turn on Google sign-in. Accounts, posts and reactions use `DATABASE_URL` like the trade of the day, and live in memory without it.
 
