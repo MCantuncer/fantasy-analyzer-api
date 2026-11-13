@@ -181,6 +181,9 @@ def score(offer: dict) -> dict | None:
         return None
     trades.MAX_VALUE_RATIO = float("inf")  # measure the ratio instead of filtering on it
     finder = trades.TradeFinder(lg, CategoryModel(lg), idx[offer["proposer"]], keep=set())
+    # The waiver rule needs % rostered, which the data only has at season's end: without it every
+    # player drafted outside the top 100 would count as a free agent, breakouts included.
+    finder.wire = set()
     d = finder._evaluate(
         idx[offer["receiver"]], give, get, min_my_gain=-np.inf, min_their_gain=-np.inf, min_ratio=0.0,
         min_margin=-np.inf,
