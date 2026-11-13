@@ -250,6 +250,16 @@ def test_picks_limit_repeats_and_uneven_deals(league):
     assert sum(len(d.give) != len(d.get) for d in picked) <= 2
     assert len(picked) <= 10
 
+    # One deal per idea: the same main player each way with the same owner is listed once.
+    def core(d):
+        value = finder.perceived.value
+        return d.partner_idx, max(d.give, key=value).id, max(d.get, key=value).id
+
+    cores = [core(d) for d in picked]
+    assert len(set(cores)) == len(cores)
+    queued = [core(d) for d in finder.queue()]
+    assert len(set(queued)) < len(queued)  # the queue does repeat ideas, so the rule is exercised
+
 
 def test_package_value_has_a_star_premium(league):
     pv = PerceivedValue(league)
