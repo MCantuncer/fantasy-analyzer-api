@@ -65,6 +65,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |
 | 💬 | **Moves feed and league chat:** transactions, posts, replies and reactions | `/api/feed`, `/api/posts` |
 | 🔐 | **Accounts and verified managers:** email or Google sign-in, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
+| 📌 | **Keepers on the account:** the players you never want offered are saved with your account, so they follow you to every device and the trade of the day leaves them alone | `/api/keepers` |
 | 👀 | **Sample league:** a visitor sees a real public league's moves before signing up, team names swapped for play calls, analysed once a day | `/api/sample` |
 | 🚨 | **Error reports:** server errors and website crashes grouped with a count and the latest example, no personal data, readable by admin accounts only (`users.user_type = 'admin'`, set in the database) | `/api/errors`, `/api/admin/errors` |
 
@@ -150,6 +151,8 @@ All settings are optional for local development.
 | POST | `/api/usage` | `{page}` | Counts a page view from the website (known page names only) |
 | POST | `/api/me` | | The account, its leagues (with the verified team, if any) and notices |
 | POST | `/api/me/notices/clear` | | Clears the notices |
+| POST | `/api/keepers` | `{league_id, team_id, season?}` | `{player_ids, saved}`: the players this account keeps on its team (`saved` is false until it has saved a list) |
+| POST | `/api/keepers/save` | `{league_id, team_id, season?, player_ids}` | Replaces the kept players and returns them |
 | POST | `/api/errors` | `{kind, name, message, stack, page, build}` | Records a website crash (no account needed; rate-limited) |
 | POST | `/api/admin/errors` | | Admins only: error reports, most recent first |
 | POST | `/api/admin/usage` | `{days?}` | Admins only: daily visitors, page views, server events and new accounts, plus account totals |

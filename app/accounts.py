@@ -7,6 +7,9 @@ team over, because only the team's ESPN owner (or the league manager) can pass i
 the previous account gets a notice. That also makes a fresh check the way back in
 after losing an account.
 
+An account also saves the players it keeps on a team (never offered in trades), so the
+choice follows the person across devices and the league-wide trade scan can respect it.
+
 Passwords are stored as scrypt hashes and session tokens as SHA-256 hashes. With
 ``DATABASE_URL`` everything is in Postgres, otherwise in memory.
 """
@@ -16,6 +19,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import os
 import secrets
 from dataclasses import dataclass
@@ -151,6 +155,15 @@ create table if not exists team_managers (
     primary key (league_id, season, team_id)
 );
 create unique index if not exists one_team_per_league on team_managers (league_id, season, user_id);
+create table if not exists user_keepers (
+    user_id bigint not null references users(id) on delete cascade,
+    league_id bigint not null,
+    season int not null,
+    team_id int not null,
+    player_ids jsonb not null,
+    updated_at timestamptz not null default now(),
+    primary key (user_id, league_id, season, team_id)
+);
 create table if not exists user_notices (
     id bigserial primary key,
     user_id bigint not null references users(id) on delete cascade,
@@ -184,6 +197,9 @@ class AccountStore(Protocol):
     def set_manager(self, league_id: int, season: int, team_id: int, user_id: int) -> int | None: ...
     def managers(self, league_id: int, season: int) -> dict[int, int]: ...
     def managed_teams(self, user_id: int) -> dict[tuple[int, int], int]: ...
+    def keepers(self, user_id: int, league_id: int, season: int, team_id: int) -> list[int] | None: ...
+    def save_keepers(self, user_id: int, league_id: int, season: int, team_id: int, player_ids: list[int]) -> None: ...
+    def league_keepers(self, league_id: int, season: int) -> dict[int, list[int]]: ...
     def add_notice(self, user_id: int, text: str) -> None: ...
     def notices(self, user_id: int) -> list[Notice]: ...
     def clear_notices(self, user_id: int) -> None: ...
@@ -201,6 +217,7 @@ class MemoryAccountStore:
         self.leagues: dict[int, dict[tuple[int, int], FollowedLeague]] = {}
         self.teams: dict[tuple[int, int, int], int] = {}
         self.notes: dict[int, list[Notice]] = {}
+        self.kept: dict[tuple[int, int, int, int], list[int]] = {}  # (user, league, season, team) -> player ids
 
     def create_user(self, email: str | None, password_hash: str | None, google_sub: str | None = None) -> User:
         if email and any(u.email == email for u, _, _ in self.users.values()):
@@ -253,6 +270,21 @@ class MemoryAccountStore:
 
     def managed_teams(self, user_id: int) -> dict[tuple[int, int], int]:
         return {(lid, s): t for (lid, s, t), u in self.teams.items() if u == user_id}
+
+    def keepers(self, user_id: int, league_id: int, season: int, team_id: int) -> list[int] | None:
+        ids = self.kept.get((user_id, league_id, season, team_id))
+        return None if ids is None else list(ids)
+
+    def save_keepers(self, user_id: int, league_id: int, season: int, team_id: int, player_ids: list[int]) -> None:
+        self.kept[(user_id, league_id, season, team_id)] = list(player_ids)
+
+    def league_keepers(self, league_id: int, season: int) -> dict[int, list[int]]:
+        out = {}
+        for team_id, user_id in self.managers(league_id, season).items():
+            ids = self.kept.get((user_id, league_id, season, team_id))
+            if ids:
+                out[team_id] = list(ids)
+        return out
 
     def add_notice(self, user_id: int, text: str) -> None:
         notes = self.notes.setdefault(user_id, [])
@@ -381,6 +413,33 @@ class PostgresAccountStore:
                 "select league_id, season, team_id from team_managers where user_id=%s", (user_id,)
             ).fetchall()
         return {(lid, s): t for lid, s, t in rows}
+
+    def keepers(self, user_id: int, league_id: int, season: int, team_id: int) -> list[int] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "select player_ids from user_keepers where user_id=%s and league_id=%s and season=%s and team_id=%s",
+                (user_id, league_id, season, team_id),
+            ).fetchone()
+        return None if row is None else [int(i) for i in row[0]]
+
+    def save_keepers(self, user_id: int, league_id: int, season: int, team_id: int, player_ids: list[int]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "insert into user_keepers (user_id, league_id, season, team_id, player_ids) "
+                "values (%s, %s, %s, %s, %s) on conflict (user_id, league_id, season, team_id) "
+                "do update set player_ids=excluded.player_ids, updated_at=now()",
+                (user_id, league_id, season, team_id, json.dumps(list(player_ids))),
+            )
+
+    def league_keepers(self, league_id: int, season: int) -> dict[int, list[int]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select k.team_id, k.player_ids from user_keepers k join team_managers m "
+                "on m.league_id=k.league_id and m.season=k.season and m.team_id=k.team_id and m.user_id=k.user_id "
+                "where k.league_id=%s and k.season=%s",
+                (league_id, season),
+            ).fetchall()
+        return {int(t): [int(i) for i in ids] for t, ids in rows if ids}
 
     def add_notice(self, user_id: int, text: str) -> None:
         with self._connect() as conn:

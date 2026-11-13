@@ -33,12 +33,13 @@ def one_scan_per_pick(monkeypatch):
     The scan itself is covered by the tests above that call ``trade_of_the_day`` directly.
     """
 
-    def scan(lg, day, keep_id=None, progress=None):
+    def scan(lg, day, keep_id=None, progress=None, keepers=None):
         if progress is not None:
             progress("Screening deals", 0.5)
-        key = (lg.id, lg.season, day, keep_id)
+        kept = tuple(sorted((t, tuple(sorted(ids))) for t, ids in (keepers or {}).items()))
+        key = (lg.id, lg.season, day, keep_id, kept)
         if key not in _scans:
-            _scans[key] = trade_of_the_day(lg, day, keep_id)
+            _scans[key] = trade_of_the_day(lg, day, keep_id, keepers=keepers)
         return _scans[key].model_copy(deep=True)
 
     monkeypatch.setattr(main, "trade_of_the_day", scan)
@@ -95,6 +96,23 @@ def test_only_healthy_players_change_hands(league, pick):
     again = trade_of_the_day(hurt, DAY, keep_id=pick.pick_id)
     assert again.pick_id != pick.pick_id
     assert star.id not in {p.id for s in again.sides for p in s.sends}
+
+
+def test_keepers_saved_on_an_account_are_never_offered(league):
+    daily = DailyTrade(league, DAY)
+    before = daily.pairs()
+    # One keeper on the side that offers and one on the side that is asked, on different teams.
+    first, last = before[0], before[-1]
+    kept = {league.teams[first.i].id: [first.a.give[0].id], league.teams[last.j].id: [last.a.get[0].id]}
+    off_limits = {i for ids in kept.values() for i in ids}
+
+    def moving(pair) -> set[int]:
+        return {p.id for p in pair.a.give + pair.a.get}
+
+    after = DailyTrade(league, DAY, keepers=kept).pairs()
+    assert all(not off_limits & moving(p) for p in after)
+    left = {p.pick_id(daily.teams) for p in before if not off_limits & moving(p)}
+    assert {p.pick_id(daily.teams) for p in after} == left and len(left) < len(before)
 
 
 def test_recheck_keeps_the_pick_unless_something_clearly_beats_it(league, pick, monkeypatch):

@@ -970,6 +970,35 @@ def create_app(
         await run_in_threadpool(app.state.accounts.unfollow, user.id, body.league_id, body.season or current_season())
         return await me_for(user)
 
+    @app.post(
+        "/api/keepers",
+        response_model=schemas.Keepers,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def keepers(
+        body: schemas.KeepersRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.Keepers:
+        """The players this account keeps on its team: never offered in trades or suggested as drops."""
+        season = body.season or current_season()
+        user = await viewer(authorization, body.league_id, season, body.team_id)
+        ids = await run_in_threadpool(app.state.accounts.keepers, user.id, body.league_id, season, body.team_id)
+        return schemas.Keepers(player_ids=ids or [], saved=ids is not None)
+
+    @app.post(
+        "/api/keepers/save",
+        response_model=schemas.Keepers,
+        responses={401: {"model": schemas.ErrorBody}, 403: {"model": schemas.ErrorBody}},
+    )
+    async def save_keepers(
+        body: schemas.KeepersSave, authorization: str | None = Header(default=None)
+    ) -> schemas.Keepers:
+        """Replaces the account's keepers on its team. They follow the account to every device."""
+        season = body.season or current_season()
+        user = await viewer(authorization, body.league_id, season, body.team_id)
+        ids = list(dict.fromkeys(body.player_ids))
+        await run_in_threadpool(app.state.accounts.save_keepers, user.id, body.league_id, season, body.team_id, ids)
+        return schemas.Keepers(player_ids=ids, saved=True)
+
     @app.post("/api/league", response_model=schemas.LeagueSummary, responses={401: {"model": schemas.ErrorBody}})
     async def league(
         body: schemas.LeagueRequest,
@@ -1331,8 +1360,9 @@ def create_app(
         if not summary.supported:
             raise HTTPException(422, detail={"code": "unsupported_league", "message": summary.unsupported_reason})
         keep = current.pick_id if current else None
+        keepers = await run_in_threadpool(app.state.accounts.league_keepers, league_id, season)
         pick = await run_in_threadpool(
-            give_back_after, trade_of_the_day, lg, datetime.fromisoformat(day).date(), keep, progress.update
+            give_back_after, trade_of_the_day, lg, datetime.fromisoformat(day).date(), keep, progress.update, keepers
         )
         if current is not None and current.pick_id and pick.pick_id == current.pick_id:
             pick.generated_at = current.generated_at  # same deal with fresh numbers
