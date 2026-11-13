@@ -353,6 +353,11 @@ def test_lineup_starts_match_seating_day_by_day(league):
         assert np.array_equal(model.starts(roster), want)
 
 
+def _measured_against_my_pickup(t) -> bool:
+    """Whether a listed trade's odds start from my roster after the free pickup, not from today's roster."""
+    return any(f.kind == "vs_pickup" and f.text.startswith("Measured against") for f in t.facts)
+
+
 def test_listed_trades_are_rechecked_on_more_seasons(league, monkeypatch):
     """A deal that passes on the screening run is run again on FINE_SIMS seasons, and those odds are shown."""
     analyzer = Analyzer(league, 3)
@@ -363,7 +368,7 @@ def test_listed_trades_are_rechecked_on_more_seasons(league, monkeypatch):
     assert ideas and len(checked) >= len(ideas)
     today = analyzer.fine_sim().base.playoff_pct
     for t in ideas:
-        if t.my_add is None:
+        if not _measured_against_my_pickup(t):
             assert t.playoff_pct_before == pytest.approx(float(today[analyzer.idx]), abs=1e-3)
     assert analyzer.fine_sim().n_sims == FINE_SIMS
 
@@ -425,7 +430,7 @@ def test_listed_trades_carry_category_detail_for_both_teams(league):
         for c in t.category_detail:
             assert 0 <= c.my_win_before <= 1 and 0 <= c.their_win_after <= 1
             # My win-chance change matches the existing summary when the deal isn't measured against a pickup.
-            if t.my_add is None:
+            if not _measured_against_my_pickup(t):
                 assert c.my_win_after - c.my_win_before == pytest.approx(t.category_changes[c.category], abs=2e-3)
         # Something changes on their side too: they get my players.
         assert any(c.theirs_after != c.theirs_before for c in t.category_detail)

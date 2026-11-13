@@ -203,6 +203,9 @@ class Analyzer:
         self._league_today: np.ndarray | None = None  # every team's playoff odds today
         self._after_pickup: dict[tuple[int, int], tuple[float, np.ndarray]] = {}
         self._fine_cache: dict[tuple[int, int] | None, SeasonResult] = {}  # the league today / after a pickup
+        # A partner's playoff odds after the free pickup a deal's open spot would give them: team index -> odds.
+        self._their_pickup: dict[int, float] = {}
+        self._fine_their_pickup: dict[int, SeasonResult] = {}
         self._timing: MatchupTiming | None = None
 
     # ---- helpers -----------------------------------------------------------------------
@@ -326,6 +329,17 @@ class Analyzer:
             dists[self.idx] = self.model.dist(roster)
             self._fine_cache[key] = self.season_result(dists, {self.idx: roster}, fine=True)
         base, today, j = self._fine_cache[key], self._fine_cache[None], d.partner_idx
+        if d.their_pickup is not None:
+            # The free agent in their open spot is theirs without the trade: start from that pickup,
+            # unless it leaves them no better off than today.
+            if j not in self._fine_their_pickup:
+                roster = self._after_their_pickup(d)
+                dists = list(self.dists)
+                dists[j] = self.model.dist(roster)
+                self._fine_their_pickup[j] = self.season_result(dists, {j: roster}, fine=True)
+            picked = self._fine_their_pickup[j]
+            if picked.playoff_pct[j] > today.playoff_pct[j]:
+                today = picked
         after = self.season_result(d.dists, d.rosters, fine=True)
         finish = (
             (float(base.mean_rank[self.idx]), float(after.mean_rank[self.idx])),
@@ -334,6 +348,11 @@ class Analyzer:
         odds = after.playoff_pct
         mine, theirs = float(base.playoff_pct[self.idx]), (float(today.playoff_pct[j]), float(odds[j]))
         return mine, float(odds[self.idx]), theirs, finish
+
+    def _after_their_pickup(self, d: Deal) -> list[Player]:
+        """The partner's roster after the free pickup the deal is measured against on their side."""
+        add, drop = d.their_pickup
+        return [p for p in self.teams[d.partner_idx].roster if p.id != drop.id] + [add]
 
     def playoff_pct(
         self,
@@ -347,12 +366,24 @@ class Analyzer:
         return float(self.playoff_odds(dists, changed, sims, week, fine)[self.idx])
 
     def deal_odds(self, d: Deal) -> tuple[float, tuple[float, float]]:
-        """My playoff odds after the deal, and the partner's before and after it."""
+        """My playoff odds after the deal, and the partner's before and after it.
+
+        Their "before" is today's roster, or their roster after the free pickup when the deal opens a
+        spot for that free agent: they could add him today, so he isn't the trade's doing.
+        """
         if self._league_today is None:
             self._league_today = self.playoff_odds(self.dists)
         odds = self.playoff_odds(d.dists, d.rosters)
         j = d.partner_idx
-        return float(odds[self.idx]), (float(self._league_today[j]), float(odds[j]))
+        before = float(self._league_today[j])
+        if d.their_pickup is not None:
+            if j not in self._their_pickup:
+                roster = self._after_their_pickup(d)
+                dists = list(self.dists)
+                dists[j] = self.model.dist(roster)
+                self._their_pickup[j] = float(self.playoff_odds(dists, {j: roster})[j])
+            before = max(before, self._their_pickup[j])
+        return float(odds[self.idx]), (before, float(odds[j]))
 
     def baseline(self, d: Deal) -> tuple[float, np.ndarray]:
         """My playoff odds and category win rates that a deal is measured against.
