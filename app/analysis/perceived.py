@@ -31,6 +31,11 @@ from app.espn.parse import League, Player
 if TYPE_CHECKING:
     from app.analysis.model import CategoryModel
 
+# These weights were checked against real offers in November 2026 (scripts/offer_replay.py with
+# --set and --compare, 3,554 offers in 13 leagues): no projection, a draft market that never
+# fades, production only and weights picked per league all failed to rank accepted offers above
+# withdrawn ones better in most leagues. Change them only with a replay that says so.
+
 # Draft-day signals, at full weight before any games. They fade as games are played.
 W_ESPN = 0.25
 W_ESPN_FLOOR = 0.10  # ESPN's rank never fades entirely: owners keep looking at it
