@@ -108,17 +108,27 @@ def test_dollars_at_rank_is_non_increasing(league):
 
 
 def test_acceptance_odds_come_from_real_offers():
-    # Fitted on replayed real offers (scripts/acceptance_fit.py): about 1 in 3 for a fair 1-for-1,
-    # more value on paper helps, and a 2-for-1 that makes the other owner cut someone is lowest.
+    # Fitted on replayed real offers with the declined ones counted (scripts/acceptance_fit.py):
+    # about 1 in 8 for a fair 1-for-1, more value on paper helps, and a 2-for-1 that makes the
+    # other owner cut someone is lowest.
     one = acceptance_odds(1.0, 1, 1)
-    assert 0.2 <= one <= 0.4
+    assert 0.08 <= one <= 0.18
     assert acceptance_odds(1.3, 1, 1) > one > acceptance_odds(0.9, 1, 1)
     assert acceptance_odds(1.0, 2, 1) < acceptance_odds(1.0, 2, 2) < one
     assert acceptance_odds(1.0, 3, 3) == acceptance_odds(1.0, 2, 2)
     assert acceptance_odds(1.0, 3, 1) == acceptance_odds(1.0, 2, 1)
     assert acceptance_odds(1e-9, 2, 1) > 0
-    assert acceptance_label(one) == "possible" and acceptance_label(0.1) == "long_shot"
-    assert acceptance_label(0.6) == "likely"
+
+
+def test_acceptance_labels_sit_on_the_real_scale():
+    # A fair even trade is possible, one that makes them cut a player is a long shot, and no
+    # offer inside the paper band is likely: real owners say no to most fair offers.
+    assert acceptance_label(acceptance_odds(1.0, 1, 1)) == "possible"
+    assert acceptance_label(acceptance_odds(1.0, 2, 2)) == "possible"
+    assert acceptance_label(acceptance_odds(1.0, 2, 1)) == "long_shot"
+    assert acceptance_label(acceptance_odds(MAX_VALUE_RATIO, 1, 1)) == "possible"
+    assert acceptance_label(keystone_odds(acceptance_odds(1.0, 2, 2))) == "long_shot"
+    assert acceptance_label(0.3) == "likely"
 
 
 def test_losing_a_keystone_lowers_the_odds():

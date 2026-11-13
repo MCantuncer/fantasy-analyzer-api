@@ -115,23 +115,31 @@ VISION_SLOW_GAP = 1.0  # projected value above his season so far (z-scores summe
 VISION_MIN_PLAYOFF_GAIN = 0.10  # expected categories won per playoff week
 VISION_MIN_SEASON_GAIN = -0.15  # what the deal may cost before the playoffs, per week on average
 
-# Chance the other owner accepts: a logistic regression on 2,833 real offers (accepted vs
+# Chance the other owner accepts: a logistic regression on 2,826 real offers (accepted vs
 # withdrawn) in 13 category leagues, each replayed through this finder on the league as it
 # stood that day (scripts/offer_replay.py), every league weighted the same
 # (scripts/acceptance_fit.py). Checked league by league on leagues left out of the fit, the
 # paper value ratio and the shape predict; the gains in categories won do not (they make the
-# odds worse on held-out leagues). A fair 1-for-1 lands near 31%, a 2-for-1 near 17%; the
-# hand-tuned odds this replaced showed about 75% for offers accepted 35% of the time.
+# odds worse on held-out leagues).
+#
+# Declined offers are counted: ESPN never shows what was in one, but there are about three for
+# every withdrawn offer, so each withdrawn offer in the fit stands for its league's declines
+# too. That moves the base rate and nothing else: about 9% of real offers get a yes, a fair
+# 1-for-1 lands near 13%, a 2-for-2 near 10% and a 2-for-1 near 6%. Fitted on accepted and
+# withdrawn offers alone the same deals showed 31%, 25% and 17%, two to three times the real
+# rate in every league left out. The order of deals is sound, the exact percentage is not
+# (a league's own rate runs from 2% to 20%), so the label is what to show.
 # Coefficients: intercept, log(paper ratio), 2-for-2, 2-for-1, 1-for-2 (1-for-1 = 0).
-ACCEPT_COEF = (-0.782, 0.374, -0.320, -0.810, 0.010)
+ACCEPT_COEF = (-1.924, 0.387, -0.244, -0.773, 0.020)
 PAPER_CLIP = 1.5  # log paper ratio, about 0.22x to 4.5x
 MIN_ODDS = 0.02
 # A deal that takes away their keystone category: odds of acceptance multiplied by this.
-# Not in the offer data (it has no badges); set so a 1-for-1 drops from 30% to about 20%.
+# Not in the offer data (it has no badges); set so a 1-for-1 drops from 13% to about 8%.
 KEYSTONE_ODDS = 0.6
 
-# Labels on the real scale: about 1 in 3 offers like a 1-for-1 gets accepted, a 2-for-1 1 in 8.
-LIKELY, POSSIBLE = 0.5, 0.18
+# Labels on the real scale. Likely: one in four, twice a fair 1-for-1, which takes a clear
+# overpay. Possible: at least the rate of real offers as a whole, about one in twelve.
+LIKELY, POSSIBLE = 0.25, 0.08
 
 Mode = Literal["fair", "edge", "vision"]
 
