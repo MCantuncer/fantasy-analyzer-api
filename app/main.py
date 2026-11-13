@@ -55,7 +55,7 @@ from app.analysis.shop import ShopAnalyzer, ShopError
 from app.analysis.target import TargetAnalyzer, TargetError
 from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
-from app.espn.parse import League, parse_calendar, parse_league
+from app.espn.parse import League, parse_calendar, parse_league, proven_players
 from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.gameclock import apply_clocks, apply_on_court, fetch_clocks, fetch_on_court
@@ -573,9 +573,11 @@ def create_app(
             schedule = await pro_schedule(season) if full else None
             snake = ((raw.get("settings") or {}).get("draftSettings") or {}).get("type") != "AUCTION"
             adp = await market_adp(season) if with_fa and snake else None
-            league = parse_league(raw, fas, schedule, adp)
+            # Past seasons say who has a track record, which sets how fast this season takes over
+            # in a projection. A view that projects nothing (not ``full``) doesn't wait for them.
+            past = await past_games(season) if full else []
+            league = parse_league(raw, fas, schedule, adp, proven_players(past))
             if full:
-                past = await past_games(season)
                 attach_durability(league, past, await past_absences(league, past) if past else None)
                 await attach_absences(league)
                 attach_teammate_minutes(league)

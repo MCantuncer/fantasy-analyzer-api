@@ -48,6 +48,16 @@ US_DAY_SHIFT = 8 * 3600
 ACTUAL_WEIGHT_GAMES = 20.0
 ACTUAL_WEIGHT_BY_STAT = {0: 10.0, 3: 10.0, 17: 10.0, 18: 10.0, 13: 30.0, 14: 30.0, 15: 45.0, 16: 45.0}
 MIN_PRIOR_GAMES = 10  # last season counts as a prior only with this many games
+# A proven player (PROVEN_GAMES or more in each of the last PROVEN_SEASONS seasons) has a track record
+# his first weeks say little against, so his season so far takes over half as fast: the K's above
+# times PROVEN_SLOWDOWN. Over 2023-24 to 2025-26 proven players who started hot gave back 62% of it
+# where the plain blend expects 46%, and the slower blend predicted the rest of their season better
+# in each of the three seasons and at every point from 10 to 30 games (value error down 1 to 2%;
+# scripts/track_record_backtest.py). Picked on 2023-24, it held on both seasons after. Nothing
+# consistent showed up for players with a shorter record, so they keep the plain speed.
+PROVEN_GAMES = 41
+PROVEN_SEASONS = 3
+PROVEN_SLOWDOWN = 2.0
 # Minutes drive a player's counting stats, and ESPN's projection gets them wrong in a set way:
 # it expects players to bounce back to an old role. Players it projected for 3+ more minutes
 # than they played the season before got 83-88% of those minutes. So the prior's minutes are
@@ -265,7 +275,21 @@ def age_trend(age: float | None) -> float:
     return 1.0 + YOUNG_TREND * max(PEAK_AGE - age, 0.0) - OLD_TREND * max(age - PEAK_AGE, 0.0)
 
 
-def _blend_stats(player: dict, season: int, age: float | None = None) -> tuple[dict[int, float], int, bool]:
+def proven_players(past: list[dict[int, int]]) -> set[int]:
+    """Players with a track record: PROVEN_GAMES or more in each of the last PROVEN_SEASONS seasons.
+
+    ``past`` holds games played by player in the seasons before, most recent first. Empty when
+    fewer seasons than that are known.
+    """
+    if len(past) < PROVEN_SEASONS:
+        return set()
+    seasons = past[:PROVEN_SEASONS]
+    return {pid for pid in seasons[0] if all(s.get(pid, 0) >= PROVEN_GAMES for s in seasons)}
+
+
+def _blend_stats(
+    player: dict, season: int, age: float | None = None, proven: bool = False
+) -> tuple[dict[int, float], int, bool]:
     """Per-game stats: a prior blended with this season's actuals as games are played.
 
     The prior is ESPN's season projection, or last season's per-game stats for players
@@ -275,7 +299,8 @@ def _blend_stats(player: dict, season: int, age: float | None = None) -> tuple[d
     Minutes are handled apart from the rest (see LAST_MINUTES_WEIGHT): ESPN's projected
     minutes lean toward last season's, and this season's minutes count sooner, with the
     counting stats scaled to match. With an ``age``, the season so far is first scaled by
-    ``age_trend`` (see PEAK_AGE).
+    ``age_trend`` (see PEAK_AGE). For a ``proven`` player the season so far takes over more
+    slowly (see PROVEN_SLOWDOWN); his minutes move at the usual speed, since a changed role is real.
     """
     proj: dict[int, float] = {}
     last: dict[int, float] = {}
@@ -301,10 +326,11 @@ def _blend_stats(player: dict, season: int, age: float | None = None) -> tuple[d
     if gp <= 0:
         return prior, gp, True
     trend = age_trend(age)
+    slow = PROVEN_SLOWDOWN if proven else 1.0
     keys = set(prior) | set(actual)
     out = {}
     for k in keys:
-        w = gp / (gp + ACTUAL_WEIGHT_BY_STAT.get(k, ACTUAL_WEIGHT_GAMES))
+        w = gp / (gp + slow * ACTUAL_WEIGHT_BY_STAT.get(k, ACTUAL_WEIGHT_GAMES))
         so_far = actual.get(k, prior.get(k, 0.0)) * (trend if k in COUNTING_STATS and k in actual else 1.0)
         out[k] = (1 - w) * prior.get(k, 0.0) + w * so_far
     if prior.get(MINUTES) and MINUTES in actual:
@@ -339,11 +365,22 @@ def _draft_rank(p: dict) -> tuple[int | None, float]:
     return (int(rank) if rank else None), float(r.get("auctionValue") or 0.0)
 
 
-def parse_player(entry: dict, season: int, lineup_slot: int | None = None, roster_entry: dict | None = None) -> Player:
+def _player_id(entry: dict) -> int:
+    p = entry.get("player") or entry.get("playerPoolEntry", {}).get("player", {})
+    return int(p.get("id", 0))
+
+
+def parse_player(
+    entry: dict,
+    season: int,
+    lineup_slot: int | None = None,
+    roster_entry: dict | None = None,
+    proven: bool = False,
+) -> Player:
     p = entry.get("player") or entry.get("playerPoolEntry", {}).get("player", {})
     name = p.get("fullName", str(p["id"]))
     age = season_age(name, season)
-    per_game, gp, has_prior = _blend_stats(p, season, age)
+    per_game, gp, has_prior = _blend_stats(p, season, age, proven)
     positions = [POSITIONS[s] for s in p.get("eligibleSlots", []) if s in POSITIONS]
     espn_rank, espn_av = _draft_rank(p)
     ratings = entry.get("ratings") or {}
@@ -479,8 +516,11 @@ def parse_league(
     free_agents: list[dict] | None = None,
     pro_schedule: dict | None = None,
     market_adp: dict[int, float] | None = None,
+    proven: set[int] | None = None,
 ) -> League:
-    """``market_adp`` fills in ESPN's average draft position where the league's own views leave it out."""
+    """``market_adp`` fills in ESPN's average draft position where the league's own views leave it out.
+    ``proven`` names the players with a track record (``proven_players``)."""
+    proven = proven or set()
     settings = raw["settings"]
     season = int(raw["seasonId"])
     scoring = settings["scoringSettings"]
@@ -499,7 +539,8 @@ def parse_league(
         for e in (t.get("roster") or {}).get("entries", []):
             pool = dict(e["playerPoolEntry"])
             pool.setdefault("onTeamId", t["id"])
-            roster.append(parse_player(pool, season, lineup_slot=e.get("lineupSlotId"), roster_entry=e))
+            known = _player_id(pool) in proven
+            roster.append(parse_player(pool, season, lineup_slot=e.get("lineupSlotId"), roster_entry=e, proven=known))
         rec = (t.get("record") or {}).get("overall", {})
         counter = t.get("transactionCounter") or {}
         spent = counter.get("acquisitionBudgetSpent")
@@ -537,7 +578,7 @@ def parse_league(
         if "home" in m and "away" in m and m.get("playoffTierType", "NONE") == "NONE"
     ]
 
-    fas = [parse_player(e, season) for e in (free_agents or [])]
+    fas = [parse_player(e, season, proven=_player_id(e) in proven) for e in (free_agents or [])]
 
     draft = raw.get("draftDetail") or {}
     picks = [pk for pk in draft.get("picks", []) if pk.get("playerId")]

@@ -29,7 +29,7 @@ from app.analysis.durability import attach as attach_durability
 from app.analysis.model import CategoryModel
 from app.analysis.sim import EACH_CATEGORY, simulate_season
 from app.backtest.history import History
-from app.espn.parse import GAMES_PLAYED, League, parse_calendar, parse_league
+from app.espn.parse import GAMES_PLAYED, League, parse_calendar, parse_league, proven_players
 
 OUT_AFTER_MISSED = 3  # team games missed in a row before a player counts as out
 SEASON_SIMS = 2000
@@ -181,7 +181,7 @@ class Replay:
             "teams": teams,
             "schedule": schedule,
         }
-        league = parse_league(raw, [], self.h.pro_schedule)
+        league = parse_league(raw, [], self.h.pro_schedule, proven=proven_players(self.past_games or []))
         if self.past_games is not None:
             attach_durability(league, self.past_games, self.past_absences)
         if self.absences:

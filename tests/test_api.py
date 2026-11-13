@@ -4,8 +4,12 @@ import time
 import httpx
 from fastapi.testclient import TestClient
 
+from app.accounts import MemoryAccountStore
+from app.cache import credentials_key
 from app.espn.client import EspnClient
+from app.espn.parse import PROVEN_GAMES, parse_league
 from app.main import create_app, current_season
+from app.store import MemoryStore
 from tests.conftest import LEAGUE_ID, MY_TEAM, FakeEspn, signed_in
 
 S2 = "AEB-secret-s2-value-1234567890"
@@ -160,6 +164,39 @@ def test_current_season():
     assert current_season(datetime(2026, 10, 22)) == 2027
     assert current_season(datetime(2027, 3, 1)) == 2027
     assert current_season(datetime(2027, 8, 1)) == 2028
+
+
+def test_projections_know_who_has_a_track_record(recorded, fake_espn, pro_schedule):
+    plain = parse_league(recorded["league"], [], pro_schedule)
+    star, other = [p for t in plain.teams for p in t.roster if p.games_played][:2]
+    asked = []  # seasons whose player totals were read
+
+    def espn(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/players") and "/leagues/" not in path:
+            season = int(path.split("/seasons/")[1].split("/")[0])
+            asked.append(season)
+            # The star played a full season each year; the other one missed most of 2024-25.
+            games = {star.id: PROVEN_GAMES + 20, other.id: 12 if season == 2025 else 70}
+            totals = [
+                {
+                    "id": pid,
+                    "stats": [{"seasonId": season, "statSourceId": 0, "statSplitTypeId": 0, "stats": {"42": gp}}],
+                }
+                for pid, gp in games.items()
+            ]
+            return httpx.Response(200, json=totals)
+        return fake_espn.handler(request)
+
+    app = create_app(
+        EspnClient(transport=httpx.MockTransport(espn)), store=MemoryStore(), accounts=MemoryAccountStore()
+    )
+    assert signed_in(app).post("/api/matchup-projection", json={"league_id": LEAGUE_ID}).status_code == 200
+    assert {2024, 2025, 2026} <= set(asked)
+    league = app.state.leagues.get((LEAGUE_ID, 2027, credentials_key(None), False, True))
+    now = {p.id: p for t in league.teams for p in t.roster}
+    assert now[star.id].per_game != star.per_game, "his season so far counts for less"
+    assert now[other.id].per_game == other.per_game
 
 
 def test_matchup_projection_needs_a_verified_team(client, fake_espn):
