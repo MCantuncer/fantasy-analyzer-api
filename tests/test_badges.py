@@ -44,12 +44,14 @@ def test_star_names_are_jewels(league, premium):
 
 
 def test_category_carriers_are_keystones(league, premium):
-    daniels = player(league, "Dyson Daniels")
-    assert premium.keystone(daniels) == "STL"
+    haliburton = player(league, "Tyrese Haliburton")
+    assert premium.keystone(haliburton) == "AST"
     assert premium.keystone(player(league, "Victor Wembanyama")) == "BLK"
     assert premium.keystone(player(league, "Walker Kessler")) == "BLK"
-    reason = next(b.reason for b in premium.badges(daniels) if b.kind == "keystone")
-    assert reason.startswith("Carries ") and "STL" in reason
+    reason = next(b.reason for b in premium.badges(haliburton) if b.kind == "keystone")
+    assert reason.startswith("Carries ") and "AST" in reason
+    # The best free agent in this league is a steals specialist, so a steals carrier can be replaced.
+    assert premium.keystone(player(league, "Dyson Daniels")) is None
     # About one per team, not every starter.
     keystones = [p for t in league.teams for p in t.roster if premium.keystone(p)]
     assert 5 <= len(keystones) <= 2 * len(league.teams)

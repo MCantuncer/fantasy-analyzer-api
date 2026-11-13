@@ -76,7 +76,9 @@ class PerceivedValue:
         self._proj_rank: dict[int, int] = {}
         if model is not None:
             trusted = [p for p in pool if p.has_prior or p.games_played >= MIN_SAMPLE_GAMES]
-            by_value = sorted(trusted, key=model.value, reverse=True)
+            # The full sum, not ``model.value``: with turnovers at a quarter weight in this signal the
+            # paper check told real accepted offers from withdrawn ones no better (10 leagues, Nov 2026).
+            by_value = sorted(trusted, key=model.raw_value, reverse=True)
             self._proj_rank = {p.id: r for r, p in enumerate(by_value, 1)}
         self._cache: dict[int, float] = {}
 

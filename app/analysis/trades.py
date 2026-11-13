@@ -55,7 +55,7 @@ import numpy as np
 
 from app import schemas
 from app.analysis.badges import OwnerPremium, best_pickup
-from app.analysis.model import CategoryModel, Dist
+from app.analysis.model import TURNOVERS, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.tiers import droppable, off_the_wire
 from app.espn.parse import League, Player, Team
@@ -411,12 +411,16 @@ class TradeFinder:
             if self.filler is not None:
                 roster = self.teams[j].roster
                 top = self.base[j]
+                plays = ~self.punts[j]
                 for drop in droppable(roster):
                     dists = list(self.dists)
                     dists[j] = self.model.dist([p for p in roster if p.id != drop.id] + [self.filler])
                     strength = self.model.strength(j, dists)
-                    if strength > top:
-                        top, best, move = strength, self._avg_win(j, dists), (self.filler, drop)
+                    cats = self._avg_win(j, dists)
+                    # A pickup they would make: stronger overall, and no worse in the categories they
+                    # play for. One that only helps a category they punt is no bar for a deal to clear.
+                    if strength > top and cats[plays].sum() >= self.base_cats[j][plays].sum():
+                        top, best, move = strength, cats, (self.filler, drop)
             self._their_free[j] = (best, move)
         return self._their_free[j]
 
@@ -870,7 +874,10 @@ class TradeFinder:
         return Picks(n, self.perceived.value)
 
     def pitch_needs(self, d: Deal, min_change: float = 0.03, limit: int = 2) -> list[schemas.PitchNeed]:
-        """The categories where the deal helps them most, with their rank and what it adds a game."""
+        """The categories where the deal helps them most, with their rank and what it adds a game.
+
+        Only categories they compete in, and never turnovers first.
+        """
         j = d.partner_idx
         before = self._avg_win(j, self.dists)
         after = self._avg_win(j, d.dists)
@@ -878,7 +885,11 @@ class TradeFinder:
         mus = np.array([x.mu for x in self.dists])
         signed = np.where(self.model.reverse, -mus, mus)
         ranks = (signed > signed[j]).sum(0) + 1
-        order = [c for c in np.argsort(-change) if change[c] >= min_change][:limit]
+        # A category they punt is no selling point, and fewer turnovers never open a pitch:
+        # no owner trades for them. Turnovers can still back up a real need.
+        helped = [c for c in np.argsort(-change) if change[c] >= min_change and not self.punts[j][c]]
+        lead = next((c for c in helped if self.model.cats[c].stat_id != TURNOVERS), None)
+        order = [] if lead is None else ([lead] + [c for c in helped if c != lead])[:limit]
         out = []
         for c in order:
             cat = self.model.cats[c]

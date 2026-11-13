@@ -1,9 +1,10 @@
 import copy
 import dataclasses
 
+import numpy as np
 import pytest
 
-from app.analysis.model import CategoryModel
+from app.analysis.model import TURNOVER_VALUE_WEIGHT, TURNOVERS, CategoryModel
 from app.analysis.perceived import PerceivedValue
 from app.analysis.report import Analyzer, league_summary
 from app.analysis.tiers import droppable
@@ -511,6 +512,50 @@ def _my_finder(league, mode="fair"):
     model = CategoryModel(league)
     me = next(i for i, t in enumerate(league.teams) if t.id == 3)
     return TradeFinder(league, model, me, keep=set(), mode=mode)
+
+
+def test_turnovers_count_a_quarter_in_a_players_overall_value(league):
+    model = CategoryModel(league)
+    to = next(i for i, c in enumerate(model.cats) if c.stat_id == TURNOVERS)
+    by_id = {p.id: p for t in league.teams for p in t.roster} | {p.id: p for p in league.free_agents}
+    for p in league.teams[0].roster:
+        z = model.z_scores(p)
+        assert model.raw_value(p) == pytest.approx(z.sum())
+        assert model.value(p) == pytest.approx(z.sum() - (1 - TURNOVER_VALUE_WEIGHT) * z[to])
+    # The ball handler who turns it over most is marked down less than the full sum would.
+    sloppy = min((p for t in league.teams for p in t.roster), key=lambda p: model.z_scores(p)[to])
+    assert model.value(sloppy) > model.raw_value(sloppy)
+    # Who starts, and the projection signal in trade value, stay on the full sum.
+    for t in league.teams:
+        healthy = [p for p in t.roster if p.available]
+        assert model.lineup(t.roster) == sorted(healthy, key=model.raw_value, reverse=True)[: model.n_starters]
+    ranks = PerceivedValue(league, model)._proj_rank
+    in_order = [model.raw_value(by_id[i]) for i in sorted(ranks, key=ranks.get)]
+    assert in_order == sorted(in_order, reverse=True)
+
+
+def test_pitch_never_opens_with_turnovers_or_names_a_punt(league):
+    finder = _my_finder(league, "edge")
+    cats = {c.name: i for i, c in enumerate(finder.model.cats)}
+    to = cats["TO"]
+    turnovers_help_most = punt_helped = 0
+    for d in finder.candidates():
+        j = d.partner_idx
+        change = finder._avg_win(j, d.dists) - finder._avg_win(j, finder.dists)
+        turnovers_help_most += int(np.argmax(change)) == to and change[to] >= 0.03
+        punt_helped += bool((finder.punts[j] & (change >= 0.03)).any())
+        needs = finder.pitch_needs(d)
+        assert all(not finder.punts[j][cats[n.category]] for n in needs)
+        assert not needs or needs[0].category != "TO"
+    # The recorded league has both cases, so the rule is exercised.
+    assert turnovers_help_most and punt_helped
+
+
+def test_their_free_pickup_never_costs_them_in_the_categories_they_play_for(league):
+    finder = _my_finder(league, "edge")
+    for j in range(len(league.teams)):
+        plays = ~finder.punts[j]
+        assert finder.their_free_cats(j)[plays].sum() >= finder.base_cats[j][plays].sum() - 1e-12
 
 
 @pytest.mark.parametrize("mode", ["fair", "edge"])

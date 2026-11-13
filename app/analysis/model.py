@@ -29,6 +29,17 @@ GAMES_PER_WEEK = 3.4
 # Per-game variance as a multiple of the per-game mean, by stat id.
 DISPERSION = {0: 7.0, 1: 1.3, 2: 1.0, 3: 2.0, 4: 1.5, 5: 2.0, 6: 2.5, 11: 1.2, 17: 1.3}
 DEFAULT_DISPERSION = 1.5
+TURNOVERS = 11  # ESPN stat id
+# What turnovers count for in a player's overall value (the sum of his category z-scores).
+# Turnovers come with the ball: across 10 leagues a player's turnover score runs -0.69 against
+# his other categories combined, so at full weight the sum marks down the players who do the
+# most and ranks low-usage role players above them. At a quarter, value agrees better with
+# where owners draft players in every one of those leagues (rank correlation 0.76 to 0.81),
+# while weekly category predictions and the paper check on real offers do not move.
+# Only the ranking changes: the best free agent, who gets cut, and our own price for a player.
+# Who starts on a crowded day still goes by the full sum (``raw_value``), so a team's projected
+# weeks are untouched, and its turnover category is still played and counted in full.
+TURNOVER_VALUE_WEIGHT = 0.25
 SCHEDULE_CV = 0.08  # weekly games played varies by about 8%
 KNOWN_SCHEDULE_CV = 0.10  # with the real calendar: rest days, DNPs and minutes (measured 9% in 2025-26)
 # ESPN gives no return dates. Players listed out get expected games still to miss from
@@ -77,6 +88,7 @@ class CategoryModel:
         self._rows: dict[int, np.ndarray] = {}
         self._horizon_rows: dict[tuple[int, object], np.ndarray] = {}
         self._values: dict[int, float] = {}
+        self._raw_values: dict[int, float] = {}
         pool = [p for t in league.teams for p in t.roster]
         self._fit_values(pool)
         self.cal = league.calendar
@@ -152,13 +164,14 @@ class CategoryModel:
         self._lg_pct = lg_pct
         self._z_mean = impact.mean(0)
         self._z_sd = impact.std(0) + 1e-9
+        self._value_weights = np.array([TURNOVER_VALUE_WEIGHT if c.stat_id == TURNOVERS else 1.0 for c in self.cats])
 
     def z_scores(self, p: Player) -> np.ndarray:
         return self._z_of(self.row(p))
 
     def line_value(self, per_game: dict[int, float]) -> float:
         """Value of a per-game line on the same scale as ``value``, e.g. a season so far."""
-        return float(self._z_of(self._row_of(per_game)).sum())
+        return float(self._z_of(self._row_of(per_game)) @ self._value_weights)
 
     def _z_of(self, r: np.ndarray) -> np.ndarray:
         impact = np.where(self.is_ratio, r[0] - self._lg_pct * r[1], r[0])
@@ -166,16 +179,24 @@ class CategoryModel:
         return np.where(self.reverse, -z, z)
 
     def value(self, p: Player) -> float:
+        """A player's overall value: his category z-scores added up, turnovers at TURNOVER_VALUE_WEIGHT."""
         v = self._values.get(p.id)
         if v is None:
-            v = self._values[p.id] = float(self.z_scores(p).sum())
+            v = self._values[p.id] = float(self.z_scores(p) @ self._value_weights)
+        return v
+
+    def raw_value(self, p: Player) -> float:
+        """His z-scores added up with every category at full weight: the order players start in."""
+        v = self._raw_values.get(p.id)
+        if v is None:
+            v = self._raw_values[p.id] = float(self.z_scores(p).sum())
         return v
 
     # ---- lineups and team distributions -------------------------------------------------
 
     def lineup(self, roster: list[Player]) -> list[Player]:
         healthy = [p for p in roster if p.available]
-        return sorted(healthy, key=self.value, reverse=True)[: self.n_starters]
+        return sorted(healthy, key=self.raw_value, reverse=True)[: self.n_starters]
 
     def dist(self, roster: list[Player], horizon: object = "season") -> Dist:
         """A team's weekly totals: an average week of the rest of the regular season, or
@@ -279,7 +300,7 @@ class CategoryModel:
         the days some players are available (see ``dist_with``)."""
         if not roster:
             return np.zeros(0)
-        order = sorted(range(len(roster)), key=lambda i: self.value(roster[i]), reverse=True)
+        order = sorted(range(len(roster)), key=lambda i: self.raw_value(roster[i]), reverse=True)
         over = days_for or {}
         # (P, D) in value order
         m = np.array([over[roster[i].id] if roster[i].id in over else self.plays(roster[i], horizon) for i in order])
