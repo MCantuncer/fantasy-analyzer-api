@@ -1471,6 +1471,21 @@ class TradeRuleDeleteRequest(LeagueRequest):
     rule_id: int = Field(gt=0)
 
 
+class KeepersRequest(LeagueRequest):
+    team_id: int = Field(gt=0)
+
+
+class KeepersSave(KeepersRequest):
+    player_ids: list[int] = Field(max_length=40, description="Every player kept on this team; replaces the saved list")
+
+
+class Keepers(BaseModel):
+    """The players an account keeps on its team: never offered in trades or suggested as drops."""
+
+    player_ids: list[int]
+    saved: bool = Field(description="False until this account has saved keepers for the team, even an empty list")
+
+
 class RecapRequest(LeagueRequest):
     period: int | None = Field(
         default=None, ge=1, le=40, description="Matchup period (week). Default: the last week that has finished"

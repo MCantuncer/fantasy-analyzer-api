@@ -156,3 +156,47 @@ def test_admin_is_set_in_the_database():
     found, password_hash = accounts.login_lookup("boss@example.com")
     assert found.admin and password_hash.startswith("scrypt$")
     PostgresAccountStore(os.environ["TEST_DATABASE_URL"])  # the column is added once; a restart is fine
+
+
+def test_keepers_follow_the_account(espn, stores):
+    client = make_client(espn, stores)
+    auth = link(client, espn)
+    team = {"league_id": LEAGUE_ID, "season": SEASON, "team_id": MY_TEAM}
+    assert client.post("/api/keepers", json=team, headers=auth).json() == {"player_ids": [], "saved": False}
+
+    r = client.post("/api/keepers/save", json={**team, "player_ids": [11, 22, 11]}, headers=auth)
+    assert r.status_code == 200 and r.json() == {"player_ids": [11, 22], "saved": True}
+    assert client.post("/api/keepers", json=team, headers=auth).json() == {"player_ids": [11, 22], "saved": True}
+    _, accounts = stores
+    assert accounts.league_keepers(LEAGUE_ID, SEASON) == {MY_TEAM: [11, 22]}
+
+    # An empty list is a choice too: it is saved, and the league-wide scan sees no keepers.
+    assert client.post("/api/keepers/save", json={**team, "player_ids": []}, headers=auth).json()["saved"]
+    assert client.post("/api/keepers", json=team, headers=auth).json() == {"player_ids": [], "saved": True}
+    assert accounts.league_keepers(LEAGUE_ID, SEASON) == {}
+
+
+def test_keepers_are_for_the_teams_own_manager(espn, stores):
+    client = make_client(espn, stores)
+    owner = link(client, espn)
+    team = {"league_id": LEAGUE_ID, "season": SEASON, "team_id": MY_TEAM}
+    client.post("/api/keepers/save", json={**team, "player_ids": [11]}, headers=owner)
+
+    assert client.post("/api/keepers", json=team).status_code == 401
+    other = account(client)
+    client.post("/api/my-leagues/add", json={"league_id": LEAGUE_ID, "season": SEASON}, headers=other)
+    assert client.post("/api/keepers", json=team, headers=other).status_code == 403
+    assert client.post("/api/keepers/save", json={**team, "player_ids": [99]}, headers=other).status_code == 403
+    assert client.post("/api/keepers", json=team, headers=owner).json()["player_ids"] == [11]
+
+
+def test_keepers_saved_before_verifying_count_once_the_team_is_verified(espn, stores):
+    client = make_client(espn, stores)
+    auth = account(client)
+    client.post("/api/my-leagues/add", json={"league_id": LEAGUE_ID, "season": SEASON}, headers=auth)
+    team = {"league_id": LEAGUE_ID, "season": SEASON, "team_id": MY_TEAM}
+    assert client.post("/api/keepers/save", json={**team, "player_ids": [7]}, headers=auth).status_code == 200
+    _, accounts = stores
+    assert accounts.league_keepers(LEAGUE_ID, SEASON) == {}  # nobody has proved the team is theirs yet
+    link(client, espn, auth=auth)
+    assert accounts.league_keepers(LEAGUE_ID, SEASON) == {MY_TEAM: [7]}
