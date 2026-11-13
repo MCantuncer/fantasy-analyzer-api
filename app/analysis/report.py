@@ -71,6 +71,16 @@ LOCK_ODDS = 0.98  # a team this sure of the playoffs can't rise a point: it only
 # that helps me costs them 4.7 points, so this keeps the deals that cost them least, not lopsided ones.
 PAPER_WIN_RATIO = 1.0
 PAPER_MAX_PARTNER_DROP = 0.03
+# A team this sure of the playoffs has little left to gain or lose in playoff odds, so the checks
+# above go blind: on League A (2026-11-13) 21 of 22 bold deals with a team at 94% passed, and 0.1
+# expected categories a playoff week moved its odds 0.2 points, against 2.3 points for teams still
+# fighting for a spot. Its season is decided in the playoff weeks, so a paper win for it is also
+# checked there: expected categories won per playoff week, each week on its real games.
+HIGH_ODDS = 0.85
+# About the same size of loss as PAPER_MAX_PARTNER_DROP, at the exchange rate above (0.1 for 2.3 points).
+PLAYOFF_WEEKS_MAX_DROP = 0.10
+# Expected categories won per playoff week: (before, after).
+Weeks = tuple[float, float]
 # Within a trade step: pairing up players with every team takes about half the time (League A,
 # 2026-11-06: 10 s of 17.5 s for fair trades), simulating the best deals the other half.
 PAIRING_SHARE = 0.5
@@ -95,11 +105,18 @@ def paper_win(d: Deal) -> bool:
     return d.give_value >= PAPER_WIN_RATIO * d.get_value - 1e-9
 
 
-def worth_a_try(d: Deal, before: float, after: float) -> bool:
+def worth_a_try(d: Deal, before: float, after: float, weeks: Weeks | None = None) -> bool:
     """Whether the other owner has a reason to say yes: their odds go up, or they win on paper
-    and their odds drop by no more than PAPER_MAX_PARTNER_DROP."""
+    and their odds drop by no more than PAPER_MAX_PARTNER_DROP.
+
+    With ``weeks`` (their playoff weeks before and after), a paper win for a team above HIGH_ODDS
+    must also cost its playoff weeks no more than PLAYOFF_WEEKS_MAX_DROP: its odds barely move
+    whatever the deal takes from it.
+    """
     if partner_gains(before, after):
         return True
+    if weeks is not None and before >= HIGH_ODDS and weeks[1] - weeks[0] < -PLAYOFF_WEEKS_MAX_DROP - 1e-9:
+        return False
     return paper_win(d) and after - before >= -PAPER_MAX_PARTNER_DROP - 1e-9
 
 
@@ -205,6 +222,7 @@ class Analyzer:
         self._fine_cache: dict[tuple[int, int] | None, SeasonResult] = {}  # the league today / after a pickup
         # A partner's playoff odds after the free pickup a deal's open spot would give them: team index -> odds.
         self._their_pickup: dict[int, float] = {}
+        self._their_weeks: dict[tuple[int, bool], float | None] = {}
         self._fine_their_pickup: dict[int, SeasonResult] = {}
         self._timing: MatchupTiming | None = None
 
@@ -384,6 +402,22 @@ class Analyzer:
                 self._their_pickup[j] = float(self.playoff_odds(dists, {j: roster})[j])
             before = max(before, self._their_pickup[j])
         return float(odds[self.idx]), (before, float(odds[j]))
+
+    def their_playoff_weeks(self, d: Deal) -> Weeks | None:
+        """The partner's expected categories won per playoff week before and after the deal.
+
+        "Before" is their roster today, or after their own free pickup when the deal opens the spot
+        for it, as with their odds. None when the playoff weeks aren't known (no NBA calendar).
+        """
+        j = d.partner_idx
+        picked = d.their_pickup is not None
+        if (j, picked) not in self._their_weeks:
+            before = self.playoff_strength(j)
+            if before is not None and picked:
+                before = max(before, self.playoff_strength(j, {j: self._after_their_pickup(d)}))
+            self._their_weeks[(j, picked)] = before
+        before = self._their_weeks[(j, picked)]
+        return None if before is None else (before, self.playoff_strength(j, d.rosters))
 
     def baseline(self, d: Deal) -> tuple[float, np.ndarray]:
         """My playoff odds and category win rates that a deal is measured against.
@@ -587,20 +621,23 @@ class Analyzer:
             ideas.sort(key=_expected_rank, reverse=True)
         return mix_shapes(ideas, TRADE_RESULTS, lambda t: len(t.give) != len(t.get))
 
-    @staticmethod
-    def _holds_up(mode: Mode, d: Deal, before: float, after: float, theirs: tuple[float, float]) -> bool:
+    def _holds_up(self, mode: Mode, d: Deal, before: float, after: float, theirs: tuple[float, float]) -> bool:
         """Small category gains can vanish in the full simulation; only keep moves that hold up there.
 
         A vision trade may cost a little now for a stronger playoff run; any other trade must raise my
         odds by a point, as it must theirs. Fair trades help both teams; edge trades may instead be a
-        paper win for them that costs them little.
+        paper win for them that costs them little, in playoff odds and, for a team all but sure of
+        the playoffs, in its playoff weeks (see HIGH_ODDS).
         """
         if mode == "vision":
             if after < before - VISION_ODDS_SLACK:
                 return False
         elif not i_gain(before, after):
             return False
-        return worth_a_try(d, *theirs) if mode == "edge" else partner_gains(*theirs)
+        if mode != "edge":
+            return partner_gains(*theirs)
+        weeks = self.their_playoff_weeks(d) if theirs[0] >= HIGH_ODDS else None
+        return worth_a_try(d, *theirs, weeks)
 
     def matchup_timing(self) -> MatchupTiming:
         if self._timing is None:

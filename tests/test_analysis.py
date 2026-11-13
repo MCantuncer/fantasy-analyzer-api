@@ -8,7 +8,9 @@ import app.analysis.sim as sim
 from app.analysis.model import CategoryModel, norm_cdf
 from app.analysis.report import (
     FINE_SIMS,
+    HIGH_ODDS,
     PAPER_MAX_PARTNER_DROP,
+    PLAYOFF_WEEKS_MAX_DROP,
     Analyzer,
     _expected_rank,
     expected_gain,
@@ -17,7 +19,7 @@ from app.analysis.report import (
     worth_a_try,
 )
 from app.analysis.sim import SeasonSim, category_links, simulate_season
-from app.analysis.trades import SCREEN_MIN_THEIR_GAIN
+from app.analysis.trades import SCREEN_MIN_THEIR_GAIN, TradeFinder
 
 
 def test_norm_cdf_matches_known_values():
@@ -161,6 +163,49 @@ def test_worth_a_try_is_a_paper_win_that_costs_them_little():
     assert worth_a_try(paper, 0.40, 0.40 - PAPER_MAX_PARTNER_DROP)
     assert not worth_a_try(paper, 0.40, 0.40 - PAPER_MAX_PARTNER_DROP - 0.005)  # sinks their team
     assert not worth_a_try(short, 0.40, 0.39)  # no paper win and their odds drop
+
+
+def test_a_paper_win_may_not_gut_the_playoff_weeks_of_a_team_sure_of_the_playoffs():
+    from types import SimpleNamespace
+
+    paper = SimpleNamespace(give_value=12.0, get_value=10.0)
+    ok = (5.0, 5.0 - PLAYOFF_WEEKS_MAX_DROP)
+    gutted = (5.0, 5.0 - PLAYOFF_WEEKS_MAX_DROP - 0.01)
+    # Their odds drop a point either way: at 94% that says nothing about what the deal costs them.
+    assert worth_a_try(paper, 0.94, 0.93, ok)
+    assert not worth_a_try(paper, 0.94, 0.93, gutted)
+    assert worth_a_try(paper, 0.94, 0.93)  # callers that don't pass the playoff weeks are as before
+    # A team still fighting for a spot is judged on its playoff odds alone.
+    assert worth_a_try(paper, HIGH_ODDS - 0.01, HIGH_ODDS - 0.02, gutted)
+    # Odds that clearly rise are a reason to say yes on their own.
+    assert worth_a_try(paper, 0.90, 0.92, gutted)
+
+
+def test_bold_lists_check_the_playoff_weeks_of_teams_sure_of_the_playoffs(league, monkeypatch):
+    a = Analyzer(league, 3)
+    finder = TradeFinder(league, a.model, a.idx, keep=set(), mode="edge", premium=a.premium)
+    deals = finder.candidates()
+    even = next(d for d in deals if d.their_pickup is None)
+    opened = next(d for d in deals if d.their_pickup is not None)
+    for d in (even, opened):
+        j = d.partner_idx
+        before, after = a.their_playoff_weeks(d)
+        assert after == pytest.approx(a.playoff_strength(j, d.rosters))
+        today = a.playoff_strength(j)
+        if d.their_pickup is None:
+            assert before == pytest.approx(today)
+        else:
+            # Their own free pickup is theirs without the trade, as with their odds.
+            assert before == pytest.approx(max(today, a.playoff_strength(j, {j: a._after_their_pickup(d)})))
+    paper = next(d for d in deals if d.give_value >= d.get_value)
+    asked = []
+    monkeypatch.setattr(a, "their_playoff_weeks", lambda d: asked.append(d) or (5.0, 4.8))
+    assert not a._holds_up("edge", paper, 0.40, 0.45, (0.94, 0.93))
+    assert a._holds_up("edge", paper, 0.40, 0.45, (0.80, 0.79))
+    assert asked == [paper]  # only asked for the team above HIGH_ODDS
+    # Fair lists are as before: their odds must rise a point.
+    assert not a._holds_up("fair", paper, 0.40, 0.45, (0.94, 0.93))
+    assert asked == [paper]
 
 
 def test_edge_trades_win_on_paper_and_cost_them_little(league):
