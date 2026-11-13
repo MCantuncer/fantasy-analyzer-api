@@ -64,7 +64,7 @@ CATEGORY_WORDS = {
     "AST": "assists",
     "STL": "steals",
     "BLK": "blocks",
-    "3PM": "threes",
+    "3PM": "3s",
     "FG%": "FG%",
     "FT%": "FT%",
     "TO": "fewer turnovers",
