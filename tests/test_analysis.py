@@ -342,7 +342,7 @@ def test_lineup_starts_match_seating_day_by_day(league):
     # A crowded roster: more players with games than seats on most days.
     rosters.append([p for t in league.teams[:2] for p in t.roster])
     for roster in rosters:
-        order = sorted(range(len(roster)), key=lambda i: model.value(roster[i]), reverse=True)
+        order = sorted(range(len(roster)), key=lambda i: model.raw_value(roster[i]), reverse=True)
         plays = np.array([model.plays(roster[i], "season") for i in order])
         want = np.zeros(len(roster))
         for day in plays.T:
