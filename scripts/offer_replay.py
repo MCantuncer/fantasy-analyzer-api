@@ -21,6 +21,18 @@ it takes seconds per deal. Offers before any game was played are skipped (no spr
 
 The replayed rows go to .cache/tradedata/replayed.jsonl, which scripts/acceptance_fit.py
 fits the acceptance odds on.
+
+Trade value weights can be tried the same way, against a replay made with the ones in use:
+
+    uv run python -m scripts.offer_replay --out base.jsonl
+    uv run python -m scripts.offer_replay --set W_PROJECTION=0 --out trial.jsonl --compare base.jsonl
+
+--set changes a constant of app/analysis/perceived.py for the run; --compare prints, league by
+league, how well the paper ratio ranks accepted offers above withdrawn ones under both. A weight
+set is better only if it wins in most leagues, not in the one or two that made most offers.
+
+Seasons whose player pool has no draft market (ESPN returns one draft position for everyone and
+no auction prices) are skipped: trade value has nothing to price a player with there.
 """
 
 from __future__ import annotations
@@ -35,6 +47,7 @@ from pathlib import Path
 
 import numpy as np
 
+import app.analysis.perceived as perceived
 import app.analysis.trades as trades
 from app.analysis.model import CategoryModel
 from app.backtest.history import History
@@ -49,6 +62,8 @@ CATEGORY_LEAGUES = ("H2H_CATEGORY", "H2H_MOST_CATEGORIES", "ROTO")
 GAIN_BINS = (-np.inf, -0.1, 0.0, trades.MIN_THEIR_GAIN, 0.1, 0.2, np.inf)
 PAPER_MAX = trades.MAX_VALUE_RATIO  # the finder's paper band tops out here; the replay lifts the cap to measure
 RATIO_BINS = (0.0, 0.7, trades.MIN_VALUE_RATIO, 1.0, 1.2, PAPER_MAX, np.inf)
+MIN_DRAFT_POSITIONS = 50  # a real draft market spreads players over at least this many positions
+LARGE_LEAGUE = 40  # offers a league needs for its own AUC to mean something
 
 
 def load_offers(path: Path) -> list[dict]:
@@ -69,6 +84,7 @@ def load_offers(path: Path) -> list[dict]:
                 continue
             out.append(
                 {
+                    "id": d["offer_id"],
                     "league": d["league_id"],
                     "season": d["season"],
                     "day": d["day"],
@@ -100,6 +116,12 @@ def _meta(league_id: int, season: int) -> dict[int, dict]:
         return {}
     with gzip.open(path, "rt") as fh:
         return {int(k): v for k, v in json.load(fh).items()}
+
+
+def has_draft_market(league_id: int, season: int) -> bool:
+    """False when the season's player pool came back without draft positions or auction prices."""
+    meta = _meta(league_id, season).values()
+    return len({m["adp"] for m in meta if m.get("adp")}) >= MIN_DRAFT_POSITIONS
 
 
 def _draft(h: History) -> tuple[dict[int, float], dict[int, int]]:
@@ -159,6 +181,9 @@ def score(offer: dict) -> dict | None:
         return None
     trades.MAX_VALUE_RATIO = float("inf")  # measure the ratio instead of filtering on it
     finder = trades.TradeFinder(lg, CategoryModel(lg), idx[offer["proposer"]], keep=set())
+    # The waiver rule needs % rostered, which the data only has at season's end: without it every
+    # player drafted outside the top 100 would count as a free agent, breakouts included.
+    finder.wire = set()
     d = finder._evaluate(
         idx[offer["receiver"]], give, get, min_my_gain=-np.inf, min_their_gain=-np.inf, min_ratio=0.0,
         min_margin=-np.inf,
@@ -167,6 +192,7 @@ def score(offer: dict) -> dict | None:
         return None  # before any games the category spreads are zero and gains undefined
     ratio = d.give_value / d.get_value
     return {
+        "id": offer["id"],
         "league": offer["league"],
         "season": offer["season"],
         "accepted": offer["accepted"],
@@ -198,6 +224,60 @@ def within_league_auc(rows: list[dict], key: str) -> float:
     return float(np.nanmean(vals))
 
 
+def weight_overrides(pairs: list[str]) -> dict[str, float]:
+    """--set NAME=VALUE pairs, checked against the constants perceived.py really has."""
+    out = {}
+    for pair in pairs:
+        name, _, raw = pair.partition("=")
+        current = getattr(perceived, name, None)
+        if not name.isupper() or isinstance(current, bool) or not isinstance(current, int | float):
+            raise SystemExit(f"--set {pair}: app/analysis/perceived.py has no number called {name}")
+        try:
+            out[name] = float(raw)
+        except ValueError:
+            raise SystemExit(f"--set {pair}: {raw!r} is not a number") from None
+    return out
+
+
+def use_weights(overrides: dict[str, float]) -> None:
+    """Runs in every worker: trade value reads its weights from the module when it prices a player."""
+    for name, value in overrides.items():
+        setattr(perceived, name, value)
+
+
+def league_aucs(rows: list[dict]) -> dict[int, float]:
+    """AUC of the paper ratio in each league with enough offers and both outcomes."""
+    by: dict[int, list[dict]] = defaultdict(list)
+    for r in rows:
+        by[r["league"]].append(r)
+    out = {}
+    for league, rs in by.items():
+        y = np.array([r["accepted"] for r in rs], float)
+        if len(rs) >= LARGE_LEAGUE and 0 < y.sum() < len(rs):
+            out[league] = auc(np.array([r["ratio"] for r in rs], float), y)
+    return out
+
+
+def compare(rows: list[dict], baseline: list[dict]) -> dict[int, tuple[float, float]]:
+    """Each large league's paper-ratio AUC as (baseline, this run), on the offers both replays scored."""
+    shared = {r["id"] for r in rows} & {r["id"] for r in baseline}
+    mine = league_aucs([r for r in rows if r["id"] in shared])
+    theirs = league_aucs([r for r in baseline if r["id"] in shared])
+    return {league: (theirs[league], mine[league]) for league in sorted(mine)}
+
+
+def print_comparison(by_league: dict[int, tuple[float, float]]) -> None:
+    print(f"\npaper ratio AUC, leagues with {LARGE_LEAGUE}+ offers in both replays:")
+    for league, (base, this) in by_league.items():
+        print(f"  {league:<11} baseline {base:.3f}  this run {this:.3f}  {this - base:+.3f}")
+    if not by_league:
+        return
+    better = sum(this > base for base, this in by_league.values())
+    worse = sum(this < base for base, this in by_league.values())
+    base, this = np.mean(list(by_league.values()), axis=0)
+    print(f"  mean {base:.3f} -> {this:.3f}; better in {better} leagues, worse in {worse}")
+
+
 def table(rows: list[dict], key: str, bins: tuple[float, ...], label: str) -> None:
     print(f"\n{label}:")
     for lo, hi in zip(bins, bins[1:], strict=False):
@@ -212,15 +292,24 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out", type=Path, default=REPLAYED, help="where the replayed rows go, one JSON object a line")
+    ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE", help="a perceived.py constant")
+    ap.add_argument("--compare", type=Path, help="a replay made with other weights, to compare this one against")
     args = ap.parse_args()
-    offers = load_offers(args.path)
+    overrides = weight_overrides(args.set)
+    if overrides and args.out == REPLAYED:
+        raise SystemExit("--set needs its own --out: replayed.jsonl is what the acceptance odds are fitted on")
+    every = load_offers(args.path)
+    offers = [o for o in every if has_draft_market(o["league"], o["season"])]
     offers.sort(key=lambda o: (o["league"], o["season"], o["day"]))  # one league's replays per worker run
     if args.limit:
         offers = offers[: args.limit]
-    with ProcessPoolExecutor(args.workers) as pool:
+    with ProcessPoolExecutor(args.workers, initializer=use_weights, initargs=(overrides,)) as pool:
         rows = [r for r in pool.map(score, offers, chunksize=32) if r is not None]
     if not args.limit:
         args.out.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    if overrides:
+        print("trade value with " + ", ".join(f"{k}={v:g}" for k, v in overrides.items()))
+    print(f"{len(every) - len(offers)} offers skipped: no draft market data that season")
     print(f"{len(offers)} offers, {len(rows)} replayed, {sum(r['accepted'] for r in rows)} accepted")
     base, _ = rate(rows)
     print(f"league-weighted acceptance {base:.1%}")
@@ -235,6 +324,9 @@ def main() -> None:
     print(f"\nboth sides gain: {rate(both)[1]} offers, accepted {rate(both)[0]:.1%}")
     in_band = [r for r in both if trades.MIN_VALUE_RATIO <= r["ratio"] <= PAPER_MAX]
     print(f"  and inside the paper band: {rate(in_band)[1]} offers, accepted {rate(in_band)[0]:.1%}")
+    if args.compare:
+        with args.compare.open() as fh:
+            print_comparison(compare(rows, [json.loads(line) for line in fh]))
 
 
 if __name__ == "__main__":
