@@ -168,6 +168,29 @@ def test_two_for_two_ideas_are_real_two_for_twos(league):
     assert not [d for d in finder.candidates(two_for_two=False) if len(d.give) == len(d.get) == 2]
 
 
+def test_a_two_for_two_only_has_to_beat_the_one_for_ones_that_work(league):
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 7)
+    finder = TradeFinder(league, model, me, keep=set())
+    pairs = [d for d in finder.candidates(uneven=False) if len(d.give) == len(d.get) == 2]
+    probe = TradeFinder(league, model, me, keep=set())  # sees the 1-for-1s the finder turned down
+    kept = 0
+    for d in pairs:
+        for g in d.give:
+            for t in d.get:
+                simpler = finder._evaluate(d.partner_idx, [g], [t])
+                if simpler is not None:
+                    assert d.my_gain > simpler.my_gain  # a deal on its own: the 2-for-2 must do more for me
+                    continue
+                one = probe._evaluate(d.partner_idx, [g], [t], min_their_gain=-np.inf, min_margin=-np.inf)
+                if one is not None and one.my_gain > d.my_gain:
+                    # Better for me and even on paper, but the other owner loses on it: no deal to
+                    # fall back on, and the second pair is what makes the trade work for them.
+                    assert one.their_gain < finder.min_their_gain <= d.their_gain
+                    kept += 1
+    assert kept
+
+
 def test_worth_a_try_lists_grow_three_player_deals_from_the_best_two_for_twos(league):
     model = CategoryModel(league)
     me = next(i for i, t in enumerate(league.teams) if t.id == 3)

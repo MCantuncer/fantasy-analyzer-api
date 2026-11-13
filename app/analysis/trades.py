@@ -517,8 +517,6 @@ class TradeFinder:
         vs_pickup = free if spends_spot else None
         baseline = self.free_base if vs_pickup is not None else self.base[self.me_idx]
         my_gain = self.model.strength(self.me_idx, dists) - baseline
-        if len(give) == len(get) == 1:
-            self._gains[(j, give[0].id, get[0].id)] = my_gain  # what a 2-for-2 containing it must beat
         if vision and min_my_gain == MIN_MY_GAIN:
             min_my_gain = VISION_MIN_SEASON_GAIN
         if my_gain < min_my_gain:
@@ -544,6 +542,10 @@ class TradeFinder:
             playoff_gain = after - before
             if playoff_gain < VISION_MIN_PLAYOFF_GAIN:
                 return None
+        if len(give) == len(get) == 1:
+            # What a 2-for-2 containing it must beat. Only a 1-for-1 that works counts: one the other
+            # owner loses on isn't the simpler deal, and the second pair is what makes it work for them.
+            self._gains[(j, give[0].id, get[0].id)] = my_gain
         struggling = j in self.struggling
         facts = self._reasons(j, give, get, dists, struggling)
         acceptance = acceptance_odds(ratio, len(give), len(get))
@@ -800,7 +802,8 @@ class TradeFinder:
 
         Pairs are matched on trade value first, which is cheap, so only packages that could
         pass the value check get the full evaluation. A 2-for-2 is kept only when it does more
-        for me than the best 1-for-1 inside it: otherwise the extra players are filler.
+        for me than the best 1-for-1 inside it that is a deal on its own: otherwise the extra
+        players are filler.
         """
         pv = self.perceived
         lo = EDGE_MIN_RATIO if self.mode == "edge" else MIN_VALUE_RATIO
