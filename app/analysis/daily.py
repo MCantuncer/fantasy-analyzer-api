@@ -16,6 +16,9 @@ Only even trades qualify, 1-for-1 or 2-for-2. A 2-for-1 or 1-for-2 can look good
 for both sides, but real owners rarely make them (scripts/trade_shape_backtest.py), so one
 never headlines the league.
 
+Players a manager saved as keepers on their account are never offered: the pick should be a
+deal both owners could actually make.
+
 Only fully healthy players change hands: a day-to-day, out or injured-reserve player
 makes a poor headline even when the projections allow for the games he'll miss.
 
@@ -114,7 +117,14 @@ SIM_SPAN = ("Simulating the season", 0.94, 0.99)
 
 
 class DailyTrade:
-    def __init__(self, league: League, day: date, progress: Progress | None = None):
+    def __init__(
+        self,
+        league: League,
+        day: date,
+        progress: Progress | None = None,
+        keepers: dict[int, list[int]] | None = None,
+    ):
+        """``keepers``: team id -> players its manager marked as keepers. They are never offered."""
         self.league = league
         self.day = day
         self.progress = progress
@@ -123,7 +133,11 @@ class DailyTrade:
         self.teams = league.teams
         self.cat_names = [c.name for c in self.model.cats]
         self.premium = OwnerPremium(league, self.model, self.perceived)
-        self.finders = [TradeFinder(league, self.model, i, set(), premium=self.premium) for i in range(len(self.teams))]
+        kept = keepers or {}
+        self.finders = [
+            TradeFinder(league, self.model, i, set(kept.get(t.id, ())), premium=self.premium)
+            for i, t in enumerate(self.teams)
+        ]
         self.dists: list[Dist] = self.finders[0].dists
         self.spotlight = spotlight_index(league, day)
         self._sim: SeasonSim | None = None
@@ -143,6 +157,8 @@ class DailyTrade:
                 if not all(fully_healthy(p) for p in a.give + a.get):
                     continue
                 j = a.partner_idx
+                if any(p.id in self.finders[j].keep for p in a.get):
+                    continue  # their manager keeps him
                 b = self.finders[j]._evaluate(i, a.get, a.give)
                 if b is not None:
                     out.append(Pair(a=a, b=b, i=i, j=j))
@@ -317,8 +333,12 @@ def _story(facts: list[schemas.ReasonFact]) -> list[schemas.ReasonFact]:
 
 
 def trade_of_the_day(
-    league: League, day: date | None = None, keep_id: str | None = None, progress: Progress | None = None
+    league: League,
+    day: date | None = None,
+    keep_id: str | None = None,
+    progress: Progress | None = None,
+    keepers: dict[int, list[int]] | None = None,
 ) -> schemas.TradeOfTheDay:
     # Shares the one big-run slot with team reports: building every team's trade finder is the big part.
     with one_at_a_time(progress, "Waiting its turn", 0.0):
-        return DailyTrade(league, day or datetime.now(UTC).date(), progress).report(keep_id)
+        return DailyTrade(league, day or datetime.now(UTC).date(), progress, keepers).report(keep_id)

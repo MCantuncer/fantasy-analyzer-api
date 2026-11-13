@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Fantasy Analyzer API",
+    "title": "COURT API",
     "version": "0.1.0"
   },
   "paths": {
@@ -917,6 +917,160 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/keepers": {
+      "post": {
+        "summary": "Keepers",
+        "description": "The players this account keeps on its team: never offered in trades or suggested as drops.",
+        "operationId": "keepers_api_keepers_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeepersRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Keepers"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/keepers/save": {
+      "post": {
+        "summary": "Save Keepers",
+        "description": "Replaces the account's keepers on its team. They follow the account to every device.",
+        "operationId": "save_keepers_api_keepers_save_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeepersSave"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Keepers"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
           },
           "422": {
             "description": "Validation Error",
@@ -5977,6 +6131,103 @@
           "player_id"
         ],
         "title": "InjuryImpactRequest"
+      },
+      "Keepers": {
+        "properties": {
+          "player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Player Ids"
+          },
+          "saved": {
+            "type": "boolean",
+            "title": "Saved",
+            "description": "False until this account has saved keepers for the team, even an empty list"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_ids",
+          "saved"
+        ],
+        "title": "Keepers",
+        "description": "The players an account keeps on its team: never offered in trades or suggested as drops."
+      },
+      "KeepersRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id"
+        ],
+        "title": "KeepersRequest"
+      },
+      "KeepersSave": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Team Id"
+          },
+          "player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 40,
+            "title": "Player Ids",
+            "description": "Every player kept on this team; replaces the saved list"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team_id",
+          "player_ids"
+        ],
+        "title": "KeepersSave"
       },
       "LeagueOverview": {
         "properties": {
