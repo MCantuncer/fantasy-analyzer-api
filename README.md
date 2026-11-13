@@ -215,7 +215,7 @@ uv run python -m scripts.export_openapi openapi.json
 
 ### The analysis model
 
-- **Projections:** ESPN's season projections, blended with this season's per-game stats as games are played (`app/espn/parse.py`). The season so far is scaled by age first: young players tend to get better as a season goes and older ones to fade, which ESPN's preseason line allows for but a season-so-far average doesn't (ages from `app/espn/birth_dates.csv`).
+- **Projections:** ESPN's season projections, blended with this season's per-game stats as games are played (`app/espn/parse.py`). The season so far is scaled by age first: young players tend to get better as a season goes and older ones to fade, which ESPN's preseason line allows for but a season-so-far average doesn't (ages from `app/espn/birth_dates.csv`). For a proven player (41 or more games in each of the last three seasons) the season so far takes over half as fast: a hot or cold start says less about a player with years of record behind him (`PROVEN_SLOWDOWN`).
 - **Weekly model:** each team starts its top healthy players (by z-score value) for about 3.4 games a week. Each category's weekly total is a normal distribution; counting stats use an over-dispersed Poisson variance, percentages use binomial variance on attempts (`app/analysis/model.py`). A player's overall value, used to rank players (the best free agent, who gets cut, our own price for a player), adds up his category z-scores with turnovers at a quarter (`TURNOVER_VALUE_WEIGHT`): turnovers come with the ball, so at full weight the sum ranks low-usage role players above the stars who carry a team. Who starts and trade value's projection signal stay on the full sum, and a team's turnover category is always counted in full. The pitch written for the other owner names only categories they compete in and never opens with turnovers.
 - **Trades:** every 1-for-1, 2-for-2, 2-for-1 and 1-for-2 with every team (`app/analysis/trades.py`). Bold lists also try 3-for-3s and 2-for-3s (you get the extra player), grown from the best 2-for-2s with each team and kept only when they do more for you than that 2-for-2; in real category-league offers a 3-for-3 is accepted about as often as a 1-for-1. A deal is kept only if it
     - helps your categories,
@@ -354,6 +354,16 @@ uv run python -m scripts.age_backtest               # add --fit to search the co
 ```
 
 Fitted on 2023-24 (season so far +4% a year under 27, -0.75% a year over), it is better after 5 to 40 games in all three seasons and leaves the preseason projection alone. Without it, players under 23 beat their projection by about 1 z-score a game the rest of the way, and players 30 and older fell short. Refresh the birth dates once a season with `uv run python -m scripts.birth_dates`.
+
+### Track-record backtest
+
+Checks how fast the season so far should take over from the projection for proven players (`PROVEN_GAMES`, `PROVEN_SEASONS`, `PROVEN_SLOWDOWN` in `app/espn/parse.py`): after 10 to 30 games of past seasons, the projection at each speed predicts the rest of the season, scored by 9-cat value, for players grouped by how many of the last three seasons they were regulars in:
+
+```sh
+uv run python -m scripts.track_record_backtest
+```
+
+Picked on 2023-24 and held on 2024-25 and 2025-26: taking over half as fast lowers the error for players with three regular seasons behind them in every season (by 1 to 2%) and at every checkpoint. After 15 games, proven players off to a hot start gave back 62% of the gap to their projection over the rest of the season, where the plain blend expects 46% and the slower one 60%. Proven players off to a slow start won back 49% (plain blend 46%, slower one 54%); the good ones among them (projected above average, 61 cases) won back 48%, where the slower blend expects 62% and the plain one 52%, so on that small group alone it leans too hopeful. Players with a shorter record keep the plain speed: no slowdown held for them on all three seasons.
 
 ### Vision-trade backtest
 

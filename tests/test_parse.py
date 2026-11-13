@@ -8,10 +8,13 @@ from app.espn.parse import (
     MINUTES,
     MINUTES_WEIGHT_GAMES,
     PEAK_AGE,
+    PROVEN_GAMES,
+    PROVEN_SLOWDOWN,
     _blend_stats,
     age_trend,
     parse_league,
     parse_player,
+    proven_players,
 )
 
 
@@ -126,6 +129,52 @@ def test_lines_without_minutes_are_left_alone():
     p = _lopez(_line(2027, 1, projected), _line(2026, 0, LOPEZ_LAST), _line(2027, 0, now))
     w = 6 / (6 + ACTUAL_WEIGHT_GAMES)
     assert p.per_game[1] == pytest.approx((1 - w) * 1.69 + w * 1.0 * age_trend(p.age))
+
+
+def test_proven_players_have_three_regular_seasons_behind_them():
+    full = PROVEN_GAMES
+    past = [{1: 70, 2: 70, 3: full, 4: 60}, {1: 65, 2: full - 1, 3: full, 4: 60}, {1: 80, 2: 75, 3: full}]
+    # 2 missed half of a season two years ago, 4 wasn't in the league three years ago.
+    assert proven_players(past) == {1, 3}
+    assert proven_players(past[:2]) == set()  # two seasons known: nobody counts as proven
+    assert proven_players([]) == set()
+
+
+def test_a_proven_players_season_takes_over_half_as_fast():
+    projected = {"0": 20.0, "6": 8.0, "15": 4.0, "42": 70.0}
+    hot = {"0": 30.0, "6": 12.0, "15": 5.0, "42": 10.0}
+    player = {"stats": [_line(2027, 1, projected), _line(2027, 0, hot)]}
+    slow, gp, has_prior = _blend_stats(player, 2027, proven=True)
+    plain, _, _ = _blend_stats(player, 2027)
+    assert gp == 10 and has_prior
+    share = {k: (slow[k] - projected[str(k)]) / (hot[str(k)] - projected[str(k)]) for k in (0, 6, 15)}
+    assert share[6] == pytest.approx(10 / (10 + PROVEN_SLOWDOWN * ACTUAL_WEIGHT_GAMES))
+    assert share[0] > share[6] > share[15]  # each stat keeps its own speed, slowed alike
+    assert all(projected[str(k)] < slow[k] < plain[k] for k in (0, 6, 15))
+    # A slow start counts for less too.
+    cold = {"stats": [_line(2027, 1, projected), _line(2027, 0, {**hot, "0": 12.0})]}
+    assert _blend_stats(cold, 2027, proven=True)[0][0] > _blend_stats(cold, 2027)[0][0]
+
+
+def test_a_proven_players_minutes_move_at_the_usual_speed():
+    lines = [_line(2027, 1, LOPEZ_PROJECTED), _line(2026, 0, LOPEZ_LAST), _line(2027, 0, LOPEZ_NOW)]
+    slow, _, _ = _blend_stats({"stats": lines}, 2027, proven=True)
+    plain, _, _ = _blend_stats({"stats": lines}, 2027)
+    prior = 0.75 * 26.2 + 0.25 * 21.8
+    w = 6 / (6 + MINUTES_WEIGHT_GAMES)
+    assert slow[MINUTES] == plain[MINUTES] == pytest.approx((1 - w) * prior + w * 20.17)
+    assert slow[0] < plain[0]  # his hot scoring still counts for less
+
+
+def test_parse_league_slows_only_the_proven_players(recorded):
+    plain = parse_league(recorded["league"], recorded["free_agents"])
+    star, other = [p for t in plain.teams for p in t.roster if p.games_played][:2]
+    free = next(p for p in plain.free_agents if p.games_played and p.has_prior)
+    league = parse_league(recorded["league"], recorded["free_agents"], proven={star.id, free.id})
+    after = {p.id: p for t in league.teams for p in t.roster} | {p.id: p for p in league.free_agents}
+    assert after[other.id].per_game == other.per_game
+    assert after[star.id].per_game != star.per_game and after[free.id].per_game != free.per_game
+    assert after[star.id].games_played == star.games_played
 
 
 def test_age_trend():
