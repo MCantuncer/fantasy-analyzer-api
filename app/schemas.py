@@ -630,6 +630,15 @@ class SignUpRequest(BaseModel):
     password: str = Field(min_length=8, max_length=200)
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=200, description="The token from the emailed reset link")
+    password: str = Field(min_length=8, max_length=200)
+
+
 class GoogleSignIn(BaseModel):
     credential: str = Field(min_length=20, max_length=4096, description="The ID token from Google Identity Services")
 
@@ -665,6 +674,7 @@ class AuthResult(BaseModel):
 
 class AuthConfig(BaseModel):
     google_client_id: str | None = Field(default=None, description="Set when Google sign-in is turned on")
+    password_reset: bool = Field(default=False, description="True when reset links can be emailed")
 
 
 class OverviewTeam(BaseModel):

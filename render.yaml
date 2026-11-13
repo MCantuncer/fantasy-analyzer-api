@@ -22,6 +22,14 @@ services:
       # Google OAuth web client ID. Google sign-in stays off until it is set.
       - key: GOOGLE_CLIENT_ID
         sync: false
+      # Resend API key. Forgot password stays off until it is set; the sender's domain must be verified in Resend.
+      - key: RESEND_API_KEY
+        sync: false
+      # Optional: reset emails come from "COURT <no-reply@courtfantasy.app>" and link to https://courtfantasy.app.
+      - key: EMAIL_FROM
+        sync: false
+      - key: SITE_URL
+        sync: false
       # Anthropic API key. Claude Haiku reads managers' notes on trade ideas; notes stay unread until it is set.
       - key: ANTHROPIC_API_KEY
         sync: false
