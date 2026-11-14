@@ -4,8 +4,9 @@ import dataclasses
 import numpy as np
 import pytest
 
+from app.analysis import perceived
 from app.analysis.model import TURNOVER_VALUE_WEIGHT, TURNOVERS, CategoryModel
-from app.analysis.perceived import PerceivedValue
+from app.analysis.perceived import W_BOX, PerceivedValue, box_score
 from app.analysis.report import Analyzer, league_summary
 from app.analysis.tiers import droppable
 from app.analysis.tiers import droppable as no_trade_value
@@ -40,6 +41,28 @@ def test_perceived_value_orders_stars_above_role_players(league):
     roster = {p.name: p for p in league.team(3).roster}
     assert pv.value(roster["Jayson Tatum"]) > pv.value(roster["Jarrett Allen"]) > pv.value(roster["Davion Mitchell"])
     assert all(pv.value(p) >= 0 for p in roster.values())
+
+
+def test_trade_value_reads_the_box_score(league, monkeypatch):
+    pool = [p for t in league.teams for p in t.roster] + list(league.free_agents)
+    # ESPN's points-league scoring: 20 points, 2 threes, 4 rebounds, 5 assists, a steal, half a block,
+    # 3 turnovers, 7 of 16 from the field and 4 of 5 at the line.
+    line = {0: 20.0, 17: 2.0, 6: 4.0, 3: 5.0, 2: 1.0, 1: 0.5, 11: 3.0, 13: 7.0, 14: 16.0, 15: 4.0, 16: 5.0}
+    assert box_score(dataclasses.replace(pool[0], per_game=line)) == pytest.approx(33.0)
+    pv = PerceivedValue(league)
+    best = max((p for p in pool if p.has_prior), key=box_score)
+    assert ("box", W_BOX, pv.dollars_at_rank(1)) in pv.signals(best)
+    roster = league.team(3).roster
+    priced = {p.id: (pv.value(p), next(x for name, _, x in pv.signals(p) if name == "box")) for p in roster}
+    monkeypatch.setattr(perceived, "W_BOX", 0.0)  # read when a player is priced
+    without = PerceivedValue(league)
+    moved = 0
+    for p in roster:
+        after, box = priced[p.id]
+        before = without.value(p)
+        assert min(before, box) - 1e-9 <= after <= max(before, box) + 1e-9  # pulled toward his stat line
+        moved += abs(after - before) > 0.5
+    assert moved
 
 
 @pytest.fixture(scope="module")

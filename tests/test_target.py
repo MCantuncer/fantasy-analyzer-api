@@ -21,7 +21,7 @@ def test_fit_and_owner_read(league):
 
 
 def test_offers_are_distinct_and_help_me(league):
-    target = player(league, "Tyler Herro")
+    target = player(league, "Caleb Wilson")
     report = TargetAnalyzer(league, MY_TEAM, target.id).target_report()
     offers = report.offers
     assert 1 <= len(offers) <= 3
@@ -36,11 +36,11 @@ def test_offers_are_distinct_and_help_me(league):
 
 
 def test_keep_players_are_never_offered(league):
-    herro = player(league, "Tyler Herro")
+    target = player(league, "Michael Porter Jr.")
     allen = player(league, "Jarrett Allen")
-    offered = TargetAnalyzer(league, MY_TEAM, herro.id).target_report().offers
+    offered = TargetAnalyzer(league, MY_TEAM, target.id).target_report().offers
     assert any(allen.id in {p.id for p in o.give} for o in offered)
-    report = TargetAnalyzer(league, MY_TEAM, herro.id, [allen.id]).target_report()
+    report = TargetAnalyzer(league, MY_TEAM, target.id, [allen.id]).target_report()
     assert all(allen.id not in {p.id for p in o.give} for o in report.offers)
 
 
@@ -51,8 +51,8 @@ def test_own_player_rejected(league):
 
 
 def test_target_endpoint(client, league):
-    herro = player(league, "Tyler Herro")
-    r = client.post("/api/target", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM, "player_id": herro.id})
+    target = player(league, "Michael Porter Jr.")
+    r = client.post("/api/target", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM, "player_id": target.id})
     assert r.status_code == 200
     assert r.json()["offers"]
     bad = client.post("/api/target", json={"league_id": LEAGUE_ID, "team_id": MY_TEAM, "player_id": 1})

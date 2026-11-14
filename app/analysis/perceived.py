@@ -13,6 +13,8 @@ blends both, and the draft-day signals fade as the season produces real numbers:
     position and the pick used here
   * % owned across ESPN leagues: the market's current verdict
   * rest-of-season value in this league's categories (projection blended with actuals)
+  * the box score: the same projection in ESPN's fantasy points, the one number that adds
+    up a stat line the way owners read it (see W_BOX)
   * this season's ESPN rank and the last 15 days, once there are enough games
 
 Every rank is priced on one curve built from ESPN's own rank -> auction dollars.
@@ -34,7 +36,8 @@ if TYPE_CHECKING:
 # These weights were checked against real offers in November 2026 (scripts/offer_replay.py with
 # --set and --compare, 3,554 offers in 13 leagues): no projection, a draft market that never
 # fades, production only and weights picked per league all failed to rank accepted offers above
-# withdrawn ones better in most leagues. Change them only with a replay that says so.
+# withdrawn ones better in most leagues; the box score signal (W_BOX) did. Change them only with
+# a replay that says so.
 
 # Draft-day signals, at full weight before any games. They fade as games are played.
 W_ESPN = 0.25
@@ -45,6 +48,17 @@ DRAFT_FADE_GAMES = 25
 # Signals that hold all season.
 W_OWNED = 0.15
 W_PROJECTION = 0.25
+# The box score. A category league's rank punishes a 23-point scorer for his free throws and
+# turnovers; the owner who has him looks at 23 points, 6 rebounds and 6 assists. ESPN's own
+# points-league scoring adds a stat line up that way, so players are ranked by it on their
+# projection (blended with the season so far) and priced on the curve like every other rank.
+# On the real offers (scripts/offer_replay.py, 3,554 offers in 13 leagues) the paper ratio with
+# this signal ranks accepted offers above withdrawn ones better in 7 of the 10 leagues with 40+
+# offers and worse in 2 (AUC .629 -> .638, the worst league -.005), and better on the odd seasons when picked on
+# the even ones and the reverse. Points alone didn't help; larger weights gain a little more on
+# average and lose more in the leagues they lose.
+W_BOX = 0.2
+BOX_POINTS = {0: 1.0, 17: 1.0, 6: 1.0, 3: 2.0, 2: 4.0, 1: 4.0, 11: -2.0, 13: 2.0, 14: -1.0, 15: 1.0, 16: -1.0}
 # Production signals, ramping up with games played.
 W_SEASON = 0.35
 SEASON_FULL_GAMES = 15
@@ -60,6 +74,12 @@ STUD_POWER = 1.5
 WAIVER_LEVEL = 0.5
 
 
+def box_score(p: Player) -> float:
+    """A player's projected per-game line in ESPN's fantasy points (points, rebounds, assists and
+    the rest, less missed shots and turnovers)."""
+    return sum(w * p.per_game.get(stat, 0.0) for stat, w in BOX_POINTS.items())
+
+
 class PerceivedValue:
     def __init__(self, league: League, model: CategoryModel | None = None):
         self.league = league
@@ -73,9 +93,11 @@ class PerceivedValue:
         )
         by_owned = sorted(pool, key=lambda p: p.percent_owned, reverse=True)
         self._owned_rank = {p.id: r for r, p in enumerate(by_owned, 1) if p.percent_owned > 0}
+        # A hot game or two isn't a stat line yet: the same players the projection signal trusts.
+        trusted = [p for p in pool if p.has_prior or p.games_played >= MIN_SAMPLE_GAMES]
+        self._box_rank = {p.id: r for r, p in enumerate(sorted(trusted, key=box_score, reverse=True), 1)}
         self._proj_rank: dict[int, int] = {}
         if model is not None:
-            trusted = [p for p in pool if p.has_prior or p.games_played >= MIN_SAMPLE_GAMES]
             # The full sum, not ``model.value``: with turnovers at a quarter weight in this signal the
             # paper check told real accepted offers from withdrawn ones no better (10 leagues, Nov 2026).
             by_value = sorted(trusted, key=model.raw_value, reverse=True)
@@ -137,6 +159,8 @@ class PerceivedValue:
             out.append(("owned", W_OWNED, self.dollars_at_rank(self._owned_rank[p.id])))
         if p.id in self._proj_rank:
             out.append(("projection", W_PROJECTION, self.dollars_at_rank(self._proj_rank[p.id])))
+        if p.id in self._box_rank:
+            out.append(("box", W_BOX, self.dollars_at_rank(self._box_rank[p.id])))
         if p.season_rank and gp > 0:
             out.append(("season", W_SEASON * min(gp / SEASON_FULL_GAMES, 1.0), self.dollars_at_rank(p.season_rank)))
         if p.recent_rank and gp > 0:
