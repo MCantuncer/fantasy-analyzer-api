@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from app.analysis import perceived
+from app.analysis.badges import pickup_pool
 from app.analysis.model import TURNOVER_VALUE_WEIGHT, TURNOVERS, CategoryModel
 from app.analysis.perceived import W_BOX, PerceivedValue, box_score
 from app.analysis.report import Analyzer, league_summary
@@ -375,13 +376,13 @@ def test_their_side_of_a_one_for_two_is_measured_against_their_free_pickup(leagu
 
 
 def test_two_for_one_is_measured_against_the_free_pickup(league):
-    """The spot a 2-for-1 opens takes the best free agent, but that pickup needs no trade."""
+    """The spot a 2-for-1 opens takes my best free pickup, but that pickup needs no trade."""
     model = CategoryModel(league)
     me = next(i for i, t in enumerate(league.teams) if t.id == 3)
     finder = TradeFinder(league, model, me, keep=set())
     assert finder.free_move is not None
     add, drop = finder.free_move
-    assert add is finder.filler and drop in droppable(league.teams[me].roster)
+    assert add in pickup_pool(league) and drop in droppable(league.teams[me].roster)
     assert finder.free_base > finder.base[me]
     # Open thresholds: the point is how the gain is measured, not which deals pass.
     j = (me + 1) % len(league.teams)
@@ -396,7 +397,7 @@ def test_two_for_one_is_measured_against_the_free_pickup(league):
     assert filled
     deals = finder.candidates() + filled
     for d in filled:
-        assert d.my_add is finder.filler
+        assert d.my_add is add
         assert d.vs_pickup == finder.free_move
         after = model.strength(me, d.dists)
         assert d.my_gain == pytest.approx(after - finder.free_base)
@@ -407,9 +408,24 @@ def test_two_for_one_is_measured_against_the_free_pickup(league):
             assert d.vs_pickup is None
 
 
+def test_the_free_pickup_is_the_one_that_helps_my_team_most(league):
+    """The pickup a deal is measured against is my best one, not just the best free agent by value:
+    a deal measured against a weaker pickup would get credit for a waiver claim."""
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set())
+    roster = league.teams[me].roster
+    best = finder.free_base
+    for add in pickup_pool(league):
+        for drop in droppable(roster):
+            dists = list(finder.dists)
+            dists[me] = model.dist([p for p in roster if p.id != drop.id] + [add])
+            assert model.strength(me, dists) <= best + 1e-12
+
+
 def test_cutting_the_player_the_free_pickup_replaces_is_not_the_trades_gain(league):
     """A 1-for-2 that makes room by cutting my weakest player, or a deal that sends him, is measured
-    against swapping him for the best free agent: that needs no trade."""
+    against swapping him for my best free pickup: that needs no trade."""
     model = CategoryModel(league)
     me = next(i for i, t in enumerate(league.teams) if t.id == 3)
     finder = TradeFinder(league, model, me, keep=set())
@@ -440,7 +456,17 @@ def test_a_spot_opened_on_their_roster_is_measured_against_their_own_pickup(leag
     """Their open spot takes the best free agent, whom they could add today: their odds start from that."""
     a = Analyzer(league, 3)
     finder = TradeFinder(league, a.model, a.idx, keep=set(), mode="edge", premium=a.premium)
-    deals = finder.candidates()
+    # Open thresholds as well: the point is how their side is measured, not which deals pass.
+    loose = {"min_my_gain": float("-inf"), "min_their_gain": float("-inf"), "min_ratio": 0.0}
+    star = max(a.me.roster, key=a.model.value)
+    probed = [
+        d
+        for j, team in enumerate(league.teams)
+        if j != a.idx
+        for pair in zip(team.roster, team.roster[1:], strict=False)
+        if (d := finder._evaluate(j, [star], list(pair), **loose)) is not None
+    ]
+    deals = finder.candidates() + probed
     opened = [d for d in deals if len(d.get) > len(d.give)]
     assert opened
     for d in deals:
@@ -464,7 +490,11 @@ def test_a_spot_opened_on_their_roster_is_measured_against_their_own_pickup(leag
     _, _, (fine_before, _), _ = a.recheck(helped)
     assert fine_before >= float(a.playoff_odds(a.dists, fine=True)[j]) - 1e-9
     # A deal that opens no spot on their roster starts from their roster today.
-    even = next(d for d in deals if len(d.get) == len(d.give) and d.partner_idx == j)
+    even = next(
+        d
+        for get in league.teams[j].roster
+        if (d := finder._evaluate(j, [star], [get], **loose)) is not None and d.vs_pickup is None
+    )
     assert a.deal_odds(even)[1][0] == pytest.approx(today)
 
 
