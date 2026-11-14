@@ -80,10 +80,14 @@ UNTOUCHABLE = "UNTOUCHABLE"
 BLOCK = "ON_THE_BLOCK"
 
 
+def pickup_pool(league: League) -> list[Player]:
+    """Free agents an owner could add today and count on: no injury tag at all, with enough games to trust."""
+    return [p for p in league.free_agents if p.fully_healthy and p.pro_team_id and (p.has_prior or p.games_played >= 5)]
+
+
 def best_pickup(league: League, model: CategoryModel) -> Player | None:
-    """The best free agent an owner could add today: no injury tag at all, with enough games to trust."""
-    pool = [p for p in league.free_agents if p.fully_healthy and p.pro_team_id and (p.has_prior or p.games_played >= 5)]
-    return max(pool, key=model.value, default=None)
+    """The best free agent an owner could add today, by value alone (not by any team's needs)."""
+    return max(pickup_pool(league), key=model.value, default=None)
 
 
 @dataclass(frozen=True)

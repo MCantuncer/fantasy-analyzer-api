@@ -14,8 +14,9 @@ carry a category, fresh signings (see badges.py). Getting one of those costs the
 owner premium on top of trade value, and giving up one of yours takes a deal near
 the top of what the finder sees.
 
-A 2-for-1 fills the spot it opens with the best free agent. That pickup needs no
-trade: you could cut your weakest player for him today. So such a deal is measured
+A 2-for-1 fills the spot it opens with your best free pickup: the free agent who does the
+most for your team, as on the pickups list, not just the best by value. That pickup needs
+no trade: you could cut your weakest player for him today. So such a deal is measured
 against your roster after that free pickup, not against today's roster, and the trade
 gets credit only for what it adds on top. The same goes for a deal that cuts or sends
 the player you'd drop for that free agent (a 1-for-2 that makes room by cutting him):
@@ -54,7 +55,7 @@ from typing import Literal
 import numpy as np
 
 from app import schemas
-from app.analysis.badges import OwnerPremium, best_pickup
+from app.analysis.badges import OwnerPremium, best_pickup, pickup_pool
 from app.analysis.model import TURNOVERS, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.tiers import droppable, off_the_wire
@@ -330,21 +331,24 @@ class TradeFinder:
         self.model_dollars = {p.id: self.perceived.dollars_at_rank(r) for r, p in enumerate(by_model, 1)}
 
     def _free_move(self) -> tuple[tuple[Player, Player] | None, list[Player] | None, float | None]:
-        """The best pickup I can make without a trade: the filler for one of my droppable players.
+        """The best pickup I can make without a trade: any free agent I can count on, for one of my
+        droppable players, judged on what he does for my team (as the pickups list is).
 
+        Not just the best free agent by value: the one that fits my categories can be someone else,
+        and a deal measured against a weaker pickup would get credit for a waiver claim.
         Returns (add, drop), my roster after it, and my strength after it; all None when it doesn't help.
         """
         me = self.teams[self.me_idx]
-        if self.filler is None:
-            return None, None, None
+        drops = droppable(me.roster, self.keep)
         best = None
-        for drop in droppable(me.roster, self.keep):
-            roster = [p for p in me.roster if p.id != drop.id] + [self.filler]
-            dists = list(self.dists)
-            dists[self.me_idx] = self.model.dist(roster)
-            strength = self.model.strength(self.me_idx, dists)
-            if strength > self.base[self.me_idx] and (best is None or strength > best[2]):
-                best = ((self.filler, drop), roster, strength)
+        for add in pickup_pool(self.league):
+            for drop in drops:
+                roster = [p for p in me.roster if p.id != drop.id] + [add]
+                dists = list(self.dists)
+                dists[self.me_idx] = self.model.dist(roster)
+                strength = self.model.strength(self.me_idx, dists)
+                if strength > self.base[self.me_idx] and (best is None or strength > best[2]):
+                    best = ((add, drop), roster, strength)
         return best or (None, None, None)
 
     def playoff_strength(self, rosters: dict[int, list[Player]]) -> float | None:
@@ -498,7 +502,8 @@ class TradeFinder:
             my_roster = [p for p in my_roster if p is not my_drop]
         # The side that sends more players gets an open spot and fills it from free agency.
         # In a daily league that spot plays real games, so leaving it empty would undersell the deal.
-        my_add = self.filler if len(give) > len(get) else None
+        # It takes the same free agent as my best pickup, so the two are measured alike.
+        my_add = (self.free_move[0] if self.free_move else self.filler) if len(give) > len(get) else None
         if my_add is not None:
             my_roster = my_roster + [my_add]
         if len(get) > len(give) and self.filler is not None:
