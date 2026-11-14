@@ -130,7 +130,7 @@ VISION_MIN_SEASON_GAIN = -0.15  # what the deal may cost before the playoffs, pe
 # rate in every league left out. The order of deals is sound, the exact percentage is not
 # (a league's own rate runs from 2% to 20%), so the label is what to show.
 # Coefficients: intercept, log(paper ratio), 2-for-2, 2-for-1, 1-for-2 (1-for-1 = 0).
-ACCEPT_COEF = (-1.924, 0.387, -0.244, -0.773, 0.020)
+ACCEPT_COEF = (-1.914, 0.420, -0.248, -0.748, 0.007)
 PAPER_CLIP = 1.5  # log paper ratio, about 0.22x to 4.5x
 MIN_ODDS = 0.02
 # A deal that takes away their keystone category: odds of acceptance multiplied by this.
