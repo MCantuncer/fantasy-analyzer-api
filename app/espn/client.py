@@ -148,14 +148,16 @@ class EspnClient:
     async def player_card(
         self, season: int, league_id: int, player_id: int, creds: EspnCredentials | None, games: int = 12
     ) -> dict | None:
-        """One player's latest game lines, season line and every move of him in this league.
+        """One player's latest game lines, season line and every move of him in this league,
+        plus his last 15 days and last season's line (for analysis/form.py).
 
         None when ESPN has no such player.
         """
+        lines = [f"00{season}", f"02{season}", f"00{season - 1}"]
         flt = {
             "players": {
                 "filterIds": {"value": [player_id]},
-                "filterStatsForTopScoringPeriodIds": {"value": games, "additionalValue": [f"00{season}"]},
+                "filterStatsForTopScoringPeriodIds": {"value": games, "additionalValue": lines},
             }
         }
         data = await self._get(

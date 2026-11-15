@@ -6228,6 +6228,148 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HotRun": {
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "straw_fire",
+              "bigger_role",
+              "mixed"
+            ],
+            "title": "Verdict",
+            "description": "bigger_role: minutes are half the gap or more (that part tends to stick). straw_fire: minutes are a quarter or less, the rest is hot shooting and more shots per minute (fades). mixed: between"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games",
+            "description": "Games he played in the last 15 days"
+          },
+          "gap": {
+            "type": "number",
+            "title": "Gap",
+            "description": "Standard 9-cat value per game above his usual level (0 = average starter)"
+          },
+          "minutes_part": {
+            "type": "number",
+            "title": "Minutes Part",
+            "description": "Of the gap: his usual per-minute line at the run's minutes"
+          },
+          "production_part": {
+            "type": "number",
+            "title": "Production Part",
+            "description": "Of the gap: more shots, boards, assists and stocks per minute"
+          },
+          "shooting_part": {
+            "type": "number",
+            "title": "Shooting Part",
+            "description": "Of the gap: FG%, 3P% and FT% above his usual on the same attempts"
+          },
+          "likely_kept": {
+            "type": "number",
+            "title": "Likely Kept",
+            "description": "Share of the gap expected to last over his next 10 games"
+          },
+          "minutes_recent": {
+            "type": "number",
+            "title": "Minutes Recent"
+          },
+          "minutes_usual": {
+            "type": "number",
+            "title": "Minutes Usual"
+          },
+          "pts_recent": {
+            "type": "number",
+            "title": "Pts Recent"
+          },
+          "pts_usual": {
+            "type": "number",
+            "title": "Pts Usual"
+          },
+          "fg_recent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fg Recent"
+          },
+          "fg_usual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fg Usual"
+          },
+          "three_recent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Three Recent"
+          },
+          "three_usual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Three Usual"
+          },
+          "ft_recent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ft Recent"
+          },
+          "ft_usual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ft Usual"
+          }
+        },
+        "type": "object",
+        "required": [
+          "verdict",
+          "games",
+          "gap",
+          "minutes_part",
+          "production_part",
+          "shooting_part",
+          "likely_kept",
+          "minutes_recent",
+          "minutes_usual",
+          "pts_recent",
+          "pts_usual"
+        ],
+        "title": "HotRun",
+        "description": "What a hot run over his last 15 days was made of, and how much of it tends to last (analysis/form.py)."
+      },
       "InjuryImpact": {
         "properties": {
           "player_id": {
@@ -8521,6 +8663,17 @@
             "type": "array",
             "title": "Moves",
             "description": "Every move of him in this league this season, newest first"
+          },
+          "hot_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HotRun"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when his last 15 days run well above his usual"
           }
         },
         "type": "object",
@@ -9031,6 +9184,17 @@
             ],
             "title": "Out Report",
             "description": "Listed out: the news headline games_out rests on, when it reported a timeline"
+          },
+          "hot_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HotRun"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when his last 15 days run well above his usual"
           }
         },
         "type": "object",

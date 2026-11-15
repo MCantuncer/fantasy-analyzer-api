@@ -14,6 +14,7 @@ import numpy as np
 from app import schemas
 from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.durability import injury_prone
+from app.analysis.form import hot_run_ref
 from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.projection import CLOSE
@@ -228,6 +229,7 @@ class Analyzer:
             games_out=round(p.games_out, 1) if p.games_out is not None else None,
             expected_back=self.model.back_date(p),
             out_report=p.out_report,
+            hot_run=hot_run_ref(p.hot_run),
         )
 
     def _tick(self, span: tuple[str, float, float] | None, done: int, total: int) -> None:

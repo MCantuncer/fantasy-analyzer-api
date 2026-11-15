@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from app.analysis.form import HotRun, hot_run
 from app.espn.ages import season_age
 
 # ESPN stat ids for basketball.
@@ -126,6 +127,7 @@ class Player:
     # expected back (analysis/teammates.py). ``per_game`` already holds the rest-of-season average.
     minute_shifts: tuple[tuple[float, int], ...] = ()
     age: float | None = None  # at the season's midpoint (espn/ages.py), None when unknown
+    hot_run: HotRun | None = None  # what a hot last 15 days was made of (analysis/form.py)
 
     @property
     def available(self) -> bool:
@@ -412,6 +414,7 @@ def parse_player(
         acquired_ms=int(acq["acquisitionDate"]) if acq.get("acquisitionDate") else None,
         waiver_ms=int(entry["waiverProcessDate"]) if entry.get("waiverProcessDate") else None,
         age=age,
+        hot_run=hot_run(p.get("stats") or [], season),
     )
 
 

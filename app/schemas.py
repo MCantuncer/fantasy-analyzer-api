@@ -58,6 +58,31 @@ class PlayerBadge(BaseModel):
     reason: str
 
 
+class HotRun(BaseModel):
+    """What a hot run over his last 15 days was made of, and how much of it tends to last (analysis/form.py)."""
+
+    verdict: Literal["straw_fire", "bigger_role", "mixed"] = Field(
+        description="bigger_role: minutes are half the gap or more (that part tends to stick). straw_fire: "
+        "minutes are a quarter or less, the rest is hot shooting and more shots per minute (fades). mixed: between"
+    )
+    games: int = Field(description="Games he played in the last 15 days")
+    gap: float = Field(description="Standard 9-cat value per game above his usual level (0 = average starter)")
+    minutes_part: float = Field(description="Of the gap: his usual per-minute line at the run's minutes")
+    production_part: float = Field(description="Of the gap: more shots, boards, assists and stocks per minute")
+    shooting_part: float = Field(description="Of the gap: FG%, 3P% and FT% above his usual on the same attempts")
+    likely_kept: float = Field(description="Share of the gap expected to last over his next 10 games")
+    minutes_recent: float
+    minutes_usual: float
+    pts_recent: float
+    pts_usual: float
+    fg_recent: float | None = None
+    fg_usual: float | None = None
+    three_recent: float | None = None
+    three_usual: float | None = None
+    ft_recent: float | None = None
+    ft_usual: float | None = None
+
+
 class PlayerRef(BaseModel):
     id: int
     name: str
@@ -98,6 +123,7 @@ class PlayerRef(BaseModel):
     out_report: str | None = Field(
         default=None, description="Listed out: the news headline games_out rests on, when it reported a timeline"
     )
+    hot_run: HotRun | None = Field(default=None, description="Set when his last 15 days run well above his usual")
 
 
 class CategoryOutlook(BaseModel):
@@ -1309,6 +1335,7 @@ class PlayerCard(BaseModel):
     games: list[PlayerGame] = Field(description="Latest games he played, newest first; last season's when none yet")
     news: list[PlayerNews] = Field(description="Recent stories about him, newest first")
     moves: list[PlayerMove] = Field(description="Every move of him in this league this season, newest first")
+    hot_run: HotRun | None = Field(default=None, description="Set when his last 15 days run well above his usual")
 
 
 class GameScore(BaseModel):
