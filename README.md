@@ -62,6 +62,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🃏 | **Player cards:** any player's latest team games (final score, his garbage-time line, missed ones marked with his current injury), health, news and every move of him in the league | `/api/player-card` |
 | 📝 | **Trade feedback and rules:** rate a trade idea and have it checked against today's league; your own rules hide ideas that break them | `/api/trade-feedback`, `/api/trade-check`, `/api/trade-rules` |
 | 📈 | **Usage numbers:** daily visitors, page views and sign-ups, with no cookies or ids: a visitor is a hash under a salt that is deleted each day | `/api/usage` |
+| 🔥 | **Straw fire or bigger role:** a player on a hot run over his last 15 days gets what it was made of (more minutes, more shots per minute, hot shooting) and how much of it tends to last, checked on five seasons | `/api/analyze`, `/api/player-card` |
 | 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |
 | 💬 | **Moves feed and league chat:** transactions, posts, replies and reactions | `/api/feed`, `/api/posts` |
 | 🔐 | **Accounts and verified managers:** email or Google sign-in, password reset by email, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
@@ -185,7 +186,7 @@ All settings are optional for local development.
 | POST | `/api/trade-rules` | `{league_id, team_id, season?, kind, value?, team_name?, why?}` | Adds one of your trade rules: `protect_category` (value: the category), `skip_team` (value: the team id) or `no_injury_prone`. A rule only hides ideas that break it; it never changes the model |
 | POST | `/api/trade-rules/mine` | `{league_id, team_id, season?}` | Your trade rules in the league |
 | POST | `/api/trade-rules/delete` | `{league_id, team_id, season?, rule_id}` | Removes a rule and returns the rest |
-| POST | `/api/player-card` | `{league_id, season?, player_id, core?}` | One player: latest games, health, news and every move of him in this league; `core` leaves out the slower parts |
+| POST | `/api/player-card` | `{league_id, season?, player_id, core?}` | One player: latest games, health, news, every move of him in this league and what a hot run of his was made of; `core` leaves out the slower parts |
 | POST | `/api/player-card/extras` | `{league_id, season?, player_id}` | The slower part of a card: his news, the names of players in his moves, and each finished game's final score and garbage-time line (from ESPN's play-by-play, read once per game) |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
 | POST | `/api/offer-check` | `{league_id, team_id, partner_team_id, give_player_ids, get_player_ids, my_drop_player_ids?, direction?, season?, keep_player_ids?}` | Any trade with one other team (1 to 3 players a side, offered to you or one you plan to send): a take / close / pass call for you with the simulation noise, the other team's odds and paper value, both teams' categories and playoff weeks, the cuts and pickups it forces, and the flags the data confirms |
@@ -383,6 +384,24 @@ uv run python -m scripts.next_games_backtest
 | 2025-26 | 5.03 / 4.55 | 14.6 / 12.7 | 12.0 / 11.6 |
 
 Fitted on one season alone, the weights run 0.27 to 0.30 for 7 days and 0.25 to 0.46 for 15 days; the app uses the fit on all five (0.29, 0.36). The four-game numbers are one call made before the first game. ESPN's stored projections for 2022-23 are rest-of-season ones, so that season's projection had help a real one didn't.
+
+### Hot-run backtest
+
+Checks how much of a hot or cold run lasts, by what it was made of (`app/analysis/form.py`): for every player and every second game of five seasons, his games in the 14 days before are the run, and the games before it plus last season (counted as 15 games) are his usual level. The gap splits exactly into minutes (his usual per-minute line at the run's minutes), production (more shots, boards and assists per minute) and shooting (FG%, 3P% and FT% above his usual), and his next 10 games are fitted on the three:
+
+```sh
+uv run python -m scripts.hot_run_backtest
+```
+
+| Season | Minutes part kept | Production part kept | Shooting part kept |
+| --- | --- | --- | --- |
+| 2021-22 | 48% | 21% | 16% |
+| 2022-23 | 43% | 21% | 17% |
+| 2023-24 | 60% | 18% | 14% |
+| 2024-25 | 48% | 17% | 20% |
+| 2025-26 | 54% | 19% | 18% |
+
+Over all five: 51%, 19% and 17% (`KEEP`). Of runs 2.5 or more above a player's usual, those where minutes were half the gap or more ("bigger role") were still 50% above his usual over the next 10 games, those where minutes were a quarter or less ("straw fire") 27%. The projection already discounts a run this way (this season counts in proportion to games played), so the check explains a run and never changes a value.
 
 ### Vision-trade backtest
 

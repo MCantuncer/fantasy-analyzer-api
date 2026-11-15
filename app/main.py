@@ -45,6 +45,7 @@ from app.analysis.checks import TITLES as CHECK_TITLES
 from app.analysis.daily import trade_of_the_day
 from app.analysis.durability import HISTORY_SEASONS, games_played, long_absences, one_off_candidates
 from app.analysis.durability import attach as attach_durability
+from app.analysis.form import hot_run_ref
 from app.analysis.injury import LAST_SEASON_WEIGHT, Season, parse_gamelogs
 from app.analysis.injury import analyze as analyze_absence
 from app.analysis.model import CategoryModel
@@ -3174,6 +3175,7 @@ def create_app(
                 for m in card.moves
                 if m.at_ms
             ],
+            hot_run=hot_run_ref(card.hot_run),
         )
 
     def feedback_out(f: Feedback) -> schemas.TradeFeedback:

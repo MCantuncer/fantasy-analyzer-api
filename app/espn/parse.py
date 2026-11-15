@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from app.analysis.form import HotRun, hot_run
 from app.espn.ages import season_age
 
 # ESPN stat ids for basketball.
@@ -131,6 +132,7 @@ class Player:
     # Minutes a game over his games in ESPN's last 7 and last 15 days (None: no game in that window).
     # This week's projection leans on them (CategoryModel.horizon_row, RECENT_MINUTES_WEIGHTS).
     recent_minutes: tuple[float | None, float | None] = (None, None)
+    hot_run: HotRun | None = None  # what a hot last 15 days was made of (analysis/form.py)
 
     @property
     def available(self) -> bool:
@@ -431,6 +433,7 @@ def parse_player(
         waiver_ms=int(entry["waiverProcessDate"]) if entry.get("waiverProcessDate") else None,
         age=age,
         recent_minutes=_recent_minutes(p, season),
+        hot_run=hot_run(p.get("stats") or [], season),
     )
 
 

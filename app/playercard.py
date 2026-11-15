@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from app.analysis.form import HotRun, hot_run
 from app.scores import SETTLE, Schedule, ScheduledGame
 
 GAME_SPLIT = 5
@@ -94,6 +95,7 @@ class Card:
     games: list[GameRow] = field(default_factory=list)
     season_line: SeasonLine | None = None
     moves: list[CardMove] = field(default_factory=list)
+    hot_run: HotRun | None = None
 
 
 def _line(raw: dict) -> dict[str, float]:
@@ -222,6 +224,7 @@ def parse_card(entry: dict, season: int, schedules: dict[int, Schedule], now: da
         games=games,
         season_line=line,
         moves=parse_moves(entry.get("transactions") or [], pid),
+        hot_run=hot_run(p.get("stats") or [], season),
     )
 
 
