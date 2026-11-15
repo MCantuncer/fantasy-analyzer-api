@@ -217,6 +217,7 @@ uv run python -m scripts.export_openapi openapi.json
 ### The analysis model
 
 - **Projections:** ESPN's season projections, blended with this season's per-game stats as games are played (`app/espn/parse.py`). The season so far is scaled by age first: young players tend to get better as a season goes and older ones to fade, which ESPN's preseason line allows for but a season-so-far average doesn't (ages from `app/espn/birth_dates.csv`). For a proven player (41 or more games in each of the last three seasons) the season so far takes over half as fast: a hot or cold start says less about a player with years of record behind him (`PROVEN_SLOWDOWN`).
+- **This week's games:** for the week under way, a player's minutes lean on his last few weeks: they move part of the way from the projection's toward his average over the last 7 and the last 15 days (`RECENT_MINUTES_WEIGHTS`), with counting stats following the minutes. A role that just grew shows up in FA Targets, streams and the matchup projection right away, while a player's season value keeps the slower blend. A player whose minutes move because a teammate is out keeps the measured gain instead (see "Who gains from an injury").
 - **Weekly model:** each team starts its top healthy players (by z-score value) for about 3.4 games a week. Each category's weekly total is a normal distribution; counting stats use an over-dispersed Poisson variance, percentages use binomial variance on attempts (`app/analysis/model.py`). A player's overall value, used to rank players (the best free agent, who gets cut, our own price for a player), adds up his category z-scores with turnovers at a quarter (`TURNOVER_VALUE_WEIGHT`): turnovers come with the ball, so at full weight the sum ranks low-usage role players above the stars who carry a team. Who starts and trade value's projection signal stay on the full sum, and a team's turnover category is always counted in full. The pitch written for the other owner names only categories they compete in and never opens with turnovers.
 - **Trades:** every 1-for-1, 2-for-2, 2-for-1 and 1-for-2 with every team (`app/analysis/trades.py`). A 2-for-2 is kept only when it does more for you than any 1-for-1 inside it that is a deal on its own (one the other owner loses on doesn't count: the second pair is what makes it work for them). Bold lists also try 3-for-3s and 2-for-3s (you get the extra player), grown from the best 2-for-2s with each team and kept only when they do more for you than that 2-for-2; in real category-league offers a 3-for-3 is accepted about as often as a 1-for-1. A deal is kept only if it
     - helps your categories,
@@ -365,6 +366,24 @@ uv run python -m scripts.track_record_backtest
 ```
 
 Picked on 2023-24 and held on 2024-25 and 2025-26: taking over half as fast lowers the error for players with three regular seasons behind them in every season (by 1 to 2%) and at every checkpoint. After 15 games, proven players off to a hot start gave back 62% of the gap to their projection over the rest of the season, where the plain blend expects 46% and the slower one 60%. Proven players off to a slow start won back 49% (plain blend 46%, slower one 54%); the good ones among them (projected above average, 61 cases) won back 48%, where the slower blend expects 62% and the plain one 52%, so on that small group alone it leans too hopeful. Players with a shorter record keep the plain speed: no slowdown held for them on all three seasons.
+
+### Next-games backtest
+
+Checks how far this week's minutes should lean on a player's last 7 and 15 days (`RECENT_MINUTES_WEIGHTS` in `app/analysis/model.py`): before every game of five seasons, the app's own projection gives his minutes, and the gaps to his recent minutes are weighted by least squares. Each season is scored with weights fitted on the other four:
+
+```sh
+uv run python -m scripts.next_games_backtest
+```
+
+| Season | Next game's minutes missed, projection / with recent minutes | Next four games' minutes | Next four games' points |
+| --- | --- | --- | --- |
+| 2021-22 | 4.92 / 4.59 | 13.6 / 12.6 | 11.9 / 11.8 |
+| 2022-23 | 4.90 / 4.62 | 13.4 / 12.9 | 12.0 / 12.0 |
+| 2023-24 | 5.30 / 4.69 | 15.5 / 13.1 | 12.1 / 11.9 |
+| 2024-25 | 5.05 / 4.61 | 14.3 / 12.8 | 11.8 / 11.6 |
+| 2025-26 | 5.03 / 4.55 | 14.6 / 12.7 | 12.0 / 11.6 |
+
+Fitted on one season alone, the weights run 0.27 to 0.30 for 7 days and 0.25 to 0.46 for 15 days; the app uses the fit on all five (0.29, 0.36). The four-game numbers are one call made before the first game. ESPN's stored projections for 2022-23 are rest-of-season ones, so that season's projection had help a real one didn't.
 
 ### Hot-run backtest
 

@@ -17,8 +17,6 @@ Uses the caches of scripts/durability_backtest.py (.cache/season_pools, .cache/g
 
 from __future__ import annotations
 
-import json
-
 import numpy as np
 
 from app.analysis.form import (
@@ -33,30 +31,13 @@ from app.analysis.form import (
     split_run,
     value,
 )
-from app.espn.parse import GAMES_PLAYED
-from scripts.durability_backtest import LOGS, game_logs
 from scripts.minutes_backtest import season_lines
+from scripts.next_games_backtest import dated_lines
 
 SEASONS = (2022, 2023, 2024, 2025, 2026)
 RUN_DAYS = 14
 AFTER = 10
 MIN_BEFORE = 8  # games before the run
-
-
-def dated_lines(season: int) -> dict[int, list[tuple[int, dict[int, float]]]]:
-    """Each player's (day, line) for the games he played, in order."""
-    game_logs(season)  # fills the cache when it's missing
-    days: dict[int, dict[int, dict[int, float]]] = {}
-    for team in range(1, 31):
-        for e in json.loads((LOGS / f"{season}-{team}.json").read_text()):
-            p = e.get("player") or e
-            mine = days.setdefault(int(p["id"]), {})
-            for s in p.get("stats") or []:
-                if s.get("seasonId") != season or s.get("statSplitTypeId") != 5 or s.get("statSourceId"):
-                    continue
-                if (s.get("stats") or {}).get(str(GAMES_PLAYED)):
-                    mine[int(s["scoringPeriodId"])] = {int(k): float(v) for k, v in s["stats"].items()}
-    return {pid: sorted(g.items()) for pid, g in days.items()}
 
 
 def cases(season: int) -> np.ndarray:

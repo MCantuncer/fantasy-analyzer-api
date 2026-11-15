@@ -53,12 +53,32 @@ RATIO_OVERDISPERSION = 1.5
 # (durability.py), which took 2% off projected totals in the League A backtest, so the
 # flat share is raised to keep league-wide totals where they were.
 AVAILABILITY = 0.95
+# This week's games follow a player's last few weeks of minutes more than the season blend does:
+# his minutes move this share of the way from the blend's toward his average over the last 7 and
+# the last 15 days (ESPN's splits). Fitted on every game of five seasons (2021-22 to 2025-26)
+# against the app's own projection before that game; fitted on one season alone the weights run
+# 0.27-0.30 (7 days) and 0.25-0.46 (15 days). Each season, scored with weights fitted on the other
+# four, beat the plain projection: the next game's minutes missed by 4.55-4.67 instead of 4.90-5.30,
+# the next four games' (one call at the first) by 12.6-13.1 instead of 13.4-15.5, and their points
+# by 1-3% less (scripts/next_games_backtest.py). Only the week under way leans on it; the season
+# keeps the blend, which already gives this season's minutes their due over months.
+RECENT_MINUTES_WEIGHTS = (0.29, 0.36)  # last 7 days, last 15 days
 PHASE_STEP = 0.618034  # spreads players' missed games apart (golden ratio steps)
 # Lineup and roster caches start over once this big. A league-wide trade scan tries
 # hundreds of thousands of rosters, and an unbounded cache outgrew the free server's
 # 512MB. A cleared cache only costs recomputing what's still in use.
 FILL_CACHE_SIZE = 100_000
 DIST_CACHE_SIZE = 20_000
+
+
+def recent_shift(p: Player) -> float:
+    """Minutes a game his next games add to the blend's, from his last 7 and 15 days (RECENT_MINUTES_WEIGHTS)."""
+    minutes = p.per_game.get(MINUTES, 0.0)
+    if minutes <= 0:
+        return 0.0
+    return sum(
+        w * (m - minutes) for w, m in zip(RECENT_MINUTES_WEIGHTS, p.recent_minutes, strict=True) if m is not None
+    )
 
 
 def norm_cdf(x: np.ndarray) -> np.ndarray:
@@ -120,20 +140,28 @@ class CategoryModel:
     def horizon_row(self, p: Player, horizon: object) -> np.ndarray:
         """``row`` over one horizon: a player whose minutes move while a teammate is out
         (teammates.py) gets the share of that horizon's games the teammate misses, not the
-        rest-of-season share ``per_game`` holds. Everyone else gets ``row``."""
-        if not p.minute_shifts or horizon == "season" or not self.cal or horizon not in self.horizon:
+        rest-of-season share ``per_game`` holds. In the week under way everyone else gets the
+        minutes his last few weeks point to (``recent_shift``). Otherwise ``row``."""
+        if horizon == "season" or not self.cal or horizon not in self.horizon:
+            return self.row(p)
+        this_week = horizon == self.league.current_period
+        if not p.minute_shifts and not (this_week and any(m is not None for m in p.recent_minutes)):
             return self.row(p)
         key = (p.id, horizon)
         cached = self._horizon_rows.get(key)
         if cached is None:
-            games = self.cal.team_days.get(p.pro_team_id, frozenset())
-            here = [d for d in self.horizon[horizon][0] if d in games]
-            season = [d for d in self.horizon["season"][0] if d in games] if "season" in self.horizon else here
             extra = 0.0
-            for change, back in p.minute_shifts:
-                share_here = sum(d < back for d in here) / len(here) if here else 0.0
-                share_season = sum(d < back for d in season) / len(season) if season else 0.0
-                extra += change * (share_here - share_season)
+            if p.minute_shifts:
+                # The measured gain already holds what his recent minutes would add.
+                games = self.cal.team_days.get(p.pro_team_id, frozenset())
+                here = [d for d in self.horizon[horizon][0] if d in games]
+                season = [d for d in self.horizon["season"][0] if d in games] if "season" in self.horizon else here
+                for change, back in p.minute_shifts:
+                    share_here = sum(d < back for d in here) / len(here) if here else 0.0
+                    share_season = sum(d < back for d in season) / len(season) if season else 0.0
+                    extra += change * (share_here - share_season)
+            else:
+                extra = recent_shift(p)
             minutes = p.per_game.get(MINUTES, 0.0)
             line = with_minutes(p.per_game, min(max(minutes + extra, 0.0), MAX_MINUTES)) if minutes > 0 else p.per_game
             cached = self._horizon_rows[key] = self._row_of(line)
