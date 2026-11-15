@@ -33,6 +33,7 @@ import numpy as np
 
 from app.analysis.form import FG_SCALE, FT_SCALE, SCALE
 from app.analysis.model import RECENT_MINUTES_WEIGHTS
+from app.analysis.tonight import OTHER_ROLE, REGULAR_MINUTES, SAME_ROLE, role
 from app.espn.ages import season_age
 from app.espn.parse import GAMES_PLAYED, MINUTES, PROVEN_GAMES, PROVEN_SEASONS, _blend_stats, with_minutes
 from scripts.age_backtest import _entry, _names
@@ -103,6 +104,55 @@ def big_types(games: dict[int, dict]) -> tuple[dict[tuple[int, int], int], np.nd
     return dict(zip(profiles, (int(v) for v in lab), strict=True)), cen * sd + mu
 
 
+_ROLES: dict[int, dict[int, int]] = {}
+
+
+def season_roles(g: dict[int, dict], season: int) -> dict[int, int]:
+    """Each player's role (tonight.role) from his season's per-game line."""
+    if season not in _ROLES:
+        roles = {}
+        for pid, gl in g.items():
+            n = len(gl)
+            line = {k: sum(x[2].get(k, 0.0) for x in gl.values()) / n for k in (MINUTES, AST, REB)}
+            roles[pid] = role(line)
+        _ROLES[season] = roles
+    return _ROLES[season]
+
+
+def regulars_out(g: dict[int, dict], sides: dict) -> dict[tuple[str, int], list[tuple[int, float]]]:
+    """(game, team) -> the regulars who sat it: (player, minutes a game). A regular played 5 of the
+    team's last 10 games at REGULAR_MINUTES or more, and one of its last 3 (a fresh absence)."""
+    order: dict[int, list[tuple[int, str]]] = defaultdict(list)
+    for gid, teams in sides.items():
+        for team, side in teams.items():
+            order[team].append((g[side[0][0]][gid][0], gid))
+    out = {}
+    for team, games in order.items():
+        games.sort()
+        played = [{pid: x.get(MINUTES, 0.0) for pid, x in sides[gid][team]} for _, gid in games]
+        for i, (_, gid) in enumerate(games):
+            if i < 5:
+                continue
+            recent = played[max(0, i - 10) : i]
+            fresh = set().union(*played[max(0, i - 3) : i])
+            sat = []
+            for pid in fresh - set(played[i]):
+                minutes = [p[pid] for p in recent if pid in p]
+                if len(minutes) >= 5 and np.mean(minutes) >= REGULAR_MINUTES:
+                    sat.append((pid, float(np.mean(minutes))))
+            out[(gid, team)] = sat
+    return out
+
+
+def out_for(out: dict, roles: dict[int, int], pid: int, gid: str, team: int, opp: int) -> tuple[float, float, float]:
+    """Minutes a game of same-role and other-role teammates who sat, and of the opponent's regulars who sat."""
+    mine = roles.get(pid, 1)
+    sat = out.get((gid, team), [])
+    same = sum(m for q, m in sat if roles.get(q, 1) == mine)
+    other = sum(m for q, m in sat if roles.get(q, 1) != mine)
+    return same, other, sum(m for _, m in out.get((gid, opp), []))
+
+
 def cases() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Rows of context signals, the misses per category, and the line and actual per stat."""
     games = {s: season_games(s) for s in SEASONS}
@@ -135,6 +185,7 @@ def cases() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
                 bigs = [(x.get(MINUTES, 0.0), types[(season, pid)]) for pid, x in side if (season, pid) in types]
                 if bigs:
                     lead_big[(gid, team)] = max(bigs)[1]
+        out = regulars_out(g, sides)
         proj, last, names = projections(season), season_lines(season - 1), _names(season)
         past = [season_pool(season - k)[0] for k in range(1, PROVEN_SEASONS + 1)]
         todo = []
@@ -180,6 +231,7 @@ def cases() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
                 + list(np.mean(ho, 0) if ho else np.zeros(len(CATS)))
                 + list(np.mean(hb, 0) if hb else np.zeros(len(CATS)))
                 + list(np.mean(hown, 0) if hown else np.zeros(len(CATS)))
+                + list(out_for(out, season_roles(g, season), pid, gid, team, opp))
             )
             misses.append(miss)
             preds.append([pl[s] for s in STATS])
@@ -246,6 +298,8 @@ def main() -> None:
                 parts.append(f"{sname} {min(g):+.2f}..{max(g):+.2f}")
             print(f"    {name:5s} " + " | ".join(parts))
     level(pred, act, season, points)
+    k3 = 10 + 3 * k
+    sat(pred, act, season, x[:, k3], x[:, k3 + 1], x[:, k3 + 2])
     print("\nmean miss per game: the line, then with a factor per stat for the opponent's win% (fitted on the others)")
     for j, stat in enumerate(STATS):
         miss0, miss1 = [], []
@@ -256,6 +310,46 @@ def main() -> None:
             miss0.append(np.abs(act[te, j] - pred[te, j]).mean())
             miss1.append(np.abs(act[te, j] - pred[te, j] * (1 + f * opp_win[te])).mean())
         print(f"  stat {stat:2d}: {np.mean(miss0):.3f} -> {np.mean(miss1):.3f}")
+
+
+def sat(
+    pred: np.ndarray, act: np.ndarray, season: np.ndarray, same: np.ndarray, other: np.ndarray, opp: np.ndarray
+) -> None:
+    """Teammates and opponents who sat: his minutes, then each stat per minute once the minutes are counted."""
+    j = STATS.index(MINUTES)
+    miss = act[:, j] - pred[:, j]
+    print(
+        "\nregulars who sat (fresh absences): minutes he gained per minute of theirs, fitted on the other four seasons"
+    )
+    for name, cols in (
+        ("same role", [same]),
+        ("same and other role", [same, other]),
+        ("and the opponent's", [same, other, opp]),
+    ):
+        g = gain(miss, season, np.ones(len(miss), bool), [], cols)
+        w = np.linalg.lstsq(np.column_stack([np.ones(len(miss))] + cols), miss, rcond=None)[0][1:]
+        print(f"  {name:20s} {np.round(w, 3)}  % less squared miss {min(g):+.2f}..{max(g):+.2f}")
+    print(f"  in use: same role {SAME_ROLE}, other role {OTHER_ROLE}")
+    hit = same > 0
+    shifted = miss - SAME_ROLE * same - OTHER_ROLE * other
+    print(
+        f"  games with a same-role regular out ({hit.mean():.1%}): mean miss"
+        f" {np.abs(miss[hit]).mean():.2f} -> {np.abs(shifted[hit]).mean():.2f} min"
+    )
+    minutes = np.maximum(pred[:, j] + SAME_ROLE * same + OTHER_ROLE * other, 1.0)
+    share_own, share_opp = (same + other) / 240, opp / 240
+    print(
+        "  then per minute (a usage bump): % less squared miss with his line x share of team minutes out,"
+        " own | opponent's"
+    )
+    for i, stat in enumerate(STATS):
+        if stat == MINUTES:
+            continue
+        line = pred[:, i] * minutes / np.maximum(pred[:, j], 1.0)
+        y = act[:, i] - line
+        g1 = gain(y, season, np.ones(len(y), bool), [], [line * share_own])
+        g2 = gain(y, season, np.ones(len(y), bool), [], [line * share_opp])
+        print(f"    stat {stat:2d}: {min(g1):+.2f}..{max(g1):+.2f} | {min(g2):+.2f}..{max(g2):+.2f}")
 
 
 def level(pred: np.ndarray, act: np.ndarray, season: np.ndarray, points: np.ndarray) -> None:
