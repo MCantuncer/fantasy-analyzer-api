@@ -1,6 +1,6 @@
 name: News feed sample
 
-# One-off (run 14): why the Kawhi return story also tags Anthony Edwards.
+# One-off (run 15): what Bluesky posts look like (Scottie Barnes news stuck 6 days old).
 on:
   push:
     branches: [feature/news-feed-sample]
@@ -20,4 +20,4 @@ jobs:
           path: probe
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --locked
-      - run: PYTHONPATH=. uv run python probe/scripts/dup_probe.py
+      - run: PYTHONPATH=. uv run python probe/scripts/bsky_probe.py
