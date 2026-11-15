@@ -197,7 +197,7 @@ All settings are optional for local development.
 | POST | `/api/scores/lineup` | `{league_id, season?, team_id, day?}` | `team_id`'s lineup that day, read fresh from ESPN (30 s cache, so a change in the ESPN app shows within a minute): each player's slot, whether it counts, and his game that day, his season per-game line, his next game and the days he plays this week; plus empty starting slots and the week's days |
 | POST | `/api/injury-impact` | `{player_id, league_id?, season?}` | Teammates who gain while a player is out, from games his team played without him, each tagged with his fantasy team in `league_id` |
 | POST | `/api/news` | `{league_id?, season?, include_held?}` | Checked NBA news from every source, each player tagged with his fantasy team in `league_id`; source health; today's most-added players |
-| GET | `/api/news/refresh` | | Starts a check of every news source if the last is over 15 minutes old. For the scheduled ping |
+| GET | `/api/news/refresh` | | Starts a check of every news source if the last is over 10 minutes old. For the scheduled ping |
 | POST | `/api/news/check` | | A reader's refresh: checks every news source now, at most once every 2 minutes for everyone; says when the last check was and when the next may start |
 | GET | `/api/sample` | | The sample league for visitors who haven't signed in: its teams under masked names, each one's projected place and whether it has a move, and the team to scout first. 404 `sample_off` when there is none |
 | GET | `/api/sample/teams/{team_id}` | `?day=` | One sample team's analysis (the `/api/analyze` report), team names masked; `day` is the index's `analysed_on` |
@@ -283,7 +283,7 @@ Each item is tagged with the players its headline names in full (ESPN's own athl
 
 When sources disagree on how bad an injury is (for example ESPN lists day-to-day and an outlet reports a fracture), the story's `conflict` says so, naming each source, and `severity` is the worst one. Headlines and summaries are always the sources' own; a story with only ESPN data gets a plain line from that data ("ESPN lists X as out").
 
-A check runs at most every 15 minutes, started by any request when due. The News page's refresh button (`/api/news/check`) can start one sooner, but never more than once every 2 minutes in total, since every reader shares one feed. Items are stored in `news_items` (kept 14 days), and the last player snapshot, source health and trending players in `news_state`. On the free Render plan the server sleeps, so the `News refresh` GitHub workflow calls `/api/news/refresh` every 30 minutes; set the repository variable `API_URL` (e.g. `https://fantasy-analyzer-api.onrender.com`) to turn it on.
+A check runs at most every 10 minutes. The server's news watch asks for one every 2 minutes (`NEWS_WATCH_SECONDS`, 0 turns it off), so news stays current with nobody on the site, and any news request or player card also starts one when due. The News page's refresh button (`/api/news/check`) can start one sooner, but never more than once every 2 minutes in total, since every reader shares one feed. Items are stored in `news_items` (kept 14 days), and the last player snapshot, source health and trending players in `news_state`. On the free Render plan the server sleeps, so the `News refresh` GitHub workflow calls `/api/news/refresh` every 30 minutes; set the repository variable `API_URL` (e.g. `https://fantasy-analyzer-api.onrender.com`) to turn it on.
 
 ### Sample league
 

@@ -92,6 +92,7 @@ class FeedError(Exception):
 
 
 _TAG = re.compile(r"<[^>]+>")
+_LINK = re.compile(r"https?://\S+")
 _SPACE = re.compile(r"\s+")
 
 
@@ -202,7 +203,8 @@ def parse_espn(source_id: str, data: dict) -> list[RawItem]:
 
 def parse_bluesky(source_id: str, data: dict) -> list[RawItem]:
     """An account's own posts (no reposts or replies): the first line is the headline, and a
-    linked card gives the link and summary."""
+    linked card gives the link and summary. RotoWire posts carry no card, only the player's page
+    as a bare link under the headline: that link is not a summary."""
     out = []
     for entry in data.get("feed") or []:
         if entry.get("reason"):  # a repost of someone else
@@ -220,7 +222,7 @@ def parse_bluesky(source_id: str, data: dict) -> list[RawItem]:
         uri = post.get("uri", "")
         handle = (post.get("author") or {}).get("handle", "")
         link = card.get("uri") or (f"https://bsky.app/profile/{handle}/post/{uri.rsplit('/', 1)[-1]}" if uri else "")
-        rest = clean(text.split("\n", 1)[1]) if "\n" in text else ""
+        rest = clean(_LINK.sub(" ", text.split("\n", 1)[1])) if "\n" in text else ""
         out.append(
             RawItem(
                 source_id=source_id,

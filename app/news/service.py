@@ -25,7 +25,7 @@ from app.store import Store
 
 log = logging.getLogger(__name__)
 
-REFRESH_EVERY = timedelta(minutes=15)
+REFRESH_EVERY = timedelta(minutes=10)
 CHECK_GAP = timedelta(minutes=2)  # a reader's "refresh" checks the sources again at most this often
 FIRST_WAIT = 25.0  # seconds a request waits for the very first refresh before answering empty
 KEEP = timedelta(days=7)
@@ -198,6 +198,13 @@ class NewsService:
             except TimeoutError:
                 return True
         return not task.done()
+
+    def nudge(self, season: int, now: datetime, last: datetime | None) -> None:
+        """Start a check in the background when one is due (``last`` is ``last_refresh()``), never
+        waiting for it. Before the first check ever there is nothing to nudge: that one belongs to
+        the News page or the news watch."""
+        if last is not None and now - last >= REFRESH_EVERY:
+            self._start(season, now)
 
     def check_now(self, season: int, now: datetime) -> bool:
         """A reader asked for the latest news: check every source now, unless a check ran in the

@@ -1,3 +1,4 @@
+import time
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -348,6 +349,63 @@ def test_core_card_comes_first_and_extras_fill_in_the_rest():
 
     again = client.post("/api/player-card", json={**body, "core": True}).json()
     assert again["moves"][0]["others"][0]["name"] == "Other Guy", "known names come with the core"
+
+
+def test_card_news_leads_with_the_latest_word_and_looks_for_more():
+    # Scottie Barnes, 2026-11-15: a week-long injury is one story, and the card showed its first
+    # day ("6 days ago") under a headline from yesterday, while RotoWire's "upgraded to probable"
+    # from 20 minutes before had not been fetched: only the News page started a check.
+    store = MemoryStore()
+    app, _ = card_app(store)
+    now = app.state.now()
+    app.state.now = lambda: now
+
+    def post(n: int, title: str, ago: timedelta) -> dict:
+        return {
+            "id": f"rotowire:https://bsky.app/profile/rotowirenba.bsky.social/post/{n}",
+            "source_id": "rotowire",
+            "title": title,
+            "url": f"https://bsky.app/profile/rotowirenba.bsky.social/post/{n}",
+            "published": iso(now - ago),
+            "summary": "",
+            "player_ids": [PID],
+            "kind": "injury",
+        }
+
+    store.save_news_items(
+        [
+            post(1, "Test Center: Out for Monday", timedelta(days=5, hours=20)),
+            post(2, "Test Center: Out for Wednesday", timedelta(days=4)),
+            post(3, "Test Center: Out for Friday", timedelta(days=2, hours=6)),
+            post(4, "Test Center: Questionable for Sunday", timedelta(hours=28)),
+            post(5, "Test Center: Upgraded to probable Sunday", timedelta(minutes=20)),
+        ]
+    )
+    store.save_news_state("meta", {"refreshed_at": iso(now - timedelta(minutes=11)), "season": 2027})
+    app.state.news.transport = httpx.MockTransport(lambda _: httpx.Response(503))
+    client = signed_in(app, team_id=None)
+    body = {"league_id": LEAGUE_ID, "season": 2027, "player_id": PID}
+
+    news = client.post("/api/player-card/extras", json=body).json()["news"]
+    assert len(news) == 1, "one story, updated game by game"
+    assert news[0]["headline"] == "Test Center: Upgraded to probable Sunday"
+    assert news[0]["published_at"] == iso(now - timedelta(minutes=20)), "dated when the headline was said"
+
+    # The last check was 11 minutes ago, so opening the card started one.
+    for _ in range(100):
+        if app.state.news.last_refresh() == now:
+            break
+        time.sleep(0.02)
+    assert app.state.news.last_refresh() == now
+
+
+def test_a_card_before_any_news_check_does_not_start_one():
+    app, _ = card_app()
+    app.state.news.transport = httpx.MockTransport(lambda _: httpx.Response(503))
+    client = signed_in(app, team_id=None)
+    body = {"league_id": LEAGUE_ID, "season": 2027, "player_id": PID}
+    assert client.post("/api/player-card/extras", json=body).json()["news"] == []
+    assert app.state.news.last_refresh() is None and not app.state.news.running
 
 
 def test_player_card_unknown_player_and_sign_in():
