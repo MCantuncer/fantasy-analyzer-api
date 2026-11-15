@@ -51,7 +51,7 @@ from app.analysis.injury import analyze as analyze_absence
 from app.analysis.model import CategoryModel
 from app.analysis.offer import OfferChecker, OfferError
 from app.analysis.projection import crowded_days, project_matchup
-from app.analysis.report import Analyzer, league_summary
+from app.analysis.report import Analyzer, league_summary, next_game_line
 from app.analysis.shop import ShopAnalyzer, ShopError
 from app.analysis.target import TargetAnalyzer, TargetError
 from app.cache import TTLCache, credentials_key
@@ -3082,10 +3082,11 @@ def create_app(
         other_ids = {pid for m in card.moves for pid, _, _ in m.others}
         # A game surely over has a final play-by-play, read only once.
         finished = [g.game_id for g in shown_games(card, season) if g.over]
-        news, names, notes = await asyncio.gather(
+        news, names, notes, next_game = await asyncio.gather(
             card_news(season, body.player_id, teams),
             move_names(body.league_id, season, other_ids, creds),
             app.state.summaries.notes(finished, app.state.clock_transport),
+            card_next_game(body.league_id, season, body.player_id, creds),
         )
         timer.mark("rest")
         response.headers["Server-Timing"] = timer.header()
@@ -3093,7 +3094,25 @@ def create_app(
             news=news,
             names={pid: p.name for pid, p in names.items()},
             games={gid: game_note(n, body.player_id) for gid, n in notes.items()},
+            next_game=next_game,
         )
+
+    async def card_next_game(
+        league_id: int, season: int, player_id: int, creds: EspnCredentials | None
+    ) -> schemas.NextGameLine | None:
+        """His next game's line, as FA Targets shows it (next_game_line), for any player this league
+        knows: rostered or free agent. The analysis's league, cached, so most cards cost no new load."""
+        try:
+            league = await load_league(league_id, season, creds, with_fa=True)
+            players = [*(p for t in league.teams for p in t.roster), *league.free_agents]
+            p = next((q for q in players if q.id == player_id), None)
+            if p is None:
+                return None
+            mates = [q for q in players if q.pro_team_id == p.pro_team_id]
+            return await run_in_threadpool(lambda: next_game_line(CategoryModel(league), p, mates))
+        except Exception:  # the card still shows without it
+            logging.getLogger(__name__).exception("next game line for player %s failed", player_id)
+            return None
 
     def shown_games(card, season: int) -> list:
         """This season's games, missed ones included; last season's only until he plays one."""
