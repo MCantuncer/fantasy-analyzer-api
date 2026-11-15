@@ -84,6 +84,9 @@ class Story:
     items: list[Item]
     severity: int = 0
     conflict: str | None = None
+    # When the item the headline comes from was published: a story can run for days (an injury
+    # updated game by game), and its headline is the latest word on it, not the first.
+    headline_at: datetime | None = None
 
 
 @dataclass
@@ -286,6 +289,7 @@ def build_stories(
                 items=c.items,
                 severity=max((v[1] for v in views), default=0),
                 conflict=_conflict(views, states, pid) if kind == "injury" else None,
+                headline_at=lead.published,
             )
         )
     # Newest news first, by when the story broke: a later source confirming an old story

@@ -172,6 +172,10 @@ ANALYSIS_JOB_KEEP = 120.0
 WATCH_SECONDS = float(os.getenv("INJURY_WATCH_SECONDS", "300"))
 WATCH_WINDOW = timedelta(days=2)  # reports built (so opened) this recently are watched
 WATCH_RERUNS = 3  # reports rebuilt per sweep, newest first
+# The news watch: every couple of minutes, check the news sources if the last check is due
+# (app/news/service.py REFRESH_EVERY), so news is current even when nobody opens the News page.
+# The GitHub schedule that pings /api/news/refresh runs hours apart on busy days. 0 turns it off.
+NEWS_WATCH_SECONDS = float(os.getenv("NEWS_WATCH_SECONDS", "120"))
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
 NOT_LINKED = {"code": "not_linked", "message": "Verify your team in this league first."}
 NOT_YOUR_TEAM = {"code": "not_your_team", "message": "Only this team's verified manager can see its analysis."}
@@ -1270,15 +1274,25 @@ def create_app(
             except Exception:
                 logging.getLogger(__name__).warning("injury watch failed", exc_info=True)
 
+    async def watch_news() -> None:
+        while True:
+            await asyncio.sleep(NEWS_WATCH_SECONDS)
+            try:
+                await app.state.news.ensure_fresh(current_season(), app.state.now())
+            except Exception:
+                logging.getLogger(__name__).warning("news watch failed", exc_info=True)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         watch = asyncio.create_task(watch_injuries()) if WATCH_SECONDS > 0 else None
+        news_watch = asyncio.create_task(watch_news()) if NEWS_WATCH_SECONDS > 0 else None
         usage_flush = asyncio.create_task(flush_usage_every_minute())
         try:
             yield
         finally:
-            if watch is not None:
-                watch.cancel()
+            for task in (watch, news_watch):
+                if task is not None:
+                    task.cancel()
             usage_flush.cancel()
             with suppress(Exception):  # the last minute's counts, on a deploy or restart
                 await run_in_threadpool(app.state.usage.flush)
@@ -2987,14 +3001,26 @@ def create_app(
         return sorted((news_link(i, names, teams) for i in latest.values()), key=lambda link: link.published_at)
 
     async def card_news(season: int, player_id: int, teams: dict[int, str]) -> list[schemas.PlayerNews]:
-        # Every card reads the same news; build it once a minute, not once a card.
-        stories = app.state.card_stories.get((season,))
+        service: NewsService = app.state.news
+        # Opening a card is a reason to look for news too, so it never rests on the last time
+        # someone opened the News page. A due check runs in the background.
+        last = await run_in_threadpool(service.last_refresh)
+        service.nudge(season, app.state.now(), last)
+        # Every card reads the same news; build it once a minute, not once a card, and again as
+        # soon as a check has brought new items.
+        key = (season, last)
+        stories = app.state.card_stories.get(key)
         if stories is None:
-            service: NewsService = app.state.news
             stories = await run_in_threadpool(service.stories, teams, app.state.now())
-            app.state.card_stories.set((season,), stories)
+            app.state.card_stories.set(key, stories)
         mine = [s for s in stories if player_id in s.player_ids and s.status != "held"]
-        mine.sort(key=lambda s: s.published, reverse=True)
+
+        def said_at(s) -> datetime:
+            return s.headline_at or s.published
+
+        # His latest word first: an injury updated game by game is one story, and its newest
+        # update ("upgraded to probable") is what the card leads with, dated when it was said.
+        mine.sort(key=said_at, reverse=True)
         mine = mine[:CARD_NEWS]
         # ESPN data items read as a sentence with his name, so names only when one is there.
         facts = any(i.source_id == FACT_SOURCE for s in mine for i in s.items)
@@ -3010,7 +3036,7 @@ def create_app(
                 kind=s.kind,
                 status=s.status,
                 headline=s.headline,
-                published_at=news_iso(s.published),
+                published_at=news_iso(said_at(s)),
                 updated_at=news_iso(s.updated),
                 source="ESPN" if fact else (src.name if src else item.source_id),
                 url=f"https://www.espn.com/nba/player/_/id/{player_id}" if fact else item.url,

@@ -427,6 +427,38 @@ def test_bluesky_posts_parse_to_items_without_reposts_or_replies():
     assert items[0].published == datetime(2026, 10, 26, 8, tzinfo=UTC)
 
 
+def test_a_rotowire_post_with_only_a_link_under_its_headline_has_no_summary():
+    # RotoWire posts carry no link card: the headline, a blank line and the player's page. Shown as
+    # the summary, the bare link filled the player card (Scottie Barnes, 2026-11-15).
+    page = "https://www.rotowire.com/basketball/player/scottie-barnes-5390"
+
+    def post(n: str, text: str, at: str) -> dict:
+        return {
+            "post": {
+                "uri": f"at://did:plc:abc/app.bsky.feed.post/{n}",
+                "author": {"handle": "rotowirenba.bsky.social"},
+                "record": {"text": text, "createdAt": at},
+                "embed": None,
+            }
+        }
+
+    data = {
+        "feed": [
+            post("3b", f"Scottie Barnes: Upgraded to probable Sunday \n\n {page}", "2026-11-15T13:43:11-08:00"),
+            post("3a", f"Scottie Barnes: Questionable for Sunday \n\n {page}", "2026-11-14T09:33:42-08:00"),
+            post("3c", f"Kris Dunn: Out against Detroit\nDunn will miss a second game. {page}", "2026-11-14T08:00:00Z"),
+        ]
+    }
+    items = parse_bluesky("rotowire", data)
+    assert [i.title for i in items] == [
+        "Scottie Barnes: Upgraded to probable Sunday",
+        "Scottie Barnes: Questionable for Sunday",
+        "Kris Dunn: Out against Detroit",
+    ]
+    assert [i.summary for i in items] == ["", "", "Dunn will miss a second game."]
+    assert len({i.id for i in items}) == 3, "each post is its own item, though all link the same page"
+
+
 # -- one event, one story: real headline shapes from a live run of every feed (2026-11-03)
 
 

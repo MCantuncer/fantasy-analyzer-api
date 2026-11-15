@@ -1,7 +1,7 @@
 name: News refresh
 
 # The free Render server sleeps when idle. Asking for news every 30 minutes wakes it,
-# and the API then checks every news source if its last check is over 15 minutes old.
+# and the API then checks every news source if its last check is over 10 minutes old.
 on:
   schedule:
     - cron: "*/30 * * * *"
