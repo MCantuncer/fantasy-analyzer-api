@@ -58,6 +58,8 @@ MIN_PRIOR_GAMES = 10  # last season counts as a prior only with this many games
 PROVEN_GAMES = 41
 PROVEN_SEASONS = 3
 PROVEN_SLOWDOWN = 2.0
+# ESPN's split ids for a player's averages over his games in the last 7 and last 15 days.
+LAST_7_DAYS, LAST_15_DAYS = 1, 2
 # Minutes drive a player's counting stats, and ESPN's projection gets them wrong in a set way:
 # it expects players to bounce back to an old role. Players it projected for 3+ more minutes
 # than they played the season before got 83-88% of those minutes. So the prior's minutes are
@@ -126,6 +128,9 @@ class Player:
     # expected back (analysis/teammates.py). ``per_game`` already holds the rest-of-season average.
     minute_shifts: tuple[tuple[float, int], ...] = ()
     age: float | None = None  # at the season's midpoint (espn/ages.py), None when unknown
+    # Minutes a game over his games in ESPN's last 7 and last 15 days (None: no game in that window).
+    # This week's projection leans on them (CategoryModel.horizon_row, RECENT_MINUTES_WEIGHTS).
+    recent_minutes: tuple[float | None, float | None] = (None, None)
 
     @property
     def available(self) -> bool:
@@ -358,6 +363,19 @@ def _season_line(player: dict, season: int) -> dict[int, float]:
     return {}
 
 
+def _recent_minutes(player: dict, season: int) -> tuple[float | None, float | None]:
+    """Minutes a game over his games in the last 7 and the last 15 days, None for a window he didn't play in."""
+    found: dict[int, float] = {}
+    for s in player.get("stats", []):
+        split = s.get("statSplitTypeId")
+        if s.get("seasonId") != season or s.get("statSourceId") != 0 or split not in (LAST_7_DAYS, LAST_15_DAYS):
+            continue
+        avg = s.get("averageStats") or {}
+        if float(avg.get(str(GAMES_PLAYED)) or 0) > 0 and str(MINUTES) in avg:
+            found[split] = float(avg[str(MINUTES)])
+    return found.get(LAST_7_DAYS), found.get(LAST_15_DAYS)
+
+
 def _draft_rank(p: dict) -> tuple[int | None, float]:
     ranks = p.get("draftRanksByRankType") or {}
     r = ranks.get("ROTO") or ranks.get("STANDARD") or {}
@@ -412,6 +430,7 @@ def parse_player(
         acquired_ms=int(acq["acquisitionDate"]) if acq.get("acquisitionDate") else None,
         waiver_ms=int(entry["waiverProcessDate"]) if entry.get("waiverProcessDate") else None,
         age=age,
+        recent_minutes=_recent_minutes(p, season),
     )
 
 
