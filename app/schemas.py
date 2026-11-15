@@ -58,6 +58,29 @@ class PlayerBadge(BaseModel):
     reason: str
 
 
+class NextGameLine(BaseModel):
+    """His line for his next game: the per-game line this week's odds count (projection, his last 7
+    and 15 days of minutes, minutes a teammate's absence gives him), with points, rebounds, blocks and
+    turnovers set to the level players reach (report.NEXT_GAME_LEVEL). Matchup context (his past games
+    against the opponent or its type of center, opponent strength, former team, streaks) was tested on
+    five seasons and moved a game's miss by under 0.1% beyond who he is (scripts/next_game_backtest.py)."""
+
+    minutes: float
+    pts: float
+    reb: float
+    ast: float
+    stl: float
+    blk: float
+    three_pm: float
+    to: float
+    fgm: float
+    fga: float
+    ftm: float
+    fta: float
+    fg_pct: float | None = Field(default=None, description="FGM / FGA; none without attempts")
+    ft_pct: float | None = Field(default=None, description="FTM / FTA; none without attempts")
+
+
 class HotRun(BaseModel):
     """What a hot run over his last 15 days was made of, and how much of it tends to last (analysis/form.py)."""
 
@@ -124,6 +147,7 @@ class PlayerRef(BaseModel):
         default=None, description="Listed out: the news headline games_out rests on, when it reported a timeline"
     )
     hot_run: HotRun | None = Field(default=None, description="Set when his last 15 days run well above his usual")
+    next_game: NextGameLine | None = Field(default=None, description="His line for his next game; none while he is out")
 
 
 class CategoryOutlook(BaseModel):

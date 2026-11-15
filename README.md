@@ -63,6 +63,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 📝 | **Trade feedback and rules:** rate a trade idea and have it checked against today's league; your own rules hide ideas that break them | `/api/trade-feedback`, `/api/trade-check`, `/api/trade-rules` |
 | 📈 | **Usage numbers:** daily visitors, page views and sign-ups, with no cookies or ids: a visitor is a hash under a salt that is deleted each day | `/api/usage` |
 | 🔥 | **Straw fire or bigger role:** a player on a hot run over his last 15 days gets what it was made of (more minutes, more shots per minute, hot shooting) and how much of it tends to last, checked on five seasons | `/api/analyze`, `/api/player-card` |
+| 🎯 | **Next game:** every player's line for his next game (minutes, points, rebounds, assists, steals, blocks, threes, turnovers, FG% and FT%), the line this week's odds count, set to the level players reach; matchup context was tested on five seasons and left out | `/api/analyze` |
 | 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |
 | 💬 | **Moves feed and league chat:** transactions, posts, replies and reactions | `/api/feed`, `/api/posts` |
 | 🔐 | **Accounts and verified managers:** email or Google sign-in, password reset by email, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
@@ -402,6 +403,21 @@ uv run python -m scripts.hot_run_backtest
 | 2025-26 | 54% | 19% | 18% |
 
 Over all five: 51%, 19% and 17% (`KEEP`). Of runs 2.5 or more above a player's usual, those where minutes were half the gap or more ("bigger role") were still 50% above his usual over the next 10 games, those where minutes were a quarter or less ("straw fire") 27%. The projection already discounts a run this way (this season counts in proportion to games played), so the check explains a run and never changes a value.
+
+### Next-game backtest
+
+Checks what a player's next-game line (`PlayerRef.next_game`) could add from the game's context. Before each of his games in five seasons his line is the one the app builds (projection blend plus his last 7 and 15 days of minutes), and its miss in each category is fitted on each signal, one season left out at a time:
+
+```sh
+uv run python -m scripts.next_game_backtest
+```
+
+- **Matchups:** his past games against the same opponent, and against opponents whose lead big is of the same type (four types, from rebounds, blocks, threes, steals, assists and free throws per 36), seem to help points, rebounds and assists. Once his own average miss over all his earlier games is known they add nothing (-0.3% to +0.4% of the squared miss for stars, about 0 for everyone): what looked like a matchup was who he is. Luka Doncic's points against the Suns: +15, -1 and +6 over his line in 2023-24, then -2, +2, +5, -5 and +9 over the next two seasons.
+- **Former team, his team's last result or win%, opponent pace:** nothing in every season.
+- **Opponent win%:** lowers the miss in every season for points, rebounds, assists, steals, blocks and FG%, by 0.02% to 0.4%; a game's mean miss in points goes from 4.942 to 4.939. Not used.
+- **The line's level:** what players did ran 3% under the line in points (0.966 to 0.971 fitted one season left out at a time) and rebounds (0.961 to 0.967), 9% in blocks and 5% in turnovers, on the same minutes, in every season. The next-game line uses these (`NEXT_GAME_LEVEL`): a game's mean miss in points goes from 4.94 to 4.91, and for stars (22+ points) the squared miss drops 1.2% to 2.1%.
+
+A single game is mostly noise: a player's points miss his line by about 5 on average, whatever is known before tip-off.
 
 ### Vision-trade backtest
 

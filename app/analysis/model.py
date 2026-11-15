@@ -150,22 +150,31 @@ class CategoryModel:
         key = (p.id, horizon)
         cached = self._horizon_rows.get(key)
         if cached is None:
-            extra = 0.0
-            if p.minute_shifts:
-                # The measured gain already holds what his recent minutes would add.
-                games = self.cal.team_days.get(p.pro_team_id, frozenset())
-                here = [d for d in self.horizon[horizon][0] if d in games]
-                season = [d for d in self.horizon["season"][0] if d in games] if "season" in self.horizon else here
-                for change, back in p.minute_shifts:
-                    share_here = sum(d < back for d in here) / len(here) if here else 0.0
-                    share_season = sum(d < back for d in season) / len(season) if season else 0.0
-                    extra += change * (share_here - share_season)
-            else:
-                extra = recent_shift(p)
-            minutes = p.per_game.get(MINUTES, 0.0)
-            line = with_minutes(p.per_game, min(max(minutes + extra, 0.0), MAX_MINUTES)) if minutes > 0 else p.per_game
-            cached = self._horizon_rows[key] = self._row_of(line)
+            cached = self._horizon_rows[key] = self._row_of(self.horizon_line(p, horizon))
         return cached
+
+    def horizon_line(self, p: Player, horizon: object) -> dict[int, float]:
+        """His per-game line over one horizon, as ``horizon_row`` counts it: the minutes a teammate's
+        absence gives him there, or in the week under way the minutes his last few weeks point to."""
+        if horizon == "season" or not self.cal or horizon not in self.horizon:
+            return p.per_game
+        this_week = horizon == self.league.current_period
+        if not p.minute_shifts and not (this_week and any(m is not None for m in p.recent_minutes)):
+            return p.per_game
+        extra = 0.0
+        if p.minute_shifts:
+            # The measured gain already holds what his recent minutes would add.
+            games = self.cal.team_days.get(p.pro_team_id, frozenset())
+            here = [d for d in self.horizon[horizon][0] if d in games]
+            season = [d for d in self.horizon["season"][0] if d in games] if "season" in self.horizon else here
+            for change, back in p.minute_shifts:
+                share_here = sum(d < back for d in here) / len(here) if here else 0.0
+                share_season = sum(d < back for d in season) / len(season) if season else 0.0
+                extra += change * (share_here - share_season)
+        else:
+            extra = recent_shift(p)
+        minutes = p.per_game.get(MINUTES, 0.0)
+        return with_minutes(p.per_game, min(max(minutes + extra, 0.0), MAX_MINUTES)) if minutes > 0 else p.per_game
 
     def _row_of(self, per_game: dict[int, float]) -> np.ndarray:
         r = np.zeros((3, len(self.cats)))

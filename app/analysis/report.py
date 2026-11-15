@@ -12,9 +12,10 @@ from decimal import ROUND_HALF_UP, Decimal
 import numpy as np
 
 from app import schemas
+from app.analysis.absence import is_out
 from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.durability import injury_prone
-from app.analysis.form import hot_run_ref
+from app.analysis.form import AST, BLK, FGA, FGM, FTA, FTM, MINUTES, PTS, REB, STL, TO, TPM, hot_run_ref
 from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.projection import CLOSE
@@ -174,6 +175,13 @@ def one_at_a_time(progress: Progress | None, waiting: str, at: float) -> Iterato
         REPORT_LOCK.release()
 
 
+# What a player did in a game, over the line, for the stats where that held in each of five seasons
+# (scripts/next_game_backtest.py: points 0.966-0.971 fitted one season left out at a time, rebounds
+# 0.961-0.967, blocks 0.903-0.921, turnovers 0.941-0.951). Minutes match the line, so it's per minute.
+# Only the next-game line shows it; values and odds compare players with each other, where it cancels.
+NEXT_GAME_LEVEL = {PTS: 0.968, REB: 0.963, BLK: 0.913, TO: 0.947}
+
+
 class Analyzer:
     def __init__(
         self,
@@ -230,6 +238,36 @@ class Analyzer:
             expected_back=self.model.back_date(p),
             out_report=p.out_report,
             hot_run=hot_run_ref(p.hot_run),
+            next_game=self.next_game(p),
+        )
+
+    def next_game(self, p: Player) -> schemas.NextGameLine | None:
+        """His next game's line: the this-week line the odds count (CategoryModel.horizon_line)."""
+        if is_out(p):
+            return None
+        line = self.model.horizon_line(p, self.league.current_period)
+        if line.get(MINUTES, 0.0) <= 0:
+            return None
+
+        def g(stat: int) -> float:
+            return round(max(line.get(stat, 0.0) * NEXT_GAME_LEVEL.get(stat, 1.0), 0.0), 1)
+
+        fga, fta = line.get(FGA, 0.0), line.get(FTA, 0.0)
+        return schemas.NextGameLine(
+            minutes=g(MINUTES),
+            pts=g(PTS),
+            reb=g(REB),
+            ast=g(AST),
+            stl=g(STL),
+            blk=g(BLK),
+            three_pm=g(TPM),
+            to=g(TO),
+            fgm=g(FGM),
+            fga=g(FGA),
+            ftm=g(FTM),
+            fta=g(FTA),
+            fg_pct=round(line.get(FGM, 0.0) / fga, 3) if fga > 0 else None,
+            ft_pct=round(line.get(FTM, 0.0) / fta, 3) if fta > 0 else None,
         )
 
     def _tick(self, span: tuple[str, float, float] | None, done: int, total: int) -> None:
