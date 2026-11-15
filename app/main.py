@@ -59,6 +59,7 @@ from app.espn.parse import League, parse_calendar, parse_league, proven_players
 from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.gameclock import apply_clocks, apply_on_court, fetch_clocks, fetch_on_court
+from app.garbagetime import SummaryBook
 from app.lineup import next_game, open_slots, parse_lineup, slot_name, team_days, week_of
 from app.mail import Mailer, create_mailer, reset_email, site_url
 from app.memory import give_back_after, limit_arenas
@@ -330,6 +331,7 @@ def create_app(
     app.state.lineups = TTLCache(LINEUP_TTL)
     app.state.past_lineups = TTLCache(PAST_LINEUP_TTL)
     app.state.clock_transport = clock_transport
+    app.state.summaries = SummaryBook()  # finished games' play-by-play notes, read once
     app.state.settled_days = TTLCache(7 * 24 * 3600, max_items=512)
     app.state.score_locks = defaultdict(asyncio.Lock)
     # Finished weeks never change: (league, season, period) -> recap, backed by the store.
@@ -3042,7 +3044,8 @@ def create_app(
         x_espn_s2: str | None = Header(default=None),
         x_espn_swid: str | None = Header(default=None),
     ) -> schemas.PlayerCardExtras:
-        """The part of a player card that may take longer: his news, and the names of who moved with him."""
+        """The part of a player card that may take longer: his news, the names of who moved with him, and
+        each finished game's final score and garbage-time line."""
         await current_user(authorization)
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
@@ -3050,12 +3053,34 @@ def create_app(
         card, teams = await load_card(body.league_id, season, body.player_id, creds)
         timer.mark("espn")
         other_ids = {pid for m in card.moves for pid, _, _ in m.others}
-        news, names = await asyncio.gather(
-            card_news(season, body.player_id, teams), move_names(body.league_id, season, other_ids, creds)
+        # A game surely over has a final play-by-play, read only once.
+        finished = [g.game_id for g in shown_games(card, season) if g.over]
+        news, names, notes = await asyncio.gather(
+            card_news(season, body.player_id, teams),
+            move_names(body.league_id, season, other_ids, creds),
+            app.state.summaries.notes(finished, app.state.clock_transport),
         )
         timer.mark("rest")
         response.headers["Server-Timing"] = timer.header()
-        return schemas.PlayerCardExtras(news=news, names={pid: p.name for pid, p in names.items()})
+        return schemas.PlayerCardExtras(
+            news=news,
+            names={pid: p.name for pid, p in names.items()},
+            games={gid: game_note(n, body.player_id) for gid, n in notes.items()},
+        )
+
+    def shown_games(card, season: int) -> list:
+        """This season's games, missed ones included; last season's only until he plays one."""
+        this = [g for g in card.games if g.season == season]
+        last = [g for g in card.games if g.season == season - 1]
+        return this if any(g.played for g in this) or not any(g.played for g in last) else last
+
+    def game_note(notes, player_id: int) -> schemas.GameNote:
+        sc = notes.score_for(player_id)
+        line = notes.garbage.get(player_id)
+        return schemas.GameNote(
+            score=schemas.GameScore(team=sc[0], opp=sc[1]) if sc else None,
+            garbage=schemas.GameStats(**line) if line is not None else None,
+        )
 
     @app.post(
         "/api/player-card",
@@ -3077,10 +3102,7 @@ def create_app(
         card, teams = await load_card(body.league_id, season, body.player_id, creds)
         timer.mark("espn")
 
-        # This season's games, missed ones included; last season's only until he plays one.
-        this = [g for g in card.games if g.season == season]
-        last = [g for g in card.games if g.season == season - 1]
-        games = this if any(g.played for g in this) or not any(g.played for g in last) else last
+        games = shown_games(card, season)
         other_ids = {pid for m in card.moves for pid, _, _ in m.others}
         if body.core:
             # The card shows now; news and any names not yet known come from /extras alongside.

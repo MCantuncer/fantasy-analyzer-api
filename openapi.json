@@ -559,6 +559,126 @@
         }
       }
     },
+    "/api/auth/forgot": {
+      "post": {
+        "summary": "Forgot Password",
+        "description": "Emails a reset link when the address has an account. The answer is the same either way,\nso the form can't be used to find out who has an account.",
+        "operationId": "forgot_password_api_auth_forgot_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Forgot Password Api Auth Forgot Post"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/reset": {
+      "post": {
+        "summary": "Reset Password",
+        "description": "Sets a new password from an emailed link, signs out every device, and signs in here.",
+        "operationId": "reset_password_api_auth_reset_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/google": {
       "post": {
         "summary": "Google",
@@ -3704,7 +3824,7 @@
     "/api/player-card/extras": {
       "post": {
         "summary": "Player Card Extras",
-        "description": "The part of a player card that may take longer: his news, and the names of who moved with him.",
+        "description": "The part of a player card that may take longer: his news, the names of who moved with him, and\neach finished game's final score and garbage-time line.",
         "operationId": "player_card_extras_api_player_card_extras_post",
         "parameters": [
           {
@@ -4645,6 +4765,12 @@
             ],
             "title": "Google Client Id",
             "description": "Set when Google sign-in is turned on"
+          },
+          "password_reset": {
+            "type": "boolean",
+            "title": "Password Reset",
+            "description": "True when reset links can be emailed",
+            "default": false
           }
         },
         "type": "object",
@@ -5734,6 +5860,22 @@
         ],
         "title": "FixturePlayer"
       },
+      "ForgotPasswordRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 254,
+            "minLength": 3,
+            "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "ForgotPasswordRequest"
+      },
       "Game": {
         "properties": {
           "id": {
@@ -5904,6 +6046,55 @@
           "fta"
         ],
         "title": "GameLine"
+      },
+      "GameNote": {
+        "properties": {
+          "score": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GameScore"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Final score, his team first"
+          },
+          "garbage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GameStats"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "His line in garbage time (4th quarter, lead of 25+ with 12-9 min left, 20+ with 9-6, 10+ under 6, two or fewer starters on the floor); all zeros when he had none; none when his line couldn't be rebuilt from the plays exactly"
+          }
+        },
+        "type": "object",
+        "title": "GameNote",
+        "description": "What ESPN's play-by-play adds to one finished game of his."
+      },
+      "GameScore": {
+        "properties": {
+          "team": {
+            "type": "integer",
+            "title": "Team",
+            "description": "His team's final score"
+          },
+          "opp": {
+            "type": "integer",
+            "title": "Opp",
+            "description": "The other team's final score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team",
+          "opp"
+        ],
+        "title": "GameScore"
       },
       "GameSide": {
         "properties": {
@@ -8363,6 +8554,14 @@
             "type": "object",
             "title": "Names",
             "description": "Names of the other players in his moves, by player id"
+          },
+          "games": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/GameNote"
+            },
+            "type": "object",
+            "title": "Games",
+            "description": "Final score and garbage-time line of his finished games, by game id"
           }
         },
         "type": "object",
@@ -9969,6 +10168,29 @@
         ],
         "title": "ReportChange",
         "description": "Something that moved in the league since a saved report was built."
+      },
+      "ResetPasswordRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 20,
+            "title": "Token",
+            "description": "The token from the emailed reset link"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 8,
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "password"
+        ],
+        "title": "ResetPasswordRequest"
       },
       "ResolveErrorRequest": {
         "properties": {
