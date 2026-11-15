@@ -1387,6 +1387,11 @@ class PlayerCardExtras(BaseModel):
     games: dict[int, GameNote] = Field(
         default_factory=dict, description="Final score and garbage-time line of his finished games, by game id"
     )
+    next_game: NextGameLine | None = Field(
+        default=None,
+        description="His line for his next game, as FA Targets shows it; none while he is out or when this "
+        "league doesn't list him",
+    )
 
 
 FeedbackRating = Literal["bad", "good"]

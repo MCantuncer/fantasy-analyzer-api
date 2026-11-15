@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -184,6 +184,44 @@ def one_at_a_time(progress: Progress | None, waiting: str, at: float) -> Iterato
 NEXT_GAME_LEVEL = {PTS: 0.968, REB: 0.963, BLK: 0.913, TO: 0.947}
 
 
+def next_game_line(model: CategoryModel, p: Player, teammates: Iterable[Player]) -> schemas.NextGameLine | None:
+    """His next game's line: the this-week line the odds count (CategoryModel.horizon_line), plus
+    the minutes teammates ruled out of it leave him (tonight.py), at the level his games land
+    (NEXT_GAME_LEVEL). ``teammates`` are the players of his NBA team this league knows; none while
+    he is out."""
+    if is_out(p):
+        return None
+    line = model.horizon_line(p, model.league.current_period)
+    minutes = line.get(MINUTES, 0.0)
+    if minutes <= 0:
+        return None
+    if not p.minute_shifts:  # a measured gain from teammates.py already holds an absence
+        extra = minutes_gained(p, teammates)
+        if extra:
+            line = with_minutes(line, min(minutes + extra, MAX_MINUTES))
+
+    def g(stat: int) -> float:
+        return round(max(line.get(stat, 0.0) * NEXT_GAME_LEVEL.get(stat, 1.0), 0.0), 1)
+
+    fga, fta = line.get(FGA, 0.0), line.get(FTA, 0.0)
+    return schemas.NextGameLine(
+        minutes=g(MINUTES),
+        pts=g(PTS),
+        reb=g(REB),
+        ast=g(AST),
+        stl=g(STL),
+        blk=g(BLK),
+        three_pm=g(TPM),
+        to=g(TO),
+        fgm=g(FGM),
+        fga=g(FGA),
+        ftm=g(FTM),
+        fta=g(FTA),
+        fg_pct=round(line.get(FGM, 0.0) / fga, 3) if fga > 0 else None,
+        ft_pct=round(line.get(FTM, 0.0) / fta, 3) if fta > 0 else None,
+    )
+
+
 class Analyzer:
     def __init__(
         self,
@@ -253,39 +291,8 @@ class Analyzer:
         return self._pro_teams
 
     def next_game(self, p: Player) -> schemas.NextGameLine | None:
-        """His next game's line: the this-week line the odds count (CategoryModel.horizon_line), plus
-        the minutes teammates ruled out of it leave him (tonight.py)."""
-        if is_out(p):
-            return None
-        line = self.model.horizon_line(p, self.league.current_period)
-        minutes = line.get(MINUTES, 0.0)
-        if minutes <= 0:
-            return None
-        if not p.minute_shifts:  # a measured gain from teammates.py already holds an absence
-            extra = minutes_gained(p, self._by_pro_team().get(p.pro_team_id, ()))
-            if extra:
-                line = with_minutes(line, min(minutes + extra, MAX_MINUTES))
-
-        def g(stat: int) -> float:
-            return round(max(line.get(stat, 0.0) * NEXT_GAME_LEVEL.get(stat, 1.0), 0.0), 1)
-
-        fga, fta = line.get(FGA, 0.0), line.get(FTA, 0.0)
-        return schemas.NextGameLine(
-            minutes=g(MINUTES),
-            pts=g(PTS),
-            reb=g(REB),
-            ast=g(AST),
-            stl=g(STL),
-            blk=g(BLK),
-            three_pm=g(TPM),
-            to=g(TO),
-            fgm=g(FGM),
-            fga=g(FGA),
-            ftm=g(FTM),
-            fta=g(FTA),
-            fg_pct=round(line.get(FGM, 0.0) / fga, 3) if fga > 0 else None,
-            ft_pct=round(line.get(FTM, 0.0) / fta, 3) if fta > 0 else None,
-        )
+        """His next game's line (next_game_line), with his NBA teammates from this league's players."""
+        return next_game_line(self.model, p, self._by_pro_team().get(p.pro_team_id, ()))
 
     def _tick(self, span: tuple[str, float, float] | None, done: int, total: int) -> None:
         """Report how far through ``span`` the work is, for callers showing a progress bar."""

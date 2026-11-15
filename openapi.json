@@ -8808,6 +8808,17 @@
             "type": "object",
             "title": "Games",
             "description": "Final score and garbage-time line of his finished games, by game id"
+          },
+          "next_game": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NextGameLine"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "His line for his next game, as FA Targets shows it; none while he is out or when this league doesn't list him"
           }
         },
         "type": "object",
