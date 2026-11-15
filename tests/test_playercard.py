@@ -11,6 +11,7 @@ from app.playercard import parse_card, parse_moves
 from app.scores import parse_schedule
 from app.store import MemoryStore
 from tests.conftest import LEAGUE_ID, signed_in
+from tests.test_garbagetime import summary
 
 PID = 7001
 NYK, BOS = 18, 2
@@ -235,8 +236,26 @@ def card_app(store=None, private: bool = False):
             return httpx.Response(200, json={"players": [{"id": 99, "player": {"id": 99, "fullName": "Other Guy"}}]})
         return httpx.Response(404, json={})
 
+    def site(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.url.params.get("event") == "14":
+            raw = summary()
+            for team in raw["boxscore"]["players"]:
+                for a in team["statistics"][0]["athletes"]:
+                    if a["athlete"]["id"] == "16":
+                        a["athlete"]["id"] = str(PID)
+            for p in raw["plays"]:
+                for who in p["participants"]:
+                    if who["athlete"]["id"] == "16":
+                        who["athlete"]["id"] = str(PID)
+            return httpx.Response(200, json=raw)
+        return httpx.Response(404, json={})
+
     app = create_app(
-        EspnClient(transport=httpx.MockTransport(espn)), store=store or MemoryStore(), accounts=MemoryAccountStore()
+        EspnClient(transport=httpx.MockTransport(espn)),
+        store=store or MemoryStore(),
+        accounts=MemoryAccountStore(),
+        clock_transport=httpx.MockTransport(site),
     )
     return app, calls
 
@@ -318,6 +337,14 @@ def test_core_card_comes_first_and_extras_fill_in_the_rest():
     assert story["summary"] == "" and story["conflict"] is None
     assert extras.json()["names"] == {"99": "Other Guy"}
     assert not [c for c in calls[n:] if c.url.params.get("view") == "kona_playercard"], "shares the core's ESPN call"
+    notes = extras.json()["games"]
+    assert notes["14"]["score"] == {"team": 28, "opp": 0}
+    assert notes["14"]["garbage"]["pts"] == 3 and notes["14"]["garbage"]["minutes"] == 6
+    asked = {c.url.params.get("event") for c in calls[n:] if c.url.params.get("event")}
+    assert "14" in asked and not asked - {"11", "13", "14"}, "only his finished games"
+    n = len(calls)
+    client.post("/api/player-card/extras", json=body)
+    assert "14" not in {c.url.params.get("event") for c in calls[n:]}, "a finished game is read once"
 
     again = client.post("/api/player-card", json={**body, "core": True}).json()
     assert again["moves"][0]["others"][0]["name"] == "Other Guy", "known names come with the core"

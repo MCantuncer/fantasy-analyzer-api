@@ -1311,11 +1311,31 @@ class PlayerCard(BaseModel):
     moves: list[PlayerMove] = Field(description="Every move of him in this league this season, newest first")
 
 
+class GameScore(BaseModel):
+    team: int = Field(description="His team's final score")
+    opp: int = Field(description="The other team's final score")
+
+
+class GameNote(BaseModel):
+    """What ESPN's play-by-play adds to one finished game of his."""
+
+    score: GameScore | None = Field(default=None, description="Final score, his team first")
+    garbage: GameStats | None = Field(
+        default=None,
+        description="His line in garbage time (4th quarter, lead of 25+ with 12-9 min left, 20+ with 9-6, "
+        "10+ under 6, two or fewer starters on the floor); all zeros when he had none; none when his line "
+        "couldn't be rebuilt from the plays exactly",
+    )
+
+
 class PlayerCardExtras(BaseModel):
     """The slower part of a player card, loaded while the core shows."""
 
     news: list[PlayerNews] = Field(description="Recent stories about him, newest first")
     names: dict[int, str] = Field(description="Names of the other players in his moves, by player id")
+    games: dict[int, GameNote] = Field(
+        default_factory=dict, description="Final score and garbage-time line of his finished games, by game id"
+    )
 
 
 FeedbackRating = Literal["bad", "good"]

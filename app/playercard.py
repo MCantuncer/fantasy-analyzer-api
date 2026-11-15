@@ -55,6 +55,7 @@ class GameRow:
     won: bool | None = None  # his team's result; None while the game may still be going, or unknown
     played: bool = True  # False: his team played and he sat out
     missed_reason: str | None = None  # why he sat out, when ESPN says ("Ankle", "Suspended"); None otherwise
+    over: bool = False  # surely over (stats official or long since tip-off), so its play-by-play is final
 
 
 @dataclass
@@ -162,7 +163,8 @@ def parse_card(entry: dict, season: int, schedules: dict[int, Schedule], now: da
             row_season = int(st.get("seasonId") or season)
             game = by_game.get(gid)
             played = stats["minutes"] > 0
-            if not played and not _over(game, row_season < season, now):
+            over = _over(game, row_season < season, now)
+            if not played and not over:
                 continue
             if not played:
                 stats = dict.fromkeys(stats, 0.0)  # an empty line, but never half a line
@@ -183,6 +185,7 @@ def parse_card(entry: dict, season: int, schedules: dict[int, Schedule], now: da
                     stats=stats,
                     won=_won(raw, game, row_season < season, now),
                     played=played,
+                    over=over,
                 )
             )
         elif split == SEASON_SPLIT and st.get("seasonId") == season:
