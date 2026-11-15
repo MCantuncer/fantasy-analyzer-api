@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
+from itertools import chain
 
 import numpy as np
 
@@ -22,8 +23,9 @@ from app.analysis.projection import CLOSE
 from app.analysis.sim import EACH_CATEGORY, SeasonResult, SeasonSim, simulate_season
 from app.analysis.tiers import droppable, has_market, tier
 from app.analysis.timing import MatchupTiming, Timing
+from app.analysis.tonight import MAX_MINUTES, minutes_gained
 from app.analysis.trades import SCREEN_MIN_THEIR_GAIN, Deal, Mode, TradeFinder, acceptance_label, mix_shapes
-from app.espn.parse import PRO_TEAM_ABBREV, League, Player, Team
+from app.espn.parse import PRO_TEAM_ABBREV, League, Player, Team, with_minutes
 
 WHAT_IF_SIMS = 4000  # what-if gains are paired differences: ~0.5 point noise at 4000, ~1 at 2000
 # What the report shows is re-run on more seasons: ~0.3 point noise. A trade that passed its checks on
@@ -193,6 +195,7 @@ class Analyzer:
         now: datetime | None = None,
     ):
         self.league = league
+        self._pro_teams: dict[int, list[Player]] | None = None
         self.now = now or datetime.now(UTC)
         self.progress = progress
         self.model = CategoryModel(league)
@@ -241,13 +244,27 @@ class Analyzer:
             next_game=self.next_game(p),
         )
 
+    def _by_pro_team(self) -> dict[int, list[Player]]:
+        """Every player in the league's pool (rosters and free agents) by NBA team."""
+        if self._pro_teams is None:
+            self._pro_teams = {}
+            for q in chain((q for t in self.league.teams for q in t.roster), self.league.free_agents):
+                self._pro_teams.setdefault(q.pro_team_id, []).append(q)
+        return self._pro_teams
+
     def next_game(self, p: Player) -> schemas.NextGameLine | None:
-        """His next game's line: the this-week line the odds count (CategoryModel.horizon_line)."""
+        """His next game's line: the this-week line the odds count (CategoryModel.horizon_line), plus
+        the minutes teammates ruled out of it leave him (tonight.py)."""
         if is_out(p):
             return None
         line = self.model.horizon_line(p, self.league.current_period)
-        if line.get(MINUTES, 0.0) <= 0:
+        minutes = line.get(MINUTES, 0.0)
+        if minutes <= 0:
             return None
+        if not p.minute_shifts:  # a measured gain from teammates.py already holds an absence
+            extra = minutes_gained(p, self._by_pro_team().get(p.pro_team_id, ()))
+            if extra:
+                line = with_minutes(line, min(minutes + extra, MAX_MINUTES))
 
         def g(stat: int) -> float:
             return round(max(line.get(stat, 0.0) * NEXT_GAME_LEVEL.get(stat, 1.0), 0.0), 1)
