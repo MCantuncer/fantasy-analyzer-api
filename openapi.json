@@ -7837,6 +7837,99 @@
         ],
         "title": "NextGame"
       },
+      "NextGameLine": {
+        "properties": {
+          "minutes": {
+            "type": "number",
+            "title": "Minutes"
+          },
+          "pts": {
+            "type": "number",
+            "title": "Pts"
+          },
+          "reb": {
+            "type": "number",
+            "title": "Reb"
+          },
+          "ast": {
+            "type": "number",
+            "title": "Ast"
+          },
+          "stl": {
+            "type": "number",
+            "title": "Stl"
+          },
+          "blk": {
+            "type": "number",
+            "title": "Blk"
+          },
+          "three_pm": {
+            "type": "number",
+            "title": "Three Pm"
+          },
+          "to": {
+            "type": "number",
+            "title": "To"
+          },
+          "fgm": {
+            "type": "number",
+            "title": "Fgm"
+          },
+          "fga": {
+            "type": "number",
+            "title": "Fga"
+          },
+          "ftm": {
+            "type": "number",
+            "title": "Ftm"
+          },
+          "fta": {
+            "type": "number",
+            "title": "Fta"
+          },
+          "fg_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fg Pct",
+            "description": "FGM / FGA; none without attempts"
+          },
+          "ft_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ft Pct",
+            "description": "FTM / FTA; none without attempts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "minutes",
+          "pts",
+          "reb",
+          "ast",
+          "stl",
+          "blk",
+          "three_pm",
+          "to",
+          "fgm",
+          "fga",
+          "ftm",
+          "fta"
+        ],
+        "title": "NextGameLine",
+        "description": "His line for his next game: the per-game line this week's odds count (projection, his last 7\nand 15 days of minutes, minutes a teammate's absence gives him), with points, rebounds, blocks and\nturnovers set to the level players reach (report.NEXT_GAME_LEVEL). Matchup context (his past games\nagainst the opponent or its type of center, opponent strength, former team, streaks) was tested on\nfive seasons and moved a game's miss by under 0.1% beyond who he is (scripts/next_game_backtest.py)."
+      },
       "NoteRead": {
         "properties": {
           "kind": {
@@ -9195,6 +9288,17 @@
               }
             ],
             "description": "Set when his last 15 days run well above his usual"
+          },
+          "next_game": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NextGameLine"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "His line for his next game; none while he is out"
           }
         },
         "type": "object",
