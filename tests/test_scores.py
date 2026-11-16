@@ -488,3 +488,32 @@ def test_next_game_and_week_days(schedule_raw):
     assert week == [1, 2, 3, 4, 5, 6]
     assert team_days(sched, HOU, week) == [4, 5]
     assert week_of(sched, 7) == list(range(7, 14))  # Mon 26 Oct to Sun 1 Nov
+
+
+def test_nba_team_endpoint(recorded, schedule_raw, day4_players):
+    client, fake, store = scores_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
+    r = client.post("/api/nba-team", json={"league_id": LEAGUE_ID, "season": 2027, "team": "hou"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["abbrev"] == "HOU" and body["name"].endswith("Rockets")
+    # The fixture has player lines for day 4 only: that's the one game with a score.
+    assert body["wins"] + body["losses"] == len(body["latest"]) == 1
+    game = body["latest"][0]
+    assert game["date"] == "2026-10-23" and game["won"] == (game["points"] > game["opponent_points"])
+    assert game["top"]["pts"] > 0
+    assert body["next_game"] is not None and body["next_game"]["start"] > "2026-10-24"
+    assert store.get_day(2027, 4) is not None
+
+    calls = fake.stat_calls
+    client.app.state.settled_days.clear()
+    assert client.post("/api/nba-team", json={"league_id": LEAGUE_ID, "season": 2027, "team": "HOU"}).json() == body
+    assert fake.stat_calls == calls  # finished days come from the store
+
+    r = client.post("/api/nba-team", json={"league_id": LEAGUE_ID, "season": 2027, "team": "XYZ"})
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "no_team"
+
+
+def test_nba_team_before_tonights_games(recorded, schedule_raw, day4_players):
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, FRIDAY_AFTERNOON)
+    body = client.post("/api/nba-team", json={"league_id": LEAGUE_ID, "season": 2027, "team": "SA"}).json()
+    assert body["next_game"]["start"] > FRIDAY_AFTERNOON.isoformat()[:10]

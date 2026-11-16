@@ -1321,6 +1321,50 @@ class PlayerIndex(BaseModel):
     players: list[IndexedPlayer]
 
 
+class NbaTeamRequest(LeagueRequest):
+    team: str = Field(min_length=1, max_length=5, description="NBA team abbreviation as ESPN writes it: DEN, GS, UTAH")
+
+
+class TeamScorer(BaseModel):
+    player_id: int
+    name: str
+    pts: int
+    reb: int
+    ast: int
+
+
+class TeamResult(BaseModel):
+    game_id: int
+    date: str | None = Field(description="US game date, YYYY-MM-DD")
+    start: str
+    home: bool
+    opponent: str = Field(description="Opponent abbreviation")
+    opponent_name: str
+    points: int
+    opponent_points: int
+    won: bool
+    top: TeamScorer | None = Field(description="This team's top scorer in the game")
+
+
+class TeamNextGame(BaseModel):
+    start: str
+    home: bool
+    opponent: str
+    opponent_name: str
+
+
+class NbaTeam(BaseModel):
+    """An NBA team at a glance: record, latest results and next game. The roster is the player index's."""
+
+    abbrev: str
+    name: str
+    wins: int
+    losses: int
+    streak: str | None = Field(description='"W3" for three wins in a row; null before the first game')
+    latest: list[TeamResult] = Field(description="The last five results, most recent first")
+    next_game: TeamNextGame | None
+
+
 class PlayerCardRequest(BaseModel):
     league_id: int = Field(gt=0)
     season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")
