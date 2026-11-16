@@ -443,6 +443,17 @@ uv run python -m scripts.next_game_matchup_backtest
 
 The signals and weights were picked on these seasons (one season left out at a time, and again fitted on earlier seasons only): each kept signal lowered the squared miss in all five. Kept: the opponent's defense in each stat, measured as what the players it faced made over what they usually make a minute (raw points allowed was half as good; a split by guards, wings and bigs added nothing); his last 10 games a minute (about a third of the gap lasts for points, rebounds and assists); teammates ruled out, by their shots a game (more points, assists and turnovers a minute) and their minutes (more minutes for bench players); games he just missed (about 0.6 minutes fewer for each); lines over 36 minutes (lower); home court (assists, FG%); how favored his team is (blocks); a back-to-back (steals). Not kept: his history against the team, pace, travel and time zones, altitude, tip time, back-to-backs for minutes, the opponent's injuries, playing a former team, tanking late in the season. A gradient-boosted model on all of them did about one point better (points +3.1% to +4.2%) but can't name its reasons. Even knowing a player's true level and his real minutes in hindsight, his points miss by about 4 a game.
 
+### Next-game weights check
+
+Fits every next-game weight again, blind, and tests new signals under the same rule (lower squared miss in every season, both with the season left out and fitted on earlier seasons only). It runs the app's own code day by day (the cases of the matchup backtest) and first checks that its formulas give exactly what `gamebox.apply` gives:
+
+```sh
+uv run python -m scripts.next_game_tuning             # 2021-22 to 2025-26
+uv run python -m scripts.next_game_tuning --current   # plus the season so far (its cache refreshed)
+```
+
+A new idea is one function in `CANDIDATES`. First run (2026-11-16, six seasons with 2026-27 so far, 92,852 games): the refit beats the shipped weights by at most 0.5% in a season and loses in 2026-27, so the weights stay; a blowout term for minutes, two or more days of rest and the opponent on a back-to-back all failed.
+
 ### Vision-trade backtest
 
 Checks that vision-trade targets are worth more later: at weeks 4 to 12 of past seasons, players off to a slow start (projection 1+ above their season so far) are scored against what they did the rest of the way, and so are players out for a while once they came back:
