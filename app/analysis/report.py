@@ -13,17 +13,34 @@ from itertools import chain
 import numpy as np
 
 from app import schemas
+from app.analysis import gamebox
 from app.analysis.absence import is_out
 from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.durability import injury_prone
-from app.analysis.form import AST, BLK, FGA, FGM, FTA, FTM, MINUTES, PTS, REB, STL, TO, TPM, hot_run_ref
+from app.analysis.form import (
+    AST,
+    BLK,
+    FG_SCALE,
+    FGA,
+    FGM,
+    FTA,
+    FTM,
+    MINUTES,
+    PTS,
+    REB,
+    SCALE,
+    STL,
+    TO,
+    TPM,
+    hot_run_ref,
+)
 from app.analysis.model import GAMES_PER_WEEK, CategoryModel, Dist
 from app.analysis.perceived import PerceivedValue
 from app.analysis.projection import CLOSE
 from app.analysis.sim import EACH_CATEGORY, SeasonResult, SeasonSim, simulate_season
 from app.analysis.tiers import droppable, has_market, tier
 from app.analysis.timing import MatchupTiming, Timing
-from app.analysis.tonight import MAX_MINUTES, minutes_gained
+from app.analysis.tonight import MAX_MINUTES, minutes_gained, ruled_out
 from app.analysis.trades import SCREEN_MIN_THEIR_GAIN, Deal, Mode, TradeFinder, acceptance_label, mix_shapes
 from app.espn.parse import PRO_TEAM_ABBREV, League, Player, Team, with_minutes
 
@@ -187,39 +204,135 @@ NEXT_GAME_LEVEL = {PTS: 0.968, REB: 0.963, BLK: 0.913, TO: 0.947}
 def next_game_line(model: CategoryModel, p: Player, teammates: Iterable[Player]) -> schemas.NextGameLine | None:
     """His next game's line: the this-week line the odds count (CategoryModel.horizon_line), plus
     the minutes teammates ruled out of it leave him (tonight.py), at the level his games land
-    (NEXT_GAME_LEVEL). ``teammates`` are the players of his NBA team this league knows; none while
-    he is out."""
+    (NEXT_GAME_LEVEL), then the game itself when the league box knows it (gamebox.apply, from
+    ``p.game_context``): opponent, his recent games, teammates' shots, home court. ``teammates`` are the
+    players of his NBA team this league knows; none while he is out."""
     if is_out(p):
         return None
     line = model.horizon_line(p, model.league.current_period)
     minutes = line.get(MINUTES, 0.0)
     if minutes <= 0:
         return None
+    mates = [t for t in teammates if t.id != p.id]
+    gained = 0.0
     if not p.minute_shifts:  # a measured gain from teammates.py already holds an absence
-        extra = minutes_gained(p, teammates)
-        if extra:
-            line = with_minutes(line, min(minutes + extra, MAX_MINUTES))
+        gained = min(minutes_gained(p, mates), MAX_MINUTES - minutes) if minutes < MAX_MINUTES else 0.0
+        if gained:
+            line = with_minutes(line, minutes + gained)
+    line = {k: v * NEXT_GAME_LEVEL.get(k, 1.0) for k, v in line.items()}
+    m = p.game_context
+    if m is None:
+        return schemas.NextGameLine(**_stats(line))
+    out = [_teammate(t) for t in mates if ruled_out(t)]
+    new, usual, found = gamebox.apply(line, m, out, gained)
+    fga = new.get(FGA, 0.0)
+    pct = new.get(FGM, 0.0) / fga if fga > 0 else FG_SCALE[0]
+    reasons = sorted((_reason(r, m, pct, fga) for r in found), key=lambda r: -abs(r.value))
+    return schemas.NextGameLine(
+        **_stats(new),
+        opponent=PRO_TEAM_ABBREV.get(m.opponent),
+        home=m.home,
+        tip=datetime.fromtimestamp(m.tip / 1000, UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if m.tip else None,
+        usual=schemas.NextGameStats(**_stats(usual)),
+        reasons=[r for r in reasons if abs(r.value) >= MIN_REASON_VALUE][:MAX_REASONS],
+    )
 
+
+MIN_REASON_VALUE = 0.05  # 9-category value a game: about a quarter of a point or a fifth of a three
+MAX_REASONS = 5
+STAT_WORDS = {
+    PTS: "points",
+    REB: "rebounds",
+    AST: "assists",
+    STL: "steals",
+    BLK: "blocks",
+    TPM: "threes",
+    TO: "turnovers",
+}
+
+
+def _stats(line: dict[int, float]) -> dict:
     def g(stat: int) -> float:
-        return round(max(line.get(stat, 0.0) * NEXT_GAME_LEVEL.get(stat, 1.0), 0.0), 1)
+        return round(max(line.get(stat, 0.0), 0.0), 1)
 
     fga, fta = line.get(FGA, 0.0), line.get(FTA, 0.0)
-    return schemas.NextGameLine(
-        minutes=g(MINUTES),
-        pts=g(PTS),
-        reb=g(REB),
-        ast=g(AST),
-        stl=g(STL),
-        blk=g(BLK),
-        three_pm=g(TPM),
-        to=g(TO),
-        fgm=g(FGM),
-        fga=g(FGA),
-        ftm=g(FTM),
-        fta=g(FTA),
-        fg_pct=round(line.get(FGM, 0.0) / fga, 3) if fga > 0 else None,
-        ft_pct=round(line.get(FTM, 0.0) / fta, 3) if fta > 0 else None,
+    return {
+        "minutes": g(MINUTES),
+        "pts": g(PTS),
+        "reb": g(REB),
+        "ast": g(AST),
+        "stl": g(STL),
+        "blk": g(BLK),
+        "three_pm": g(TPM),
+        "to": g(TO),
+        "fgm": g(FGM),
+        "fga": g(FGA),
+        "ftm": g(FTM),
+        "fta": g(FTA),
+        "fg_pct": round(line.get(FGM, 0.0) / fga, 3) if fga > 0 else None,
+        "ft_pct": round(line.get(FTM, 0.0) / fta, 3) if fta > 0 else None,
+    }
+
+
+def _teammate(t: Player) -> gamebox.Teammate:
+    """A teammate ruled out: his minutes and shots a game over his last games, else his line's."""
+    f = t.game_context.form if t.game_context is not None else None
+    if f is not None:
+        return gamebox.Teammate(t.name, f.minutes_long, f.usage)
+    g = t.per_game
+    return gamebox.Teammate(
+        t.name, g.get(MINUTES, 0.0), g.get(FGA, 0.0) + gamebox.USAGE_FTA * g.get(FTA, 0.0) + g.get(TO, 0.0)
     )
+
+
+def _reason(r: gamebox.Reason, m: gamebox.GameContext, pct: float, fga: float) -> schemas.NextGameReason:
+    """``pct`` and ``fga``: his FG% and attempts in the game, which weigh a change in either."""
+    stats = {k: r.stats.get(k, 0.0) for k in STAT_WORDS}
+    fg_pct = float(r.detail.get("fg_pct", 0.0))
+    value = sum((-v if k == TO else v) / SCALE[k][1] for k, v in stats.items())
+    # FG impact (makes over the league's rate): more attempts at his percentage, his attempts at a new one.
+    value += (r.stats.get(FGA, 0.0) * (pct - FG_SCALE[0]) + fga * fg_pct) / FG_SCALE[1]
+    return schemas.NextGameReason(
+        kind=r.kind,
+        text=_reason_text(r, m),
+        minutes=round(r.minutes, 1),
+        pts=round(stats[PTS], 2),
+        reb=round(stats[REB], 2),
+        ast=round(stats[AST], 2),
+        stl=round(stats[STL], 2),
+        blk=round(stats[BLK], 2),
+        three_pm=round(stats[TPM], 2),
+        to=round(stats[TO], 2),
+        fg_pct=round(fg_pct, 4),
+        value=round(value, 3),
+    )
+
+
+def _reason_text(r: gamebox.Reason, m: gamebox.GameContext) -> str:
+    """A few words a manager reads at a glance."""
+    if r.kind == "opponent":
+        # What the opponent gives up shows in the numbers; one stat named here would hide the others.
+        return f"Against {PRO_TEAM_ABBREV.get(m.opponent, 'this team')}"
+    if r.kind == "form":
+        return f"His last {gamebox.FORM_GAMES} games"
+    if r.kind == "teammates_out":
+        names = [n.split(" ")[-1] for n in str(r.detail.get("names", "")).split(", ") if n]
+        return f"{' and '.join(names[:2])}{' and others' if len(names) > 2 else ''} out" if names else "Teammates out"
+    if r.kind == "back_from_absence":
+        n = int(r.detail.get("games", 0))
+        return f"First game back after {n} missed" if n > 1 else "First game back"
+    if r.kind == "heavy_minutes":
+        return "Big minutes ease off"
+    if r.kind == "recent_minutes":
+        return "More minutes lately" if r.minutes > 0 else "Fewer minutes lately"
+    if r.kind == "home":
+        return "Home game"
+    if r.kind == "away":
+        return "Road game"
+    if r.kind in ("favored", "underdog"):
+        word = "Favored" if r.kind == "favored" else "Underdog"
+        return f"{word} by {abs(m.margin):.0f}"
+    return "Second night of a back-to-back"
 
 
 class Analyzer:
