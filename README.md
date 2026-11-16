@@ -60,6 +60,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 📰 | **Checked NBA news:** stories confirmed across sources before they show | `/api/news` |
 | 🩹 | **Injury impact:** which teammates gain while a player is out | `/api/injury-impact` |
 | 🃏 | **Player cards:** any player's latest team games (final score, his garbage-time line, missed ones marked with his current injury), health, news and every move of him in the league | `/api/player-card` |
+| 🔎 | **Player search:** any NBA player from the header on every page, results with each key press, who has him in your league, and a tap opens his card | `/api/players/index` |
 | 📝 | **Trade feedback and rules:** rate a trade idea and have it checked against today's league; your own rules hide ideas that break them | `/api/trade-feedback`, `/api/trade-check`, `/api/trade-rules` |
 | 📈 | **Usage numbers:** daily visitors, page views and sign-ups, with no cookies or ids: a visitor is a hash under a salt that is deleted each day | `/api/usage` |
 | 🔥 | **Straw fire or bigger role:** a player on a hot run over his last 15 days gets what it was made of (more minutes, more shots per minute, hot shooting) and how much of it tends to last, checked on five seasons | `/api/analyze`, `/api/player-card` |
@@ -189,6 +190,7 @@ All settings are optional for local development.
 | POST | `/api/trade-rules/delete` | `{league_id, team_id, season?, rule_id}` | Removes a rule and returns the rest |
 | POST | `/api/player-card` | `{league_id, season?, player_id, core?}` | One player: latest games, health, news, every move of him in this league and what a hot run of his was made of; `core` leaves out the slower parts |
 | POST | `/api/player-card/extras` | `{league_id, season?, player_id}` | The slower part of a card: his news, the names of players in his moves, and each finished game's final score and garbage-time line (from ESPN's play-by-play, read once per game) |
+| POST | `/api/players/index` | `{league_id, season?}` | Every NBA player this season (name, NBA team, position, ESPN-wide ownership, injury tag) with who has him in this league, for the header search: asked once, filtered on the device with each key press; gzipped when the browser accepts it |
 | POST | `/api/target` | `{league_id, team_id, player_id, season?, keep_player_ids?}` | One player's fit, his owner's needs, and the best offer for him |
 | POST | `/api/offer-check` | `{league_id, team_id, partner_team_id, give_player_ids, get_player_ids, my_drop_player_ids?, direction?, season?, keep_player_ids?}` | Any trade with one other team (1 to 3 players a side, offered to you or one you plan to send): a take / close / pass call for you with the simulation noise, the other team's odds and paper value, both teams' categories and playoff weeks, the cuts and pickups it forces, and the flags the data confirms |
 | POST | `/api/scores` | `{league_id, season?, day?, team_id?, with_sits?}` | A day of NBA games: scores, status and box scores, each player tagged with his fantasy team in this league; plus this week's upcoming games, naming `team_id`'s players in each |

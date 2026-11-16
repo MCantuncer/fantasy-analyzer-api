@@ -307,6 +307,10 @@ class EspnClient:
         )
         return data if isinstance(data, list) else []
 
+    async def player_index(self, season: int) -> list[dict]:
+        """Every NBA player this season: name, NBA team, position, ESPN-wide ownership. No stats."""
+        return await self._season_players(season, "players_wl", {"filterActive": {"value": True}})
+
     async def player_states(self, season: int, limit: int = 700) -> list[dict]:
         """Injury status and NBA team of the most-owned players across ESPN. Light: no stats."""
         flt = {"limit": limit, "sortPercOwned": {"sortPriority": 1, "sortAsc": False}}

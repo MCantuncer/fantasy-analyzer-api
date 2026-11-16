@@ -1299,6 +1299,26 @@ class NewsCheck(BaseModel):
     )
 
 
+class IndexedPlayer(BaseModel):
+    player_id: int
+    name: str
+    pro_team: str = Field(description="NBA team abbreviation; empty when he is on no NBA team")
+    position: str
+    percent_owned: float = Field(description="Share of ESPN leagues that roster him, 0-100")
+    owner_team_id: int | None = Field(description="His team in this league; null for a free agent")
+    injury_status: str | None = Field(
+        default=None, description="ESPN injury status (OUT, DAY_TO_DAY...) when known; null when healthy"
+    )
+
+
+class PlayerIndex(BaseModel):
+    """Every NBA player this season, for search as you type: the device filters, not the server."""
+
+    league_id: int
+    season: int
+    players: list[IndexedPlayer]
+
+
 class PlayerCardRequest(BaseModel):
     league_id: int = Field(gt=0)
     season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")

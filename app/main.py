@@ -7,6 +7,7 @@ headers, are used for that request's ESPN calls, and are never logged or stored.
 from __future__ import annotations
 
 import asyncio
+import gzip
 import logging
 import os
 import secrets
@@ -75,6 +76,7 @@ from app.news.sources import SOURCES as NEWS_SOURCE_LIST
 from app.news.verify import FACT_SOURCE, describe_fact
 from app.playercard import Card as ParsedCard
 from app.playercard import parse_card
+from app.playersearch import IndexPlayer, injury_tag, parse_index
 from app.reader import DEEP_BATCH_MAX, DeepReader, NoteReader, Reading, create_deep_reader, create_reader
 from app.recap import VERSION as RECAP_VERSION
 from app.recap import Week as RecapWeek
@@ -165,6 +167,8 @@ LINEUP_TTL = 30.0
 PAST_LINEUP_TTL = 6 * 3600.0
 PLAYER_CARD_TTL = 300.0  # a card a few people open in a row is one ESPN call; box scores land after games
 CARD_NEWS_TTL = 60.0  # player cards share one build of the news stories
+# Every NBA player for the header search: names and teams change with signings and trades, rarely.
+PLAYER_INDEX_TTL = 6 * 3600.0
 CARD_GAMES = 10
 CARD_NEWS = 8
 # How long a finished analysis job stays around for its last poll (the report itself is cached).
@@ -359,6 +363,7 @@ def create_app(
     app.state.absence_jobs: dict[int, asyncio.Task] = {}
     app.state.cards = TTLCache(PLAYER_CARD_TTL, max_items=2048)
     app.state.card_stories = TTLCache(CARD_NEWS_TTL, max_items=4)
+    app.state.player_index = TTLCache(PLAYER_INDEX_TTL, max_items=4)
     app.state.news = NewsService(app.state.espn, app.state.store, transport=news_transport)
     app.state.usage = Usage(usage_store or create_usage_store())
     app.state.errors = error_store or error_reports.create_error_store()
@@ -3151,6 +3156,62 @@ def create_app(
             games={gid: game_note(n, body.player_id) for gid, n in notes.items()},
             next_game=next_game,
         )
+
+    async def player_index(season: int) -> list[IndexPlayer]:
+        players = app.state.player_index.get(season)
+        if players is None:
+            players = parse_index(await app.state.espn.player_index(season))
+            if players:  # an empty answer is ESPN having a moment: ask again next time
+                app.state.player_index.set(season, players)
+        return players
+
+    @app.post(
+        "/api/players/index",
+        response_model=schemas.PlayerIndex,
+        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+    )
+    async def players_index(
+        body: schemas.LeagueRequest,
+        request: Request,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> Response:
+        """Every NBA player this season with who has him in this league, for the header search. The
+        device filters it with each key press, so this is asked once, not once a key."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        players, league, states = await asyncio.gather(
+            player_index(season),
+            load_league(body.league_id, season, creds, with_fa=False),
+            run_in_threadpool(app.state.news.states),
+        )
+        owners = {p.id: t.id for t in league.teams for p in t.roster}
+        hurt = {p.id: p.injury_status for t in league.teams for p in t.roster}
+        hurt.update({pid: s.status for pid, s in states.items() if pid not in hurt})
+        index = schemas.PlayerIndex(
+            league_id=body.league_id,
+            season=season,
+            players=[
+                schemas.IndexedPlayer(
+                    player_id=p.id,
+                    name=p.name,
+                    pro_team=p.pro_team,
+                    position=p.position,
+                    percent_owned=p.percent_owned,
+                    owner_team_id=owners.get(p.id),
+                    injury_status=injury_tag(hurt.get(p.id)),
+                )
+                for p in players
+            ],
+        )
+        # About 130 KB as JSON and a fifth of that zipped: zip it here, nothing else on the API is this big.
+        raw = index.model_dump_json().encode()
+        if "gzip" in request.headers.get("accept-encoding", ""):
+            zipped = {"Content-Encoding": "gzip", "Vary": "Accept-Encoding"}
+            return Response(gzip.compress(raw, 6), media_type="application/json", headers=zipped)
+        return Response(raw, media_type="application/json", headers={"Vary": "Accept-Encoding"})
 
     async def card_next_game(
         league_id: int, season: int, player_id: int, creds: EspnCredentials | None
