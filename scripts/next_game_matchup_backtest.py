@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -73,8 +75,27 @@ def cats(line: dict[int, float]) -> list[float]:
     ]
 
 
-def season_cases(season: int) -> tuple[list, list, list, list]:
-    """Per case: today's line, the new line, his season average so far and what he did (cats())."""
+@dataclass
+class Case:
+    """One player game, as the app saw it the morning of: today's line (``line``), the game
+    context and teammates ruled out that gamebox.apply takes, and what he did (``actual``)."""
+
+    season: int
+    day: int
+    player: int
+    team: int
+    opponent: int
+    line: dict[int, float]
+    context: gamebox.GameContext
+    mates: list[gamebox.Teammate]
+    gained: float
+    actual: dict[int, float]
+    so_far: dict[int, float]
+
+
+def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
+    """Every case of a season, day by day, each with the league box built from the games before
+    that day (the box is shared by all of a day's cases)."""
     game_logs(season)
     g = season_games(season)
     rows = []
@@ -113,7 +134,6 @@ def season_cases(season: int) -> tuple[list, list, list, list]:
                     todo[day].append((pid, gid, team, line, x, so_far))
             for k in keys:
                 total[k] += x.get(k, 0.0)
-    now, new, avg, act = [], [], [], []
     for day in sorted(todo):
         box = gamebox.build(season, [r for r in rows if r.day < day], prior, sched)
         for pid, gid, team, line, x, so_far in todo[day]:
@@ -131,11 +151,18 @@ def season_cases(season: int) -> tuple[list, list, list, list]:
                 f = box.form.get(q)
                 usage = f.usage if f is not None else 0.0
                 mates.append(gamebox.Teammate("", f.minutes_long if f is not None else q_min, usage))
-            line_new, _, _ = gamebox.apply(today, ctx, mates, gained)
-            now.append(cats(today))
-            new.append(cats(line_new))
-            avg.append(cats(so_far))
-            act.append(cats(x))
+            yield box, Case(season, day, pid, team, opp, today, ctx, mates, gained, x, so_far)
+
+
+def season_cases(season: int) -> tuple[list, list, list, list]:
+    """Per case: today's line, the new line, his season average so far and what he did (cats())."""
+    now, new, avg, act = [], [], [], []
+    for _box, c in cases(season):
+        line_new, _, _ = gamebox.apply(c.line, c.context, c.mates, c.gained)
+        now.append(cats(c.line))
+        new.append(cats(line_new))
+        avg.append(cats(c.so_far))
+        act.append(cats(c.actual))
     return now, new, avg, act
 
 
