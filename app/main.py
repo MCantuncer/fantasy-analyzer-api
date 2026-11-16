@@ -525,6 +525,7 @@ def create_app(
             schedule = gamebox.parse_schedule(raw)
             box = await run_in_threadpool(gamebox.build, season, rows, prior, schedule)
             app.state.game_boxes.set(season, box)
+            logging.getLogger(__name__).info("league box for %s: %d player games", season, len(rows))
         except EspnError:
             return  # lines stay as before; a later load tries again
         except Exception:
@@ -3161,6 +3162,8 @@ def create_app(
             p = next((q for q in players if q.id == player_id), None)
             if p is None:
                 return None
+            if p.game_context is None:
+                attach_game_contexts(league)  # a box built after this league was loaded
             mates = [q for q in players if q.pro_team_id == p.pro_team_id]
             return await run_in_threadpool(lambda: next_game_line(CategoryModel(league), p, mates))
         except Exception:  # the card still shows without it
