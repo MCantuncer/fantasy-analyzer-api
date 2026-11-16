@@ -57,7 +57,7 @@ from app.analysis.shop import ShopAnalyzer, ShopError
 from app.analysis.target import TargetAnalyzer, TargetError
 from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
-from app.espn.parse import PRO_TEAM_ABBREV, League, parse_calendar, parse_league, proven_players
+from app.espn.parse import PRO_TEAM_ABBREV, League, Player, parse_calendar, parse_league, parse_player, proven_players
 from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.gameclock import apply_clocks, apply_on_court, fetch_clocks, fetch_on_court
@@ -299,6 +299,7 @@ def create_app(
     app = FastAPI(title="COURT API", version="0.1.0")
     app.state.espn = espn or EspnClient()
     app.state.leagues = TTLCache(LEAGUE_TTL)
+    app.state.deep_free_agents = TTLCache(LEAGUE_TTL, max_items=2048)
     # League loads under way, so a second request for the same league waits for the first.
     app.state.league_loads: dict[tuple, asyncio.Future] = {}
     app.state.reports = TTLCache(LEAGUE_TTL)
@@ -3154,21 +3155,42 @@ def create_app(
     async def card_next_game(
         league_id: int, season: int, player_id: int, creds: EspnCredentials | None
     ) -> schemas.NextGameLine | None:
-        """His next game's line, as FA Targets shows it (next_game_line), for any player this league
-        knows: rostered or free agent. The analysis's league, cached, so most cards cost no new load."""
+        """His next game's line, as FA Targets shows it (next_game_line), for any player: rostered, one of
+        the free agents the analysis loads, or one past them (read on his own, cached a while). The
+        analysis's league, cached, so most cards cost no new load."""
         try:
             league = await load_league(league_id, season, creds, with_fa=True)
             players = [*(p for t in league.teams for p in t.roster), *league.free_agents]
             p = next((q for q in players if q.id == player_id), None)
             if p is None:
-                return None
-            if p.game_context is None:
+                p = await deep_free_agent(league, player_id, creds)
+                if p is None:
+                    return None
+            elif p.game_context is None:
                 attach_game_contexts(league)  # a box built after this league was loaded
             mates = [q for q in players if q.pro_team_id == p.pro_team_id]
             return await run_in_threadpool(lambda: next_game_line(CategoryModel(league), p, mates))
         except Exception:  # the card still shows without it
             logging.getLogger(__name__).exception("next game line for player %s failed", player_id)
             return None
+
+    async def deep_free_agent(league: League, player_id: int, creds: EspnCredentials | None) -> Player | None:
+        """A player past the free agents a league load reads (the 150 most owned): his
+        line as theirs, with his next game from the league box."""
+        key = (league.id, league.season, credentials_key(creds), player_id)
+        p = app.state.deep_free_agents.get(key)
+        if p is None:
+            entries = await app.state.espn.players(league.season, league.id, [player_id], creds)
+            entry = next((e for e in entries if int((e.get("player") or e).get("id") or 0) == player_id), None)
+            if entry is None:
+                return None
+            proven = player_id in proven_players(await past_games(league.season))
+            p = parse_player(entry, league.season, proven=proven)
+            app.state.deep_free_agents.set(key, p)
+        box = app.state.game_boxes.get(league.season)
+        if box is not None and league.calendar is not None:
+            p.game_context = gamebox.context(box, p.id, p.pro_team_id, league.calendar.today)
+        return p
 
     def shown_games(card, season: int) -> list:
         """This season's games, missed ones included; last season's only until he plays one."""
