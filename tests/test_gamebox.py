@@ -7,6 +7,8 @@ from app.analysis.gamebox import (
     AST,
     FGA,
     FGM,
+    FTA,
+    FTM,
     MINUTES,
     PTS,
     REB,
@@ -17,7 +19,7 @@ from app.analysis.gamebox import (
     GameRow,
     Teammate,
 )
-from app.analysis.report import Analyzer
+from app.analysis.report import Analyzer, _reason_text
 
 COUNTING = gamebox.COUNTING
 
@@ -128,12 +130,138 @@ def test_teammates_out_and_a_return_from_absence():
     assert usual[MINUTES] == pytest.approx(28.0 + gamebox.MINUTES_LEVEL)
 
 
-def test_his_last_games_carry_about_a_third():
-    hot = Form(rate={**{k: v / 30 for k, v in LINE.items()}, PTS: 26 / 30}, minutes=30, minutes_long=30,
-               usage=20, last_day=4, team=1)  # fmt: skip
-    new, usual, _ = gamebox.apply(LINE, _ctx(form=hot), [])
-    base = 20.0 / 30.0 * (30.0 + gamebox.MINUTES_LEVEL)
-    assert new[PTS] - usual[PTS] == pytest.approx(base * gamebox.RATE_WEIGHTS[PTS]["form"] * 0.3)
+def _form(**kw) -> Form:
+    base = dict(rate={k: v / 30 for k, v in LINE.items()}, minutes=30.0, minutes_long=30.0, usage=20.0, last_day=4,
+                team=1)  # fmt: skip
+    return Form(**{**base, **kw})
+
+
+def test_recent_form_is_decayed_and_shrunk_by_what_his_line_expects():
+    # 26 points over 30 (decayed) minutes against a line of 20: a 30% gap, trusted by E / (E + shrink).
+    hot = _form(decayed={PTS: (26.0, 30.0), STL: (2.0, 30.0)})
+    new, usual, reasons = gamebox.apply(LINE, _ctx(form=hot), [])
+    minutes = 30.0 + gamebox.MINUTES_LEVEL + gamebox.RECENT_MINUTES * 0.0
+    base = 20.0 / 30.0 * minutes
+    shrink = gamebox.FORM_DECAY[PTS][1]
+    assert new[PTS] - usual[PTS] == pytest.approx(base * gamebox.RATE_WEIGHTS[PTS]["form"] * 0.3 * 20 / (20 + shrink))
+    # Steals: line 1, he made 2: the gap is 100%, but one expected steal is little to go on.
+    stl = gamebox._form(hot, STL, 1.0 / 30.0)
+    assert stl == pytest.approx(1.0 * 1 / (1 + gamebox.FORM_DECAY[STL][1]))
+    assert next(r for r in reasons if r.kind == "form").stats[PTS] > 0
+    # Without decayed sums (no games), no form.
+    assert gamebox._form(_form(), PTS, 20 / 30) == 0.0
+
+
+def test_decayed_sums_weigh_recent_games_more():
+    rows = [GameRow(11, 100 + d, d, 1, _line(30, pts=p)) for d, p in ((1, 10.0), (2, 20.0), (3, 30.0))]
+    box = gamebox.build(2027, rows, PRIOR, SCHEDULE)
+    h = gamebox.FORM_DECAY[PTS][0]
+    w = [0.5 ** (2 / h), 0.5 ** (1 / h), 1.0]
+    pts, minutes = box.form[11].decayed[PTS]
+    assert pts == pytest.approx(10 * w[0] + 20 * w[1] + 30 * w[2])
+    assert minutes == pytest.approx(30 * sum(w))
+    # Minutes lately: decayed over this season's games.
+    assert box.form[11].minutes == pytest.approx(30.0)
+    assert box.form[11].last_minutes == 30.0
+
+
+def test_form_runs_across_the_summer():
+    last = [GameRow(11, 900 + d, d, 1, _line(30, pts=30.0)) for d in range(1, 21)]
+    rows = [GameRow(11, 101, 1, 1, _line(30, pts=10.0))]
+    carried = gamebox.carry(last)
+    box = gamebox.build(2027, rows, PRIOR, SCHEDULE, carried)
+    h = gamebox.FORM_DECAY[PTS][0]
+    w_last = sum(0.5 ** (k / h) for k in range(20)) * 0.5 ** (1 / h)  # one game of this season since
+    pts, minutes = box.form[11].decayed[PTS]
+    assert pts == pytest.approx(10 + 30 * w_last)
+    assert minutes == pytest.approx(30 + 30 * w_last)
+    # Without last season, only his one game.
+    assert gamebox.build(2027, rows, PRIOR, SCHEDULE).form[11].decayed[PTS] == pytest.approx((10.0, 30.0))
+    # The longer minutes run counts last season too; minutes lately don't.
+    long = [GameRow(11, 900 + d, d, 1, _line(20, pts=10.0)) for d in range(1, 21)]
+    box = gamebox.build(2027, rows, PRIOR, SCHEDULE, gamebox.carry(long))
+    assert 20 < box.form[11].minutes_season < 30
+    assert box.form[11].minutes == pytest.approx(30.0)
+
+
+def test_a_new_starter_plays_more_and_a_benched_one_less():
+    promoted = _form(started=True, start_share=0.25)
+    new, usual, reasons = gamebox.apply(LINE, _ctx(form=promoted), [])
+    switch = next(r for r in reasons if r.kind == "starter_switch")
+    assert switch.minutes == pytest.approx(gamebox.SWITCH_MINUTES * 0.75)
+    # His usual line holds his usual role (started a quarter of his games), not the switch.
+    assert usual[MINUTES] == pytest.approx(30.0 + gamebox.MINUTES_LEVEL + gamebox.ROLE_MINUTES * (0.25 - 0.5))
+    benched = _form(started=False, start_share=1.0)
+    _, _, reasons = gamebox.apply(LINE, _ctx(form=benched), [])
+    assert next(r for r in reasons if r.kind == "starter_switch").minutes < 0
+
+
+def test_reason_texts():
+    def text(kind, **detail):
+        return _reason_text(gamebox.Reason(kind, detail=detail), _ctx())
+
+    assert text("form") == "His recent form"
+    assert text("starter_switch", started=1) == "Started his last game"
+    assert text("starter_switch", started=0) == "Moved to the bench"
+    assert text("back_from_absence", games=0, game_back=2) == "Second game back"
+    assert text("back_from_absence", games=3, game_back=1) == "First game back after 3 missed"
+    assert text("teammates_out", names="Jaylen Brown", points=24.6) == "Teammates out: 25 points a game to share"
+    assert text("teammates_out", names="Jaylen Brown", points=0.0) == "Brown out"
+
+
+def _ramp_rows(days: tuple[int, ...]) -> list[GameRow]:
+    """Teams 1 and 2 play days 1-6; player 11 (team 1) plays ``days``; player 12 every game."""
+    rows = []
+    for day in range(1, 7):
+        rows.append(GameRow(12, 200 + day, day, 1, _line(30, pts=10)))
+        rows.append(GameRow(21, 200 + day, day, 2, _line(30, pts=10)))
+        if day in days:
+            rows.append(GameRow(11, 200 + day, day, 1, _line(30, pts=20)))
+    return rows
+
+
+RAMP_SCHEDULE = {
+    1: [gamebox.Game(d, 2, True) for d in range(1, 8)],
+    2: [gamebox.Game(d, 1, False) for d in range(1, 8)],
+}
+
+
+def test_minutes_come_back_over_three_games():
+    # Missed days 2 and 3, back on day 4.
+    first = gamebox.build(2027, [r for r in _ramp_rows((1, 4, 5)) if r.day < 4], PRIOR, RAMP_SCHEDULE)
+    assert gamebox.context(first, 11, 1, 4).game_back == 1
+    second = gamebox.build(2027, [r for r in _ramp_rows((1, 4, 5)) if r.day < 5], PRIOR, RAMP_SCHEDULE)
+    assert second.form[11].since_return == 1
+    ctx = gamebox.context(second, 11, 1, 5)
+    assert (ctx.games_missed, ctx.game_back) == (0, 2)
+    third = gamebox.build(2027, _ramp_rows((1, 4, 5)), PRIOR, RAMP_SCHEDULE)
+    assert gamebox.context(third, 11, 1, 6).game_back == 3
+    after = gamebox.build(2027, _ramp_rows((1, 4, 5, 6)), PRIOR, RAMP_SCHEDULE)
+    assert gamebox.context(after, 11, 1, 7).game_back == 0
+    # One game missed starts no ramp.
+    once = gamebox.build(2027, _ramp_rows((1, 2, 4)), PRIOR, RAMP_SCHEDULE)
+    assert gamebox.context(once, 11, 1, 5).game_back == 0
+    _, _, reasons = gamebox.apply(LINE, _ctx(game_back=2), [])
+    back = next(r for r in reasons if r.kind == "back_from_absence")
+    assert back.minutes == pytest.approx(gamebox.RAMP_MINUTES * gamebox.RAMP[2])
+    assert back.detail["game_back"] == 2
+
+
+def test_points_of_teammates_out_go_to_those_left():
+    out = [Teammate("Jaylen Brown", 34.0, 22.0, 25.0)]
+    plain = gamebox.apply(LINE, _ctx(team_points=100.0), [Teammate("Jaylen Brown", 34.0, 22.0)])[0]
+    new, _, reasons = gamebox.apply(LINE, _ctx(team_points=100.0), out)
+    base = 20.0 / 30.0 * new[MINUTES]
+    assert new[PTS] - plain[PTS] == pytest.approx(base * gamebox.RATE_WEIGHTS[PTS]["vac"] * 0.25)
+    assert next(r for r in reasons if r.kind == "teammates_out").detail["points"] == 25.0
+
+
+def test_free_throws_follow_the_opponents_fouls():
+    line = {**LINE, FTA: 6.0, FTM: 4.8}
+    soft = gamebox.apply(line, _ctx(defense={FTA: 0.2}), [])[0]
+    plain = gamebox.apply(line, _ctx(), [])[0]
+    assert soft[FTA] > plain[FTA]
+    assert soft[FTM] / soft[FTA] == pytest.approx(0.8)
 
 
 def test_parse_rows_and_schedule():

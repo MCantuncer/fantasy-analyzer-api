@@ -34,20 +34,15 @@ import numpy as np
 from app.analysis import gamebox
 from app.analysis.gamebox import AST, BLK, FGA, FGM, FTA, FTM, MINUTES, PTS, REB, STL, TO, TPM
 from scripts.durability_backtest import LOGS, POOLS
-from scripts.next_game_matchup_backtest import FG0, SCHEDULES, SEASONS, Case, cases, cats
+from scripts.next_game_matchup_backtest import FG0, FT0, SCHEDULES, SEASONS, Case, cases, cats
 
 CURRENT = 2027
 MIN_GAIN = 0.3  # % less squared miss, averaged over seasons, before a refit is worth shipping
 CATS = ("MIN", "PTS", "REB", "AST", "STL", "BLK", "3PM", "TO", "FG", "FT")
-RATE_STATS = {"pts": PTS, "reb": REB, "ast": AST, "stl": STL, "blk": BLK, "tpm": TPM, "to": TO, "fga": FGA}
-CAT_OF = {"pts": "PTS", "reb": "REB", "ast": "AST", "stl": "STL", "blk": "BLK", "tpm": "3PM", "to": "TO"}
-MINUTE_SIGNALS = ("missed", "bench_out", "recent", "heavy")
-MINUTE_WEIGHTS = {
-    "missed": gamebox.MISSED_MINUTES,
-    "bench_out": gamebox.BENCH_SHARE,
-    "recent": gamebox.RECENT_MINUTES,
-    "heavy": gamebox.HEAVY_LEVEL,
-}
+RATE_STATS = {"pts": PTS, "reb": REB, "ast": AST, "stl": STL, "blk": BLK, "tpm": TPM, "to": TO, "fga": FGA, "fta": FTA}
+CAT_OF = {"pts": "PTS", "reb": "REB", "ast": "AST", "stl": "STL", "blk": "BLK", "tpm": "3PM", "to": "TO", "fta": "FT"}
+MINUTE_SIGNALS = tuple(gamebox.MINUTE_WEIGHTS)
+MINUTE_WEIGHTS = gamebox.MINUTE_WEIGHTS
 
 
 # New signals to test. Each: the categories it may move ("min" for minutes, or keys of RATE_STATS, or
@@ -99,26 +94,21 @@ def collect(seasons: tuple[int, ...]) -> dict[str, np.ndarray]:
             put("lm", lm)
             put("gained", c.gained)
             put("act_min", c.actual.get(MINUTES, 0.0))
-            out_min = sum(t.minutes for t in c.mates)
-            put("missed", m.games_missed)
-            put("bench_out", out_min * max(0.0, 1 - lm / gamebox.BENCH_MINUTES))
-            put("recent", (m.form.minutes - lm) if m.form is not None else 0.0)
-            put("heavy", max(0.0, lm - gamebox.HEAVY_MINUTES))
-            put("usage_out", sum(t.usage for t in c.mates) / 100)
+            for k, v in gamebox.minute_signals(lm, m, c.mates).items():
+                put(f"m_{k}", v)
             put("home", 0.5 if m.home else -0.5)
-            put("margin", m.margin / 10)
-            put("b2b", 1.0 if m.back_to_back else 0.0)
             for name, stat in RATE_STATS.items():
                 rate = line.get(stat, 0.0) / lm if lm > 0 else 0.0
                 put(f"rate_{name}", rate)
-                put(f"form_{name}", gamebox._form(m.form, stat, rate))
-                put(f"opp_{name}", m.defense.get(stat, 0.0))
+                for sig in gamebox.RATE_WEIGHTS[stat]:
+                    put(f"r_{name}_{sig}", gamebox.rate_signal(sig, stat, rate, m, c.mates))
                 put(f"act_{name}", c.actual.get(stat, 0.0))
-            for stat, name in ((FGM, "fgm"), (FTM, "ftm"), (FTA, "fta")):
+            for stat, name in ((FGM, "fgm"), (FTM, "ftm")):
                 put(f"rate_{name}", line.get(stat, 0.0) / lm if lm > 0 else 0.0)
                 put(f"act_{name}", c.actual.get(stat, 0.0))
             fga = line.get(FGA, 0.0)
             put("pct", line.get(FGM, 0.0) / fga if fga > 0 else FG0)
+            put("ft_pct", gamebox.ft_line_pct(line))
             put("opp_pct", (1 + m.defense.get(FGM, 0.0)) / (1 + m.defense.get(FGA, 0.0)) - 1)
             for i, v in enumerate(cats(new)):
                 put(f"ship_{i}", v)
@@ -145,14 +135,17 @@ def rate_spec(extra: dict[str, list[str]] | None = None) -> dict[str, list[str]]
 
 
 def _rate_x(d: dict[str, np.ndarray], name: str, signal: str) -> np.ndarray:
-    if signal in ("form", "opp"):
-        return d[f"{signal}_{name}"]
-    return d[signal] if signal in d else d[f"cand_{signal}"]
+    key = f"r_{name}_{signal}"
+    return d[key] if key in d else d[f"cand_{signal}"]
+
+
+def _minutes_x(d: dict[str, np.ndarray], minute_extra: list[str]) -> np.ndarray:
+    return np.column_stack([d[f"m_{s}"] for s in MINUTE_SIGNALS] + [d[f"cand_{s}"] for s in minute_extra])
 
 
 def fit(d: dict[str, np.ndarray], train: np.ndarray, minute_extra: list[str], rate: dict[str, list[str]]) -> dict:
     """The two-stage model of gamebox.apply, fitted on the ``train`` rows."""
-    xm = np.column_stack([d[s] for s in MINUTE_SIGNALS] + [d[f"cand_{s}"] for s in minute_extra])
+    xm = _minutes_x(d, minute_extra)
     w = {"minutes": ols(xm[train], (d["act_min"] - d["lm"])[train])}
     for name, signals in rate.items():
         ea = d[f"rate_{name}"] * d["act_min"]
@@ -164,8 +157,8 @@ def fit(d: dict[str, np.ndarray], train: np.ndarray, minute_extra: list[str], ra
 
 
 def predict(d: dict[str, np.ndarray], w: dict, minute_extra: list[str], rate: dict[str, list[str]]) -> np.ndarray:
-    """Predicted cats() per row (MIN, 7 counting stats, FG and FT impact)."""
-    xm = np.column_stack([d[s] for s in MINUTE_SIGNALS] + [d[f"cand_{s}"] for s in minute_extra])
+    """Predicted cats() per row (MIN, 7 counting stats, FG and FT impact), as gamebox.apply makes them."""
+    xm = _minutes_x(d, minute_extra)
     mhat = np.clip(d["lm"] + np.column_stack([np.ones(len(xm)), xm]) @ w["minutes"], 0, gamebox.MAX_MINUTES)
     out = {"min": mhat}
     for name, signals in rate.items():
@@ -174,8 +167,7 @@ def predict(d: dict[str, np.ndarray], w: dict, minute_extra: list[str], rate: di
         out[name] = np.maximum(base * (1 + x @ w[name][1:]) + w[name][0], 0)
     pct = np.clip(d["pct"] + np.column_stack([d["opp_pct"], d["home"]]) @ w["fg"], 0, 1)
     fg = out["fga"] * pct - FG0 * out["fga"]
-    ftm, fta = d["rate_ftm"] * mhat, d["rate_fta"] * mhat
-    ft = ftm - 0.7973 * fta
+    ft = out["fta"] * (d["ft_pct"] - FT0)
     return np.column_stack([mhat, *(out[k] for k in ("pts", "reb", "ast", "stl", "blk", "tpm", "to")), fg, ft])
 
 

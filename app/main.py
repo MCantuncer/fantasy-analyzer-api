@@ -359,6 +359,7 @@ def create_app(
     app.state.absence_minutes = TTLCache(GAMELOG_TTL, max_items=2048)
     app.state.game_boxes = TTLCache(GAME_BOX_TTL, max_items=2)
     app.state.prior_rates = TTLCache(PAST_GAMES_TTL, max_items=2)
+    app.state.last_season_form = TTLCache(PAST_GAMES_TTL, max_items=2)  # gamebox.carry, per season
     app.state.game_box_jobs = {}
     app.state.absence_jobs: dict[int, asyncio.Task] = {}
     app.state.cards = TTLCache(PLAYER_CARD_TTL, max_items=2048)
@@ -524,12 +525,22 @@ def create_app(
             if prior is None:
                 prior = gamebox.prior_rates(await app.state.espn.season_totals(season - 1), season - 1)
                 app.state.prior_rates.set(season - 1, prior)
+            # Last season's games, for form across the summer: read once a week (they don't change)
+            # and kept as a few decayed sums a player, so a 4-hourly build reads only this season's 30.
+            last = app.state.last_season_form.get(season - 1)
+            if last is None:
+                past: list[gamebox.GameRow] = []
+                for team in sorted(PRO_TEAM_ABBREV):
+                    if team:
+                        past += gamebox.parse_rows(await peek_gamelogs(season - 1, team, past=True), season - 1)
+                last = await run_in_threadpool(gamebox.carry, past)
+                app.state.last_season_form.set(season - 1, last)
             rows: list[gamebox.GameRow] = []
             for team in sorted(PRO_TEAM_ABBREV):
                 if team:
                     rows += gamebox.parse_rows(await peek_gamelogs(season, team, past=False), season)
             schedule = gamebox.parse_schedule(raw)
-            box = await run_in_threadpool(gamebox.build, season, rows, prior, schedule)
+            box = await run_in_threadpool(gamebox.build, season, rows, prior, schedule, last)
             app.state.game_boxes.set(season, box)
             logging.getLogger(__name__).info("league box for %s: %d player games", season, len(rows))
         except EspnError:

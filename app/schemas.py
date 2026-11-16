@@ -87,6 +87,7 @@ class NextGameReason(BaseModel):
         "back_from_absence",
         "heavy_minutes",
         "recent_minutes",
+        "starter_switch",
         "home",
         "away",
         "favored",
@@ -110,9 +111,10 @@ class NextGameLine(NextGameStats):
     """His line for his next game: the per-game line this week's odds count (projection, his last 7
     and 15 days of minutes, minutes a teammate's absence gives him), with points, rebounds, blocks and
     turnovers set to the level players reach (report.NEXT_GAME_LEVEL), then the game itself
-    (analysis/gamebox.py): the opponent's defense in each stat, his last 10 games, teammates ruled
-    out, games he just missed, home court, how favored his team is and back-to-backs, each tested on
-    five seasons (scripts/next_game_matchup_backtest.py)."""
+    (analysis/gamebox.py): the opponent's defense in each stat, his recent form (recent games count most,
+    last season's end included), whether he started his last game, teammates ruled out, games he just
+    missed, home court, how favored his team is and back-to-backs, each tested on five seasons
+    (scripts/next_game_matchup_backtest.py)."""
 
     opponent: str | None = Field(default=None, description="The opponent's abbreviation, when the game is known")
     home: bool | None = Field(default=None, description="True at home, False away, None when the game isn't known")
