@@ -154,6 +154,7 @@ class Game:
     day: int
     opponent: int
     home: bool
+    tip: int | None = None  # tip-off, epoch ms; None when ESPN hasn't set it
 
 
 @dataclass
@@ -182,15 +183,16 @@ class Box:
 
 
 def parse_schedule(pro_schedule: dict) -> dict[int, list[Game]]:
-    """Each NBA team's games from ESPN's pro schedule: day, opponent, home or away."""
+    """Each NBA team's games from ESPN's pro schedule: day, opponent, home or away, tip-off."""
     out: dict[int, dict[int, Game]] = defaultdict(dict)
     for team in (pro_schedule.get("settings") or {}).get("proTeams", []):
         for day, games in (team.get("proGamesByScoringPeriod") or {}).items():
             for g in games or []:
                 home, away = int(g.get("homeProTeamId") or 0), int(g.get("awayProTeamId") or 0)
                 if home and away:
-                    out[home][int(day)] = Game(int(day), away, True)
-                    out[away][int(day)] = Game(int(day), home, False)
+                    tip = None if g.get("startTimeTBD") or not g.get("date") else int(g["date"])
+                    out[home][int(day)] = Game(int(day), away, True, tip)
+                    out[away][int(day)] = Game(int(day), home, False, tip)
     return {t: [games[d] for d in sorted(games)] for t, games in out.items()}
 
 
@@ -301,6 +303,7 @@ class GameContext:
     defense: dict[int, float]  # the opponent's, per stat
     form: Form | None
     games_missed: int
+    tip: int | None = None  # tip-off, epoch ms
 
 
 def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
@@ -318,6 +321,7 @@ def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
         defense=box.defense.get(game.opponent, {}),
         form=f if f is not None and f.team == team else None,
         games_missed=box.games_missed(player, team, game.day),
+        tip=game.tip,
     )
 
 

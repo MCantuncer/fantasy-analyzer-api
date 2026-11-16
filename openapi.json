@@ -7935,6 +7935,18 @@
             "title": "Home",
             "description": "True at home, False away, None when the game isn't known"
           },
+          "tip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tip",
+            "description": "Tip-off, ISO 8601 UTC, when the game and its time are known"
+          },
           "usual": {
             "anyOf": [
               {
@@ -7995,7 +8007,7 @@
           "text": {
             "type": "string",
             "title": "Text",
-            "description": "What it is, in a few words: 'PHX allows 6% more points than usual'"
+            "description": "What it is, in a few words: 'Against PHX', 'James out'"
           },
           "minutes": {
             "type": "number",

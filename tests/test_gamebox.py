@@ -157,14 +157,14 @@ def test_parse_rows_and_schedule():
     sched = {
         "settings": {
             "proTeams": [
-                {"id": 1, "proGamesByScoringPeriod": {"3": [{"homeProTeamId": 1, "awayProTeamId": 2}]}},
-                {"id": 2, "proGamesByScoringPeriod": {"3": [{"homeProTeamId": 1, "awayProTeamId": 2}]}},
+                {"id": 1, "proGamesByScoringPeriod": {"3": [{"homeProTeamId": 1, "awayProTeamId": 2, "date": 5}]}},
+                {"id": 2, "proGamesByScoringPeriod": {"3": [{"homeProTeamId": 1, "awayProTeamId": 2, "date": 5}]}},
             ]
         }
     }
     games = gamebox.parse_schedule(sched)
-    assert games[1] == [gamebox.Game(3, 2, True)]
-    assert games[2] == [gamebox.Game(3, 1, False)]
+    assert games[1] == [gamebox.Game(3, 2, True, 5)]
+    assert games[2] == [gamebox.Game(3, 1, False, 5)]
 
 
 def test_the_next_game_line_says_why(league):
@@ -176,12 +176,12 @@ def test_the_next_game_line_says_why(league):
     p.injury_status = "ACTIVE"
     plain = Analyzer(lg, 3).ref(p).next_game
     assert plain.reasons == [] and plain.usual is None and plain.opponent is None
-    p.game_context = _ctx(opponent=21, defense={PTS: 0.08}, home=True)
+    p.game_context = _ctx(opponent=21, defense={PTS: 0.08}, home=True, tip=1763335800000)
     ng = Analyzer(lg, 3).ref(p).next_game
-    assert ng.opponent == "PHX" and ng.home is True
+    assert ng.opponent == "PHX" and ng.home is True and ng.tip == "2025-11-16T23:30:00Z"
     assert ng.usual is not None and ng.pts > ng.usual.pts
     top = ng.reasons[0]
     assert top.kind == "opponent"
-    assert top.text == "PHX allows 8% more points than usual"
+    assert top.text == "Against PHX"
     assert top.pts > 0 and top.value > 0
     assert [abs(r.value) for r in ng.reasons] == sorted((abs(r.value) for r in ng.reasons), reverse=True)

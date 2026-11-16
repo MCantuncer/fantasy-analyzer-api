@@ -93,7 +93,7 @@ class NextGameReason(BaseModel):
         "underdog",
         "back_to_back",
     ]
-    text: str = Field(description="What it is, in a few words: 'PHX allows 6% more points than usual'")
+    text: str = Field(description="What it is, in a few words: 'Against PHX', 'James out'")
     minutes: float = Field(description="Minutes it adds (+) or takes (-)")
     pts: float = 0.0
     reb: float = 0.0
@@ -116,6 +116,7 @@ class NextGameLine(NextGameStats):
 
     opponent: str | None = Field(default=None, description="The opponent's abbreviation, when the game is known")
     home: bool | None = Field(default=None, description="True at home, False away, None when the game isn't known")
+    tip: str | None = Field(default=None, description="Tip-off, ISO 8601 UTC, when the game and its time are known")
     usual: NextGameStats | None = Field(
         default=None, description="His line on a plain night (no opponent, form, absences): what the reasons move from"
     )

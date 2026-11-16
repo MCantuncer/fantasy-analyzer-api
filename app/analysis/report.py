@@ -232,6 +232,7 @@ def next_game_line(model: CategoryModel, p: Player, teammates: Iterable[Player])
         **_stats(new),
         opponent=PRO_TEAM_ABBREV.get(m.opponent),
         home=m.home,
+        tip=datetime.fromtimestamp(m.tip / 1000, UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if m.tip else None,
         usual=schemas.NextGameStats(**_stats(usual)),
         reasons=[r for r in reasons if abs(r.value) >= MIN_REASON_VALUE][:MAX_REASONS],
     )
@@ -310,16 +311,10 @@ def _reason(r: gamebox.Reason, m: gamebox.GameContext, pct: float, fga: float) -
 def _reason_text(r: gamebox.Reason, m: gamebox.GameContext) -> str:
     """A few words a manager reads at a glance."""
     if r.kind == "opponent":
-        opp = PRO_TEAM_ABBREV.get(m.opponent, "They")
-        k = _top_stat(r)
-        share = m.defense.get(k, 0.0)
-        verb = "forces" if k == TO else "allows"
-        more = "more" if share >= 0 else "fewer"
-        return f"{opp} {verb} {abs(share):.0%} {more} {STAT_WORDS[k]} than usual"
+        # What the opponent gives up shows in the numbers; one stat named here would hide the others.
+        return f"Against {PRO_TEAM_ABBREV.get(m.opponent, 'this team')}"
     if r.kind == "form":
-        k = _top_stat(r)
-        word = "more" if r.stats.get(k, 0.0) >= 0 else "fewer"
-        return f"Last {gamebox.FORM_GAMES} games: {word} {STAT_WORDS[k]} a minute"
+        return f"His last {gamebox.FORM_GAMES} games"
     if r.kind == "teammates_out":
         names = [n.split(" ")[-1] for n in str(r.detail.get("names", "")).split(", ") if n]
         return f"{' and '.join(names[:2])}{' and others' if len(names) > 2 else ''} out" if names else "Teammates out"
@@ -327,7 +322,7 @@ def _reason_text(r: gamebox.Reason, m: gamebox.GameContext) -> str:
         n = int(r.detail.get("games", 0))
         return f"First game back after {n} missed" if n > 1 else "First game back"
     if r.kind == "heavy_minutes":
-        return "Minutes this heavy rarely hold"
+        return "Big minutes ease off"
     if r.kind == "recent_minutes":
         return "More minutes lately" if r.minutes > 0 else "Fewer minutes lately"
     if r.kind == "home":
@@ -338,11 +333,6 @@ def _reason_text(r: gamebox.Reason, m: gamebox.GameContext) -> str:
         word = "Favored" if r.kind == "favored" else "Underdog"
         return f"{word} by {abs(m.margin):.0f}"
     return "Second night of a back-to-back"
-
-
-def _top_stat(r: gamebox.Reason) -> int:
-    """The category this reason moves most, in value."""
-    return max(STAT_WORDS, key=lambda k: abs(r.stats.get(k, 0.0)) / SCALE[k][1])
 
 
 class Analyzer:
