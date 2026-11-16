@@ -65,5 +65,7 @@ def test_games_without_a_box_or_not_over_do_not_count():
     blank = {**box["games"][0], "away": {**box["games"][0]["away"], "score": 0}}
     blank["home"] = {**blank["home"], "score": 0}
     assert result_of(blank, DEN, 1, None) is None
+    level = {**box["games"][0], "home": {**box["games"][0]["home"], "score": 110}}
+    assert result_of(level, DEN, 1, None) is None  # a box missing players' lines, not a tie
     assert result_of(box["games"][0], LAL, 1, None) is None  # not in it
     assert team_season(sched, DEN, {}, TIP).streak is None

@@ -101,8 +101,8 @@ def result_of(game: dict, team_id: int, day: int, date: str | None) -> Result | 
         return None
     them = sides["home" if mine == "away" else "away"]
     pts, opp = sides[mine].get("score"), them.get("score")
-    if pts is None or opp is None or (pts == 0 and opp == 0):
-        return None  # no box yet for a game that should be over
+    if pts is None or opp is None or pts == opp:
+        return None  # no box yet for a game that should be over, or half of one: NBA games don't tie
     lines = [ln for ln in game.get("lines", []) if ln.get("pro_team_id") == team_id]
     best = max(lines, key=lambda ln: (ln.get("pts", 0), ln.get("reb", 0) + ln.get("ast", 0)), default=None)
     return Result(
