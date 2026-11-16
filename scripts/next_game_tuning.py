@@ -236,9 +236,10 @@ def main() -> None:
     ship = {s: np.mean((act[d["season"] == s] - shipped[d["season"] == s]) ** 2, axis=0) for s in seasons}
 
     base_l, base_f = blind(d, seasons, [], rate_spec())
-    g_l, g_f = gains(ship, base_l), gains({s: ship[s] if base_f[s] is not None else None for s in seasons}, {
-        s: base_f[s] for s in seasons
-    })
+    g_l, g_f = (
+        gains(ship, base_l),
+        gains({s: ship[s] if base_f[s] is not None else None for s in seasons}, {s: base_f[s] for s in seasons}),
+    )
     w_all = fit(d, np.ones(len(d["lm"]), dtype=bool), [], rate_spec())
     lines = [
         "# Next-game weights check",
