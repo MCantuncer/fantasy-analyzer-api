@@ -78,7 +78,7 @@ from app.news.sources import SOURCES as NEWS_SOURCE_LIST
 from app.news.verify import FACT_SOURCE, describe_fact
 from app.playercard import Card as ParsedCard
 from app.playercard import parse_card
-from app.playersearch import IndexPlayer, injury_tag, parse_index
+from app.playersearch import IndexPlayer, injury_tag, on_roster, parse_index
 from app.reader import DEEP_BATCH_MAX, DeepReader, NoteReader, Reading, create_deep_reader, create_reader
 from app.recap import VERSION as RECAP_VERSION
 from app.recap import Week as RecapWeek
@@ -3201,6 +3201,7 @@ def create_app(
             run_in_threadpool(app.state.news.states),
         )
         owners = {p.id: t.id for t in league.teams for p in t.roster}
+        now = app.state.now()
         hurt = {p.id: p.injury_status for t in league.teams for p in t.roster}
         hurt.update({pid: s.status for pid, s in states.items() if pid not in hurt})
         index = schemas.PlayerIndex(
@@ -3215,6 +3216,7 @@ def create_app(
                     percent_owned=p.percent_owned,
                     owner_team_id=owners.get(p.id),
                     injury_status=injury_tag(hurt.get(p.id)),
+                    on_roster=on_roster(p, now, p.id in owners),
                 )
                 for p in players
             ],
