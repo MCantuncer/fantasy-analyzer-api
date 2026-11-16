@@ -66,6 +66,8 @@ from app.garbagetime import SummaryBook
 from app.lineup import next_game, open_slots, parse_lineup, slot_name, team_days, week_of
 from app.mail import Mailer, create_mailer, reset_email, site_url
 from app.memory import give_back_after, limit_arenas
+from app.nbateam import LATEST as TEAM_LATEST
+from app.nbateam import played_days, team_id_of, team_season
 from app.news.extract import timeline
 from app.news.facts import PlayerState, parse_states
 from app.news.service import KEEP as NEWS_KEEP
@@ -3223,6 +3225,73 @@ def create_app(
             zipped = {"Content-Encoding": "gzip", "Vary": "Accept-Encoding"}
             return Response(gzip.compress(raw, 6), media_type="application/json", headers=zipped)
         return Response(raw, media_type="application/json", headers={"Vary": "Accept-Encoding"})
+
+    @app.post(
+        "/api/nba-team",
+        response_model=schemas.NbaTeam,
+        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+    )
+    async def nba_team(
+        body: schemas.NbaTeamRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.NbaTeam:
+        """An NBA team's record, last five results and next game, for the team card the header search
+        opens. Built from the Scores page's day boxes, so a finished day costs no new ESPN call."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        sched = await score_calendar(season)
+        team_id = team_id_of(sched, body.team)
+        if team_id is None:
+            raise HTTPException(404, detail={"code": "no_team", "message": f"No NBA team {body.team}."})
+        now = app.state.now()
+        days = played_days(sched, team_id, now)
+        gate = asyncio.Semaphore(6)  # a cold server reads a few days at a time, not the whole season at once
+
+        async def one(day: int) -> tuple[int, dict]:
+            async with gate:
+                return day, await score_day(season, day, body.league_id, creds, sched)
+
+        boxes = dict(await asyncio.gather(*(one(d) for d in days)))
+        team = team_season(sched, team_id, boxes, now)
+
+        def side(abbrev: str) -> str:
+            return next((name for ab, name in sched.teams.values() if ab == abbrev), abbrev)
+
+        nxt = team.next_game
+        streak = team.streak
+        return schemas.NbaTeam(
+            abbrev=team.abbrev,
+            name=team.name,
+            wins=team.wins,
+            losses=team.losses,
+            streak=f"{streak[0]}{streak[1]}" if streak else None,
+            latest=[
+                schemas.TeamResult(
+                    game_id=r.game_id,
+                    date=r.date,
+                    start=r.start,
+                    home=r.home,
+                    opponent=r.opponent,
+                    opponent_name=r.opponent_name or side(r.opponent),
+                    points=r.points,
+                    opponent_points=r.opponent_points,
+                    won=r.won,
+                    top=schemas.TeamScorer(**r.top.__dict__) if r.top else None,
+                )
+                for r in reversed(team.results[-TEAM_LATEST:])
+            ],
+            next_game=schemas.TeamNextGame(
+                start=nxt.start.isoformat().replace("+00:00", "Z"),
+                home=nxt.home == team_id,
+                opponent=sched.teams[opp][0],
+                opponent_name=sched.teams[opp][1],
+            )
+            if nxt and (opp := nxt.away if nxt.home == team_id else nxt.home) in sched.teams
+            else None,
+        )
 
     async def card_next_game(
         league_id: int, season: int, player_id: int, creds: EspnCredentials | None

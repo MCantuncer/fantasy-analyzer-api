@@ -4039,6 +4039,115 @@
         }
       }
     },
+    "/api/nba-team": {
+      "post": {
+        "summary": "Nba Team",
+        "description": "An NBA team's record, last five results and next game, for the team card the header search\nopens. Built from the Scores page's day boxes, so a finished day costs no new ESPN call.",
+        "operationId": "nba_team_api_nba_team_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NbaTeamRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NbaTeam"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/player-card": {
       "post": {
         "summary": "Player Card",
@@ -7564,6 +7673,102 @@
           "name"
         ],
         "title": "MyLeague"
+      },
+      "NbaTeam": {
+        "properties": {
+          "abbrev": {
+            "type": "string",
+            "title": "Abbrev"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "wins": {
+            "type": "integer",
+            "title": "Wins"
+          },
+          "losses": {
+            "type": "integer",
+            "title": "Losses"
+          },
+          "streak": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Streak",
+            "description": "\"W3\" for three wins in a row; null before the first game"
+          },
+          "latest": {
+            "items": {
+              "$ref": "#/components/schemas/TeamResult"
+            },
+            "type": "array",
+            "title": "Latest",
+            "description": "The last five results, most recent first"
+          },
+          "next_game": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamNextGame"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "abbrev",
+          "name",
+          "wins",
+          "losses",
+          "streak",
+          "latest",
+          "next_game"
+        ],
+        "title": "NbaTeam",
+        "description": "An NBA team at a glance: record, latest results and next game. The roster is the player index's."
+      },
+      "NbaTeamRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "team": {
+            "type": "string",
+            "maxLength": 5,
+            "minLength": 1,
+            "title": "Team",
+            "description": "NBA team abbreviation as ESPN writes it: DEN, GS, UTAH"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "team"
+        ],
+        "title": "NbaTeamRequest"
       },
       "NewsCheck": {
         "properties": {
@@ -12580,6 +12785,108 @@
         ],
         "title": "TeamLinkVerify"
       },
+      "TeamNextGame": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "home": {
+            "type": "boolean",
+            "title": "Home"
+          },
+          "opponent": {
+            "type": "string",
+            "title": "Opponent"
+          },
+          "opponent_name": {
+            "type": "string",
+            "title": "Opponent Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "home",
+          "opponent",
+          "opponent_name"
+        ],
+        "title": "TeamNextGame"
+      },
+      "TeamResult": {
+        "properties": {
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date",
+            "description": "US game date, YYYY-MM-DD"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "home": {
+            "type": "boolean",
+            "title": "Home"
+          },
+          "opponent": {
+            "type": "string",
+            "title": "Opponent",
+            "description": "Opponent abbreviation"
+          },
+          "opponent_name": {
+            "type": "string",
+            "title": "Opponent Name"
+          },
+          "points": {
+            "type": "integer",
+            "title": "Points"
+          },
+          "opponent_points": {
+            "type": "integer",
+            "title": "Opponent Points"
+          },
+          "won": {
+            "type": "boolean",
+            "title": "Won"
+          },
+          "top": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamScorer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "This team's top scorer in the game"
+          }
+        },
+        "type": "object",
+        "required": [
+          "game_id",
+          "date",
+          "start",
+          "home",
+          "opponent",
+          "opponent_name",
+          "points",
+          "opponent_points",
+          "won",
+          "top"
+        ],
+        "title": "TeamResult"
+      },
       "TeamRoster": {
         "properties": {
           "team_id": {
@@ -12605,6 +12912,39 @@
           "players"
         ],
         "title": "TeamRoster"
+      },
+      "TeamScorer": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pts": {
+            "type": "integer",
+            "title": "Pts"
+          },
+          "reb": {
+            "type": "integer",
+            "title": "Reb"
+          },
+          "ast": {
+            "type": "integer",
+            "title": "Ast"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pts",
+          "reb",
+          "ast"
+        ],
+        "title": "TeamScorer"
       },
       "TeamSummary": {
         "properties": {
