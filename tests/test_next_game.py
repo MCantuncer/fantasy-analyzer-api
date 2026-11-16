@@ -105,3 +105,62 @@ def test_no_card_next_game_for_a_player_the_league_doesnt_list(client):
     assert got.status_code in (200, 404)
     if got.status_code == 200:
         assert got.json()["next_game"] is None
+
+
+def test_a_free_agent_past_the_ones_the_league_reads_has_his_next_game_too(recorded, pro_schedule):
+    # Can, 2026-11-16: Will Richard (0.2% owned, on waivers) had no Next game: a league load reads only
+    # the most-owned free agents, so the card reads a deeper one on his own.
+    import json
+
+    import httpx
+
+    from app.accounts import MemoryAccountStore
+    from app.espn.client import EspnClient
+    from app.main import create_app
+    from app.store import MemoryStore
+    from tests.conftest import LEAGUE_ID, FakeEspn, signed_in
+    from tests.test_playercard import entry
+
+    recorded = copy.deepcopy(recorded)
+    for e in recorded["free_agents"]:
+        for block in e["player"].get("stats") or []:
+            for key in ("averageStats", "stats"):
+                if block.get(key):
+                    block[key].setdefault("40", 30.0 if key == "averageStats" else 30.0 * block[key].get("42", 1))
+    deep = recorded["free_agents"].pop()  # not in the league's free agent list any more
+    pid = int(deep["player"]["id"])
+    schedule = copy.deepcopy(pro_schedule)  # the card reads game ids and sides from it
+    ids = iter(range(1, 10**6))
+    for team in schedule["settings"]["proTeams"]:
+        for games in (team.get("proGamesByScoringPeriod") or {}).values():
+            for g in games:
+                g.setdefault("id", next(ids))
+                g.setdefault("awayProTeamId", team["id"])
+                g.setdefault("homeProTeamId", team["id"])
+    fake = FakeEspn(recorded, schedule=schedule)
+    asked: list[list[int]] = []
+
+    def espn(request: httpx.Request) -> httpx.Response:
+        flt = json.loads(request.headers.get("x-fantasy-filter") or "{}").get("players") or {}
+        if request.url.params.get("view") == "kona_playercard":
+            card = entry()
+            card["id"] = card["player"]["id"] = pid
+            return httpx.Response(200, json={"players": [card]})
+        if request.url.params.get("view") == "kona_player_info" and "filterIds" in flt:
+            asked.append(flt["filterIds"]["value"])
+            return httpx.Response(200, json={"players": [deep] if pid in flt["filterIds"]["value"] else []})
+        return fake.handler(request)
+
+    app = create_app(
+        EspnClient(transport=httpx.MockTransport(espn)), store=MemoryStore(), accounts=MemoryAccountStore()
+    )
+    client = signed_in(app, team_id=None)
+    body = {"league_id": LEAGUE_ID, "season": 2027, "player_id": pid}
+    got = client.post("/api/player-card/extras", json=body)
+    assert got.status_code == 200, got.text
+    ng = got.json()["next_game"]
+    assert ng is not None and ng["minutes"] > 0
+    assert [pid] in asked
+    # Read once, then cached.
+    client.post("/api/player-card/extras", json=body)
+    assert asked.count([pid]) == 1
