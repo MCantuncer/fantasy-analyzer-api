@@ -3930,6 +3930,115 @@
         }
       }
     },
+    "/api/players/index": {
+      "post": {
+        "summary": "Players Index",
+        "description": "Every NBA player this season with who has him in this league, for the header search. The\ndevice filters it with each key press, so this is asked once, not once a key.",
+        "operationId": "players_index_api_players_index_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeagueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayerIndex"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/player-card": {
       "post": {
         "summary": "Player Card",
@@ -6369,6 +6478,66 @@
         ],
         "title": "HotRun",
         "description": "What a hot run over his last 15 days was made of, and how much of it tends to last (analysis/form.py)."
+      },
+      "IndexedPlayer": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pro_team": {
+            "type": "string",
+            "title": "Pro Team",
+            "description": "NBA team abbreviation; empty when he is on no NBA team"
+          },
+          "position": {
+            "type": "string",
+            "title": "Position"
+          },
+          "percent_owned": {
+            "type": "number",
+            "title": "Percent Owned",
+            "description": "Share of ESPN leagues that roster him, 0-100"
+          },
+          "owner_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team Id",
+            "description": "His team in this league; null for a free agent"
+          },
+          "injury_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Injury Status",
+            "description": "ESPN injury status (OUT, DAY_TO_DAY...) when known; null when healthy"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pro_team",
+          "position",
+          "percent_owned",
+          "owner_team_id"
+        ],
+        "title": "IndexedPlayer"
       },
       "InjuryImpact": {
         "properties": {
@@ -9187,6 +9356,33 @@
           "stats"
         ],
         "title": "PlayerGame"
+      },
+      "PlayerIndex": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "title": "League Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/IndexedPlayer"
+            },
+            "type": "array",
+            "title": "Players"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "season",
+          "players"
+        ],
+        "title": "PlayerIndex",
+        "description": "Every NBA player this season, for search as you type: the device filters, not the server."
       },
       "PlayerMove": {
         "properties": {
