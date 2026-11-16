@@ -7910,6 +7910,49 @@
             ],
             "title": "Ft Pct",
             "description": "FTM / FTA; none without attempts"
+          },
+          "opponent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opponent",
+            "description": "The opponent's abbreviation, when the game is known"
+          },
+          "home": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Home",
+            "description": "True at home, False away, None when the game isn't known"
+          },
+          "usual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NextGameStats"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "His line on a plain night (no opponent, form, absences): what the reasons move from"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/components/schemas/NextGameReason"
+            },
+            "type": "array",
+            "title": "Reasons",
+            "description": "Biggest first, by value"
           }
         },
         "type": "object",
@@ -7928,7 +7971,186 @@
           "fta"
         ],
         "title": "NextGameLine",
-        "description": "His line for his next game: the per-game line this week's odds count (projection, his last 7\nand 15 days of minutes, minutes a teammate's absence gives him), with points, rebounds, blocks and\nturnovers set to the level players reach (report.NEXT_GAME_LEVEL). Matchup context (his past games\nagainst the opponent or its type of center, opponent strength, former team, streaks) was tested on\nfive seasons and moved a game's miss by under 0.1% beyond who he is (scripts/next_game_backtest.py)."
+        "description": "His line for his next game: the per-game line this week's odds count (projection, his last 7\nand 15 days of minutes, minutes a teammate's absence gives him), with points, rebounds, blocks and\nturnovers set to the level players reach (report.NEXT_GAME_LEVEL), then the game itself\n(analysis/gamebox.py): the opponent's defense in each stat, his last 10 games, teammates ruled\nout, games he just missed, home court, how favored his team is and back-to-backs, each tested on\nfive seasons (scripts/next_game_matchup_backtest.py)."
+      },
+      "NextGameReason": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "opponent",
+              "form",
+              "teammates_out",
+              "back_from_absence",
+              "heavy_minutes",
+              "recent_minutes",
+              "home",
+              "away",
+              "favored",
+              "underdog",
+              "back_to_back"
+            ],
+            "title": "Kind"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "What it is, in a few words: 'PHX allows 6% more points than usual'"
+          },
+          "minutes": {
+            "type": "number",
+            "title": "Minutes",
+            "description": "Minutes it adds (+) or takes (-)"
+          },
+          "pts": {
+            "type": "number",
+            "title": "Pts",
+            "default": 0.0
+          },
+          "reb": {
+            "type": "number",
+            "title": "Reb",
+            "default": 0.0
+          },
+          "ast": {
+            "type": "number",
+            "title": "Ast",
+            "default": 0.0
+          },
+          "stl": {
+            "type": "number",
+            "title": "Stl",
+            "default": 0.0
+          },
+          "blk": {
+            "type": "number",
+            "title": "Blk",
+            "default": 0.0
+          },
+          "three_pm": {
+            "type": "number",
+            "title": "Three Pm",
+            "default": 0.0
+          },
+          "to": {
+            "type": "number",
+            "title": "To",
+            "default": 0.0
+          },
+          "fg_pct": {
+            "type": "number",
+            "title": "Fg Pct",
+            "description": "Change in FG%, as a share (+0.012 = 1.2 points of FG%)",
+            "default": 0.0
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "Its 9-category value a game (TO counted against), to rank reasons by"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "text",
+          "minutes",
+          "value"
+        ],
+        "title": "NextGameReason",
+        "description": "One thing about the game that moves his line away from his usual one (analysis/gamebox.py)."
+      },
+      "NextGameStats": {
+        "properties": {
+          "minutes": {
+            "type": "number",
+            "title": "Minutes"
+          },
+          "pts": {
+            "type": "number",
+            "title": "Pts"
+          },
+          "reb": {
+            "type": "number",
+            "title": "Reb"
+          },
+          "ast": {
+            "type": "number",
+            "title": "Ast"
+          },
+          "stl": {
+            "type": "number",
+            "title": "Stl"
+          },
+          "blk": {
+            "type": "number",
+            "title": "Blk"
+          },
+          "three_pm": {
+            "type": "number",
+            "title": "Three Pm"
+          },
+          "to": {
+            "type": "number",
+            "title": "To"
+          },
+          "fgm": {
+            "type": "number",
+            "title": "Fgm"
+          },
+          "fga": {
+            "type": "number",
+            "title": "Fga"
+          },
+          "ftm": {
+            "type": "number",
+            "title": "Ftm"
+          },
+          "fta": {
+            "type": "number",
+            "title": "Fta"
+          },
+          "fg_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fg Pct",
+            "description": "FGM / FGA; none without attempts"
+          },
+          "ft_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ft Pct",
+            "description": "FTM / FTA; none without attempts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "minutes",
+          "pts",
+          "reb",
+          "ast",
+          "stl",
+          "blk",
+          "three_pm",
+          "to",
+          "fgm",
+          "fga",
+          "ftm",
+          "fta"
+        ],
+        "title": "NextGameStats",
+        "description": "A per-game line: minutes and the nine categories' stats."
       },
       "NoteRead": {
         "properties": {

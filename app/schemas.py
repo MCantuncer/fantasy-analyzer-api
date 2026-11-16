@@ -58,12 +58,8 @@ class PlayerBadge(BaseModel):
     reason: str
 
 
-class NextGameLine(BaseModel):
-    """His line for his next game: the per-game line this week's odds count (projection, his last 7
-    and 15 days of minutes, minutes a teammate's absence gives him), with points, rebounds, blocks and
-    turnovers set to the level players reach (report.NEXT_GAME_LEVEL). Matchup context (his past games
-    against the opponent or its type of center, opponent strength, former team, streaks) was tested on
-    five seasons and moved a game's miss by under 0.1% beyond who he is (scripts/next_game_backtest.py)."""
+class NextGameStats(BaseModel):
+    """A per-game line: minutes and the nine categories' stats."""
 
     minutes: float
     pts: float
@@ -79,6 +75,51 @@ class NextGameLine(BaseModel):
     fta: float
     fg_pct: float | None = Field(default=None, description="FGM / FGA; none without attempts")
     ft_pct: float | None = Field(default=None, description="FTM / FTA; none without attempts")
+
+
+class NextGameReason(BaseModel):
+    """One thing about the game that moves his line away from his usual one (analysis/gamebox.py)."""
+
+    kind: Literal[
+        "opponent",
+        "form",
+        "teammates_out",
+        "back_from_absence",
+        "heavy_minutes",
+        "recent_minutes",
+        "home",
+        "away",
+        "favored",
+        "underdog",
+        "back_to_back",
+    ]
+    text: str = Field(description="What it is, in a few words: 'PHX allows 6% more points than usual'")
+    minutes: float = Field(description="Minutes it adds (+) or takes (-)")
+    pts: float = 0.0
+    reb: float = 0.0
+    ast: float = 0.0
+    stl: float = 0.0
+    blk: float = 0.0
+    three_pm: float = 0.0
+    to: float = 0.0
+    fg_pct: float = Field(default=0.0, description="Change in FG%, as a share (+0.012 = 1.2 points of FG%)")
+    value: float = Field(description="Its 9-category value a game (TO counted against), to rank reasons by")
+
+
+class NextGameLine(NextGameStats):
+    """His line for his next game: the per-game line this week's odds count (projection, his last 7
+    and 15 days of minutes, minutes a teammate's absence gives him), with points, rebounds, blocks and
+    turnovers set to the level players reach (report.NEXT_GAME_LEVEL), then the game itself
+    (analysis/gamebox.py): the opponent's defense in each stat, his last 10 games, teammates ruled
+    out, games he just missed, home court, how favored his team is and back-to-backs, each tested on
+    five seasons (scripts/next_game_matchup_backtest.py)."""
+
+    opponent: str | None = Field(default=None, description="The opponent's abbreviation, when the game is known")
+    home: bool | None = Field(default=None, description="True at home, False away, None when the game isn't known")
+    usual: NextGameStats | None = Field(
+        default=None, description="His line on a plain night (no opponent, form, absences): what the reasons move from"
+    )
+    reasons: list[NextGameReason] = Field(default_factory=list, description="Biggest first, by value")
 
 
 class HotRun(BaseModel):

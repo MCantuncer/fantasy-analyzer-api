@@ -63,7 +63,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 📝 | **Trade feedback and rules:** rate a trade idea and have it checked against today's league; your own rules hide ideas that break them | `/api/trade-feedback`, `/api/trade-check`, `/api/trade-rules` |
 | 📈 | **Usage numbers:** daily visitors, page views and sign-ups, with no cookies or ids: a visitor is a hash under a salt that is deleted each day | `/api/usage` |
 | 🔥 | **Straw fire or bigger role:** a player on a hot run over his last 15 days gets what it was made of (more minutes, more shots per minute, hot shooting) and how much of it tends to last, checked on five seasons | `/api/analyze`, `/api/player-card` |
-| 🎯 | **Next game:** every player's line for his next game (minutes, points, rebounds, assists, steals, blocks, threes, turnovers, FG% and FT%), the line this week's odds count, set to the level players reach, plus the minutes teammates ruled out of that game leave him; matchup context was tested on five seasons and left out; on FA Targets and on every player card | `/api/analyze`, `/api/player-card/extras` |
+| 🎯 | **Next game:** every player's line for his next game (minutes, points, rebounds, assists, steals, blocks, threes, turnovers, FG% and FT%), the line this week's odds count, set to the level players reach, plus the minutes teammates ruled out of that game leave him, then the game itself: the opponent's defense in each stat, his last 10 games, teammates' shots freed by injuries, a first game back, home court, how favored his team is and back-to-backs; each line carries its usual line and the reasons it moved ("PHX allows 6% more points than usual"); on FA Targets and on every player card | `/api/analyze`, `/api/player-card/extras` |
 | 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |
 | 💬 | **Moves feed and league chat:** transactions, posts, replies and reactions | `/api/feed`, `/api/posts` |
 | 🔐 | **Accounts and verified managers:** email or Google sign-in, password reset by email, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
@@ -419,6 +419,29 @@ uv run python -m scripts.next_game_backtest
 - **The line's level:** what players did ran 3% under the line in points (0.966 to 0.971 fitted one season left out at a time) and rebounds (0.961 to 0.967), 9% in blocks and 5% in turnovers, on the same minutes, in every season. The next-game line uses these (`NEXT_GAME_LEVEL`): a game's mean miss in points goes from 4.94 to 4.91, and for stars (22+ points) the squared miss drops 1.2% to 2.1%.
 
 A single game is mostly noise: a player's points miss his line by about 5 on average, whatever is known before tip-off.
+
+### Next-game matchup backtest
+
+Replays the next-game line with the game in it (`app/analysis/gamebox.py`) day by day on five seasons, with the league box built from every game played before that day, against today's line and the player's season average:
+
+```sh
+uv run python -m scripts.next_game_matchup_backtest
+```
+
+| Category | Mean miss: season average | Today's line | With the game | Less squared miss than today's line, 2021-22 to 2025-26 |
+| --- | --- | --- | --- | --- |
+| Minutes | 5.009 | 4.619 | 4.551 | +4.1% +4.1% +4.5% +4.8% +6.1% |
+| Points | 4.961 | 4.906 | 4.841 | +2.3% +2.1% +2.5% +1.9% +2.4% |
+| Rebounds | 2.013 | 1.993 | 1.961 | +1.7% +2.8% +2.0% +1.5% +2.8% |
+| Assists | 1.443 | 1.442 | 1.416 | +2.9% +3.1% +2.6% +2.4% +2.0% |
+| Steals | 0.748 | 0.745 | 0.736 | +1.1% +1.0% +0.8% +0.6% +1.2% |
+| Blocks | 0.553 | 0.553 | 0.551 | +1.0% +1.2% +1.6% +1.1% +1.3% |
+| Threes | 0.943 | 0.950 | 0.934 | +2.0% +1.3% +1.3% +1.1% +1.3% |
+| Turnovers | 0.963 | 0.950 | 0.941 | +1.0% +1.4% +1.0% +1.4% +1.8% |
+| FG (makes over league rate) | 1.175 | 1.155 | 1.151 | +0.8% +0.5% +0.6% +0.4% +0.8% |
+| FT (makes over league rate) | 0.469 | 0.465 | 0.464 | +0.0% +0.4% +0.1% +0.0% +0.1% |
+
+The signals and weights were picked on these seasons (one season left out at a time, and again fitted on earlier seasons only): each kept signal lowered the squared miss in all five. Kept: the opponent's defense in each stat, measured as what the players it faced made over what they usually make a minute (raw points allowed was half as good; a split by guards, wings and bigs added nothing); his last 10 games a minute (about a third of the gap lasts for points, rebounds and assists); teammates ruled out, by their shots a game (more points, assists and turnovers a minute) and their minutes (more minutes for bench players); games he just missed (about 0.6 minutes fewer for each); lines over 36 minutes (lower); home court (assists, FG%); how favored his team is (blocks); a back-to-back (steals). Not kept: his history against the team, pace, travel and time zones, altitude, tip time, back-to-backs for minutes, the opponent's injuries, playing a former team, tanking late in the season. A gradient-boosted model on all of them did about one point better (points +3.1% to +4.2%) but can't name its reasons. Even knowing a player's true level and his real minutes in hindsight, his points miss by about 4 a game.
 
 ### Vision-trade backtest
 

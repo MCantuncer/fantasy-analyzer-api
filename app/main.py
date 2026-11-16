@@ -14,6 +14,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, date, datetime, timedelta
+from itertools import chain
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
@@ -39,7 +40,7 @@ from app.accounts import (
     team_of,
     verify_google,
 )
-from app.analysis import absence, teammates
+from app.analysis import absence, gamebox, teammates
 from app.analysis.checks import REASON_CHECKS, IdeaChecker, StaleIdea, focus_order
 from app.analysis.checks import TITLES as CHECK_TITLES
 from app.analysis.daily import trade_of_the_day
@@ -56,7 +57,7 @@ from app.analysis.shop import ShopAnalyzer, ShopError
 from app.analysis.target import TargetAnalyzer, TargetError
 from app.cache import TTLCache, credentials_key
 from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFound, LeaguePrivate
-from app.espn.parse import League, parse_calendar, parse_league, proven_players
+from app.espn.parse import PRO_TEAM_ABBREV, League, parse_calendar, parse_league, proven_players
 from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
 from app.gameclock import apply_clocks, apply_on_court, fetch_clocks, fetch_on_court
@@ -142,6 +143,9 @@ GAMELOG_TTL = 3 * 3600.0
 MIN_RELEVANT_MINUTES = 15.0
 MIN_MINUTES_GAIN = 1.0  # minutes per game; a smaller rise is not worth listing
 PAST_GAMELOG_TTL = 7 * 24 * 3600.0
+# The league box behind next-game lines (analysis/gamebox.py): all 30 teams' game logs, read again
+# a few times a day so last night's games count by the morning.
+GAME_BOX_TTL = 4 * 3600.0
 GAMELOG_BATCH = 40  # players per game-log request: every line of a season is ~30 KB a player
 IMPACT_METHOD = (
     "Each teammate's minutes and per-minute stats in games his team played without him, against games he "
@@ -348,6 +352,9 @@ def create_app(
     app.state.past_gamelogs = TTLCache(PAST_GAMELOG_TTL, max_items=64)
     # (season, player id) -> teammates.Measured: what his absence does to his teammates' minutes.
     app.state.absence_minutes = TTLCache(GAMELOG_TTL, max_items=2048)
+    app.state.game_boxes = TTLCache(GAME_BOX_TTL, max_items=2)
+    app.state.prior_rates = TTLCache(PAST_GAMES_TTL, max_items=2)
+    app.state.game_box_jobs = {}
     app.state.absence_jobs: dict[int, asyncio.Task] = {}
     app.state.cards = TTLCache(PLAYER_CARD_TTL, max_items=2048)
     app.state.card_stories = TTLCache(CARD_NEWS_TTL, max_items=4)
@@ -478,6 +485,51 @@ def create_app(
         if missing:
             start_measuring(league.id, season, missing)
 
+    def attach_game_contexts(league: League) -> None:
+        """Each player's next game as the league box sees it (gamebox.py), for next-game lines.
+
+        The box reads all 30 teams' game logs, too slow for a league load: a load uses the box
+        already built for the season (shared by every league) and starts one background build when
+        there is none, which the next load of the league picks up. Without it lines stay as before.
+        """
+        cal = league.calendar
+        if cal is None:
+            return
+        box = app.state.game_boxes.get(league.season)
+        if box is None:
+            start_game_box(league.season)
+            return
+        for p in chain((p for t in league.teams for p in t.roster), league.free_agents):
+            p.game_context = gamebox.context(box, p.id, p.pro_team_id, cal.today)
+
+    def start_game_box(season: int) -> None:
+        job = app.state.game_box_jobs.get(season)
+        if job is not None and not job.done():
+            return
+        app.state.game_box_jobs[season] = asyncio.create_task(build_game_box(season))
+
+    async def build_game_box(season: int) -> None:
+        """Every team's games so far, kept only as the small box (defenses, margins, recent games)."""
+        try:
+            raw = await pro_schedule(season)
+            if raw is None:
+                return
+            prior = app.state.prior_rates.get(season - 1)
+            if prior is None:
+                prior = gamebox.prior_rates(await app.state.espn.season_totals(season - 1), season - 1)
+                app.state.prior_rates.set(season - 1, prior)
+            rows: list[gamebox.GameRow] = []
+            for team in sorted(PRO_TEAM_ABBREV):
+                if team:
+                    rows += gamebox.parse_rows(await peek_gamelogs(season, team, past=False), season)
+            schedule = gamebox.parse_schedule(raw)
+            box = await run_in_threadpool(gamebox.build, season, rows, prior, schedule)
+            app.state.game_boxes.set(season, box)
+        except EspnError:
+            return  # lines stay as before; a later load tries again
+        except Exception:
+            logging.getLogger(__name__).exception("building the league box failed for %s", season)
+
     def start_measuring(league_id: int, season: int, wanted: list[tuple[int, int]]) -> None:
         """One measuring job per season at a time; absences it doesn't cover wait for the next load."""
         job = app.state.absence_jobs.get(season)
@@ -588,6 +640,7 @@ def create_app(
                 attach_durability(league, past, await past_absences(league, past) if past else None)
                 await attach_absences(league)
                 attach_teammate_minutes(league)
+                attach_game_contexts(league)
             app.state.leagues.set(key, league)
         return league
 

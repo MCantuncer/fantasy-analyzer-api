@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from app.analysis.form import HotRun, hot_run
+from app.analysis.gamebox import GameContext
 from app.espn.ages import season_age
 
 # ESPN stat ids for basketball.
@@ -133,6 +134,7 @@ class Player:
     # This week's projection leans on them (CategoryModel.horizon_row, RECENT_MINUTES_WEIGHTS).
     recent_minutes: tuple[float | None, float | None] = (None, None)
     hot_run: HotRun | None = None  # what a hot last 15 days was made of (analysis/form.py)
+    game_context: GameContext | None = None  # his next game: opponent, home, his recent games (analysis/gamebox.py)
 
     @property
     def available(self) -> bool:
