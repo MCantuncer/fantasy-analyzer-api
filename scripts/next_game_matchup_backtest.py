@@ -11,7 +11,8 @@ three lines are compared with what he did:
     leave him (tonight.py), at NEXT_GAME_LEVEL,
   * the same line through gamebox.apply, with the league box built by gamebox.build from every
     game played before that day (all 30 teams' game logs), last season's per-minute lines as the
-    start, and the NBA schedule (opponent, home, back-to-back).
+    start, last season's games for form across the summer (gamebox.carry), and the NBA schedule
+    (opponent, home, back-to-back).
 
 This runs the app's own code day by day, so it checks what ships: the weights in gamebox.py were
 fitted on these seasons (signals kept only when each lowered the squared miss in all five seasons,
@@ -19,7 +20,7 @@ fitted with that season left out and fitted on earlier seasons only), and here s
 line in every season, for every category but FT%.
 
 Printed per category: the mean miss of each line, and per season the % less squared miss of the
-new line against today's line.
+new line against today's line. --save keeps every case's lines, to compare two versions of gamebox.
 
 Uses the caches of scripts/durability_backtest.py (.cache/season_pools, .cache/gamelogs) and keeps
 the NBA schedules in .cache/schedules.
@@ -27,6 +28,7 @@ the NBA schedules in .cache/schedules.
 
 from __future__ import annotations
 
+import argparse
 import json
 from collections import defaultdict
 from collections.abc import Iterator
@@ -102,6 +104,11 @@ def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
     for team in range(1, 31):
         rows += gamebox.parse_rows(json.loads((LOGS / f"{season}-{team}.json").read_text()), season)
     prior = gamebox.prior_rates(json.loads((POOLS / f"{season - 1}.json").read_text()), season - 1)
+    game_logs(season - 1)
+    past = []
+    for team in range(1, 31):
+        past += gamebox.parse_rows(json.loads((LOGS / f"{season - 1}-{team}.json").read_text()), season - 1)
+    last_season = gamebox.carry(past)
     sched = gamebox.parse_schedule(schedule(season))
     sides: dict[str, dict[int, list]] = defaultdict(lambda: defaultdict(list))
     for pid, gl in g.items():
@@ -135,7 +142,7 @@ def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
             for k in keys:
                 total[k] += x.get(k, 0.0)
     for day in sorted(todo):
-        box = gamebox.build(season, [r for r in rows if r.day < day], prior, sched)
+        box = gamebox.build(season, [r for r in rows if r.day < day], prior, sched, last_season)
         for pid, gid, team, line, x, so_far in todo[day]:
             opp = next((t for t in sides[gid] if t != team), None)
             ctx = gamebox.context(box, pid, team, day)
@@ -149,13 +156,16 @@ def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
             mates = []
             for q, q_min in out.get((gid, team), []):
                 f = box.form.get(q)
-                usage = f.usage if f is not None else 0.0
-                mates.append(gamebox.Teammate("", f.minutes_long if f is not None else q_min, usage))
+                if f is None:
+                    mates.append(gamebox.Teammate("", q_min, 0.0))
+                else:
+                    mates.append(gamebox.Teammate("", f.minutes_long, f.usage, f.rate.get(PTS, 0.0) * f.minutes_long))
             yield box, Case(season, day, pid, team, opp, today, ctx, mates, gained, x, so_far)
 
 
-def season_cases(season: int) -> tuple[list, list, list, list]:
-    """Per case: today's line, the new line, his season average so far and what he did (cats())."""
+def season_cases(season: int, keys: list | None = None) -> tuple[list, list, list, list]:
+    """Per case: today's line, the new line, his season average so far and what he did (cats()).
+    ``keys`` gets (season, day, player) of each case."""
     now, new, avg, act = [], [], [], []
     for _box, c in cases(season):
         line_new, _, _ = gamebox.apply(c.line, c.context, c.mates, c.gained)
@@ -163,14 +173,26 @@ def season_cases(season: int) -> tuple[list, list, list, list]:
         new.append(cats(line_new))
         avg.append(cats(c.so_far))
         act.append(cats(c.actual))
+        if keys is not None:
+            keys.append((c.season, c.day, c.player))
     return now, new, avg, act
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--save", type=Path, help="keep each case's lines (.npz), to compare two versions of gamebox")
+    args = ap.parse_args()
     per: dict[int, tuple[np.ndarray, ...]] = {}
+    keys: list = []
     for season in SEASONS:
-        per[season] = tuple(np.array(a) for a in season_cases(season))
+        per[season] = tuple(np.array(a) for a in season_cases(season, keys))
         print(f"{season}: {len(per[season][0])} games", flush=True)
+    if args.save:
+        np.savez_compressed(
+            args.save,
+            keys=np.array(keys),
+            **{f"{k}_{s}": per[s][i] for s in SEASONS for i, k in enumerate(("now", "new", "avg", "act"))},
+        )
     print("\nmean miss: season average | today's line | with the game; then % less squared miss than today, by season")
     for c, name in enumerate(CATS):
         miss = {k: [] for k in ("avg", "now", "new")}

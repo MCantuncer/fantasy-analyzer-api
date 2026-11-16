@@ -275,13 +275,16 @@ def _stats(line: dict[int, float]) -> dict:
 
 
 def _teammate(t: Player) -> gamebox.Teammate:
-    """A teammate ruled out: his minutes and shots a game over his last games, else his line's."""
+    """A teammate ruled out: his minutes, shots and points a game over his last games, else his line's."""
     f = t.game_context.form if t.game_context is not None else None
     if f is not None:
-        return gamebox.Teammate(t.name, f.minutes_long, f.usage)
+        return gamebox.Teammate(t.name, f.minutes_long, f.usage, f.rate.get(PTS, 0.0) * f.minutes_long)
     g = t.per_game
     return gamebox.Teammate(
-        t.name, g.get(MINUTES, 0.0), g.get(FGA, 0.0) + gamebox.USAGE_FTA * g.get(FTA, 0.0) + g.get(TO, 0.0)
+        t.name,
+        g.get(MINUTES, 0.0),
+        g.get(FGA, 0.0) + gamebox.USAGE_FTA * g.get(FTA, 0.0) + g.get(TO, 0.0),
+        g.get(PTS, 0.0),
     )
 
 
@@ -314,13 +317,23 @@ def _reason_text(r: gamebox.Reason, m: gamebox.GameContext) -> str:
         # What the opponent gives up shows in the numbers; one stat named here would hide the others.
         return f"Against {PRO_TEAM_ABBREV.get(m.opponent, 'this team')}"
     if r.kind == "form":
-        return f"His last {gamebox.FORM_GAMES} games"
+        return "His recent form"
     if r.kind == "teammates_out":
+        points = float(r.detail.get("points", 0.0))
+        if points >= 1:
+            return f"Teammates out: {points:.0f} points a game to share"
         names = [n.split(" ")[-1] for n in str(r.detail.get("names", "")).split(", ") if n]
         return f"{' and '.join(names[:2])}{' and others' if len(names) > 2 else ''} out" if names else "Teammates out"
     if r.kind == "back_from_absence":
+        back = int(r.detail.get("game_back", 0))
+        if back == 2:
+            return "Second game back"
+        if back == 3:
+            return "Third game back"
         n = int(r.detail.get("games", 0))
         return f"First game back after {n} missed" if n > 1 else "First game back"
+    if r.kind == "starter_switch":
+        return "Started his last game" if r.detail.get("started") else "Moved to the bench"
     if r.kind == "heavy_minutes":
         return "Big minutes ease off"
     if r.kind == "recent_minutes":
