@@ -456,17 +456,19 @@ uv run python -m scripts.game_score_backtest            # both parts
 uv run python -m scripts.game_score_backtest --scores   # the score only (a minute)
 ```
 
-The score: each team's points per possession, points per possession allowed and pace, recent games counting most (half-life 20 games), from last season's end regressed halfway; then home court (+0.9 at home), three-point luck (about 75% of an opponent's 3P% allowed above the league and 40% of a team's own does not last) and back-to-backs (-1.1). Each weight lowers the squared miss in every season, left out and forward; rest, the opponent's back-to-back, players ruled out (fails 2021-22), shorter-run form and FT luck did not.
+The score: each team's points per possession, points per possession allowed and pace, recent games counting most (half-life 20 games), from last season's end regressed halfway and moved with the league's scoring and pace as this season's games come in; then home court (+0.9 at home), three-point luck (about 75% of an opponent's 3P% allowed above the league and 40% of a team's own does not last) and back-to-backs (-1.1). Each weight lowers the squared miss in every season, left out and forward; rest, the opponent's back-to-back, players ruled out (fails 2021-22), shorter-run form and FT luck did not.
 
 | Season | Mean miss of a team's score: league average | Team's own average | Expected score | Winner picked |
 | --- | --- | --- | --- | --- |
-| 2021-22 | 10.03 | 9.74 | 9.26 | 64.5% |
-| 2022-23 | 9.34 | 9.24 | 8.94 | 62.5% |
-| 2023-24 | 10.30 | 9.88 | 9.28 | 63.3% |
-| 2024-25 | 10.04 | 9.56 | 9.06 | 65.1% |
-| 2025-26 | 10.21 | 9.99 | 9.43 | 67.7% |
+| 2021-22 | 10.03 | 9.73 | 9.20 | 64.6% |
+| 2022-23 | 9.34 | 9.24 | 8.95 | 62.4% |
+| 2023-24 | 10.30 | 9.88 | 9.29 | 63.2% |
+| 2024-25 | 10.04 | 9.57 | 9.06 | 65.1% |
+| 2025-26 | 10.21 | 10.04 | 9.39 | 67.7% |
 
-Calls move 3+ points from a team's average in 39-51% of games, and those moves are the right size (actual change over called change 0.93-1.04 by season): not an average, not overfitted.
+Calls move 3+ points from a team's average in 39-51% of games, and those moves are about the right size (actual change over called change 0.93-1.11 by season): not an average, not overfitted.
+
+**Moved with the league (2026-11-17).** A team's start is last season's level, but each call divides by this season's league scoring, so when the whole league scores more (a rule change, a faster game) every call came out lower, the wrong way, until a team's own games took over: in the first month the game total ran 8-9 points off in the seasons the league shifted. Now what is left of last season moves with the league's points, pace and shooting since then (`Scores.team`). Replayed on 28 seasons (1997-98 to 2016-17 from stats.nba.com's game logs, 2018-19 to 2025-26 from ESPN's): less squared miss in 20 of them, up to 5% in the seasons the league shifted (1998-99 to 2000-01, 2011-12, 2018-19, 2021-22, 2025-26), at most 0.2% more in the 8 quiet ones; the first month's total is off 1.7 points on average instead of 4.0. Over all 28 seasons the called total runs within 1-3 points of the played total a season with no lean either way. Kept although it misses the every-season rule, since it fixes how the start is built rather than adding a signal.
 
 Lines held to the score (`report.team_sum_gap`, `TEAM_SUM_SHARE`): a team's next-game points lines plus what the rest of the team scores a game, against the expected score, move each line by a share of the gap. Less squared miss than without it, 2021-22 to 2025-26: minutes +0.28% +0.68% +0.09% +0.63% +0.75%, points +0.22% +0.58% +0.41% +0.56% +0.73%, rebounds +0.23% +0.30% +0.10% +0.19% +0.05%, assists +0.04% +0.16% +0.14% +0.37% +0.72%, steals +0.03% +0.03% +0.01% +0.11% +0.14%, FG impact +0.05% +0.06% +0.10% +0.11% +0.03%. Blocks, threes, turnovers and FT failed a season and are left as they are. Knowing a team's real final score would cut the points miss by about 4.5%, so most of what a score says about players is only known after the game.
 

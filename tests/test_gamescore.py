@@ -73,6 +73,25 @@ def test_last_seasons_end_is_where_teams_start():
     assert gamescore.expected(s, 1, 2, None, False) > gamescore.expected(s, 2, 1, None, False) + 5
 
 
+def test_what_is_left_of_last_season_moves_with_the_league():
+    """Last season everyone scored 110. This season the league scores 125 a game: teams 5 and 6, who
+    haven't played yet, are called near this season's level, not last season's (or lower)."""
+    last = []
+    for g, day in enumerate(range(1, 21)):
+        last += _game(100 + g, day, 1, 2, 110, 110) + _game(200 + g, day, 5, 6, 110, 110)
+    start = gamescore.season_end(gamescore.team_games(last))
+    now = []
+    for g, day in enumerate(range(1, 31)):
+        now += _game(300 + g, day, 1, 2, 125, 125) + _game(400 + g, day, 3, 4, 125, 125)
+    s = gamescore.build(gamescore.team_games(now), start)
+    called = gamescore.expected(s, 5, 6, None, False) - gamescore.LEVEL
+    assert called == pytest.approx(s.rate("pf"), rel=0.01)
+    assert called > 120
+    # Before any game of this season the start is just last season's.
+    s0 = gamescore.build([], start)
+    assert gamescore.expected(s0, 5, 6, None, False) - gamescore.LEVEL == pytest.approx(110, rel=0.01)
+
+
 def test_the_box_gives_each_game_context_its_teams_expected_score():
     rows = _game(1, 1, 1, 2, 120, 100)
     schedule = {
