@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from app.analysis import gamebox, gamescore
 from app.espn.client import EspnClient
 from app.lineup import Spot, next_game, open_slots, season_average, slot_name, team_days, week_of
 from app.main import create_app
@@ -517,3 +518,16 @@ def test_nba_team_before_tonights_games(recorded, schedule_raw, day4_players):
     client, _, _ = scores_client(recorded, schedule_raw, day4_players, FRIDAY_AFTERNOON)
     body = client.post("/api/nba-team", json={"league_id": LEAGUE_ID, "season": 2027, "team": "SA"}).json()
     assert body["next_game"]["start"] > FRIDAY_AFTERNOON.isoformat()[:10]
+
+
+def test_scores_carry_our_call_once_the_league_box_is_built(recorded, schedule_raw, day4_players):
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
+    body = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()
+    assert all(g["call"] is None for g in body["games"])  # no box yet
+    client.app.state.game_boxes.set(2027, gamebox.Box(2027, {}, {}, {}, scores=gamescore.build([])))
+    client.app.state.settled_days.clear()
+    body = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()
+    for g in body["games"]:
+        c = g["call"]
+        assert c["away"] != c["home"] and 0.5 <= c["chance"] <= 1
+        assert c["home"] > c["away"]  # even teams: home court

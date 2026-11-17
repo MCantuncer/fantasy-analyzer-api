@@ -2448,6 +2448,20 @@ def create_app(
             for d, gs in week_fixtures(sched, now)
         ]
 
+    def game_calls(season: int, data: dict) -> dict[int, schemas.GameCall]:
+        """Our call for each game of the day, from the season's league box (gamebox.Box.call). None
+        until a league load has built the box (attach_game_contexts)."""
+        box = app.state.game_boxes.get(season)
+        if box is None:
+            return {}
+        out = {}
+        for g in data["games"]:
+            away, home = g["away"]["pro_team_id"], g["home"]["pro_team_id"]
+            if away and home:
+                c = box.call(data["day"], away, home)
+                out[g["id"]] = schemas.GameCall(away=c.away, home=c.home, chance=round(c.chance, 3))
+        return out
+
     def score_page(
         league_id: int,
         season: int,
@@ -2458,11 +2472,13 @@ def create_app(
         now: datetime,
         complete: bool,
     ) -> schemas.ScoreDay:
+        calls = game_calls(season, data)
         games = [
             schemas.Game(
                 **{
                     **g,
                     "lines": [schemas.GameLine(**ln, owner_team_id=owners.get(ln["player_id"])) for ln in g["lines"]],
+                    "call": calls.get(g["id"]),
                 }
             )
             for g in data["games"]
