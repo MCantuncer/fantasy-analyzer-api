@@ -3,7 +3,8 @@
 Built from the 30 team game logs the league box reads (gamebox.py). Each team's points per
 possession, the points per possession it allows, and its pace (possessions a game), with recent
 games counting most (half as much every HALF_LIFE games back) and last season's end, regressed
-halfway to the league, worth PRIOR_GAMES games at the start. Then
+halfway to the league, worth PRIOR_GAMES games at the start and moved with the league's own scoring,
+pace and shooting as this season's games come in (Scores.team). Then
 
     possessions = pace x opponent's pace / league pace
     points      = possessions x offense x opponent's defense / league points per possession
@@ -17,10 +18,10 @@ left out and again on earlier seasons only (scripts/game_score_backtest.py):
     defense has little say over open threes going in), nor 40% of the team's own 3P% above it;
   * a back-to-back: about 1.1 points fewer.
 
-Replayed day by day, its mean miss is 8.94-9.43 points a team (a team's own average so far:
-9.24-9.99, the league average: 9.34-10.30) and it picks the winner in 62-68% of games. Its calls
+Replayed day by day, its mean miss is 8.95-9.39 points a team (a team's own average so far:
+9.24-10.04, the league average: 9.34-10.30) and it picks the winner in 62-68% of games. Its calls
 move 3+ points from the team's average in 39-51% of games, and those moves are the right size in
-every season (actual over called change 0.93-1.04: not an average, and not overfitted). Rest beyond
+every season (actual over called change 0.93-1.11: not an average, and not overfitted). Rest beyond
 a back-to-back, the opponent's back-to-back, players ruled out (failed 2021-22 only), recent form over
 a shorter run and free-throw luck didn't pass.
 
@@ -130,6 +131,7 @@ class Scores:
     league: dict[str, float] = field(default_factory=dict)
     games: float = 0.0
     start: SeasonEnd | None = None
+    played: dict[int, int] = field(default_factory=dict)  # each team's games so far this season
 
     def rate(self, key: str) -> float:
         """The league's rate a team game; the start's while there is none."""
@@ -137,7 +139,17 @@ class Scores:
         return v if v > 0 else _START[key]
 
     def team(self, team: int) -> dict[str, float]:
-        return self.teams.get(team) or _start_of(team, self.start)
+        """A team's sums, with what is left of last season moved with the league since then: when the
+        whole league scores more (or plays faster) this season, last season's numbers carry that too.
+        Without it, a team's start stays at last season's level while the league's moves, so a league
+        that scores more makes every call lower, the wrong way (first-month totals off by 8-9 points
+        in the seasons the league shifted)."""
+        t = self.teams.get(team) or _start_of(team, self.start)
+        if self.start is None:
+            return t
+        left = PRIOR_GAMES * 0.5 ** (self.played.get(team, 0) / HALF_LIFE)
+        base, lg = _base_of(team, self.start), self.start.league
+        return t | {k: t[k] + left * base[k] * (self.rate(k) / lg[k] - 1) for k in FIELDS if lg.get(k)}
 
 
 def build(games: list[TeamGame], start: SeasonEnd | None = None) -> Scores:
@@ -152,6 +164,7 @@ def build(games: list[TeamGame], start: SeasonEnd | None = None) -> Scores:
         if t is None:
             t = s.teams[g.team] = _start_of(g.team, start)
         t["w"] = t["w"] * decay + 1
+        s.played[g.team] = s.played.get(g.team, 0) + 1
         for k in FIELDS:
             t[k] = t[k] * decay + g.stats[k]
             s.league[k] = s.league.get(k, 0.0) + g.stats[k]
@@ -159,14 +172,17 @@ def build(games: list[TeamGame], start: SeasonEnd | None = None) -> Scores:
     return s
 
 
-def _start_of(team: int, start: SeasonEnd | None) -> dict[str, float]:
-    """A team's sums before its first game: last season's end regressed to the league, PRIOR_GAMES of it."""
+def _base_of(team: int, start: SeasonEnd | None) -> dict[str, float]:
+    """A team's rates a game to start from: last season's end regressed halfway to the league."""
     if start is None:
-        base = {k: _START[k] for k in FIELDS}
-    else:
-        last, lg = start.teams.get(team), start.league
-        base = {k: lg[k] + PRIOR_KEEP * (last[k] - lg[k]) if last else lg[k] for k in FIELDS}
-    return {"w": PRIOR_GAMES, **{k: PRIOR_GAMES * v for k, v in base.items()}}
+        return {k: _START[k] for k in FIELDS}
+    last, lg = start.teams.get(team), start.league
+    return {k: lg[k] + PRIOR_KEEP * (last[k] - lg[k]) if last else lg[k] for k in FIELDS}
+
+
+def _start_of(team: int, start: SeasonEnd | None) -> dict[str, float]:
+    """A team's sums before its first game: its start rates (_base_of), PRIOR_GAMES of them."""
+    return {"w": PRIOR_GAMES, **{k: PRIOR_GAMES * v for k, v in _base_of(team, start).items()}}
 
 
 def season_end(games: list[TeamGame]) -> SeasonEnd:
