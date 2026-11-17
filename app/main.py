@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import errors as error_reports
-from app import schemas
+from app import pregame, schemas
 from app.accounts import (
     PASSWORD_MIN,
     PASSWORD_OFF_NOTICE,
@@ -186,6 +186,9 @@ WATCH_RERUNS = 3  # reports rebuilt per sweep, newest first
 # (app/news/service.py REFRESH_EVERY), so news is current even when nobody opens the News page.
 # The GitHub schedule that pings /api/news/refresh runs hours apart on busy days. 0 turns it off.
 NEWS_WATCH_SECONDS = float(os.getenv("NEWS_WATCH_SECONDS", "120"))
+# The pregame watch (app/pregame.py): every few minutes on a game day, each player's injury tag for
+# teams yet to tip off, so the news as it stood at tip-off is kept for testing our calls. 0 turns it off.
+PREGAME_WATCH_SECONDS = float(os.getenv("PREGAME_WATCH_SECONDS", "600"))
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
 NOT_LINKED = {"code": "not_linked", "message": "Verify your team in this league first."}
 NOT_YOUR_TEAM = {"code": "not_your_team", "message": "Only this team's verified manager can see its analysis."}
@@ -1351,6 +1354,34 @@ def create_app(
             except Exception:
                 logging.getLogger(__name__).warning("injury watch failed", exc_info=True)
 
+    async def pregame_sweep() -> list[int]:
+        """One look by the pregame watch: the days it wrote (none when no game is near)."""
+        now = app.state.now()
+        season = current_season(now)
+        raw = await pro_schedule(season)
+        if raw is None:
+            return []
+        sched = parse_schedule(raw)
+        days = pregame.days_to_watch(sched, now)
+        if not days:
+            return []
+        states = parse_states(await app.state.espn.player_states(season))
+        for day in days:
+            record = await run_in_threadpool(app.state.store.get_pregame, season, day)
+            record = pregame.update(record, sched, day, states, now)
+            await run_in_threadpool(app.state.store.save_pregame, season, day, record)
+        return days
+
+    app.state.pregame_sweep = pregame_sweep
+
+    async def watch_pregame() -> None:
+        while True:
+            await asyncio.sleep(PREGAME_WATCH_SECONDS)
+            try:
+                await pregame_sweep()
+            except Exception:
+                logging.getLogger(__name__).warning("pregame watch failed", exc_info=True)
+
     async def watch_news() -> None:
         while True:
             await asyncio.sleep(NEWS_WATCH_SECONDS)
@@ -1363,11 +1394,12 @@ def create_app(
     async def lifespan(_: FastAPI):
         watch = asyncio.create_task(watch_injuries()) if WATCH_SECONDS > 0 else None
         news_watch = asyncio.create_task(watch_news()) if NEWS_WATCH_SECONDS > 0 else None
+        pregame_watch = asyncio.create_task(watch_pregame()) if PREGAME_WATCH_SECONDS > 0 else None
         usage_flush = asyncio.create_task(flush_usage_every_minute())
         try:
             yield
         finally:
-            for task in (watch, news_watch):
+            for task in (watch, news_watch, pregame_watch):
                 if task is not None:
                     task.cancel()
             usage_flush.cancel()
