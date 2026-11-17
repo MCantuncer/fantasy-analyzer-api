@@ -38,7 +38,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from app.analysis import gamebox
+from app.analysis import gamebox, gamescore
 from app.analysis.model import RECENT_MINUTES_WEIGHTS
 from app.analysis.report import NEXT_GAME_LEVEL
 from app.analysis.tonight import OTHER_ROLE, SAME_ROLE
@@ -109,6 +109,7 @@ def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
     for team in range(1, 31):
         past += gamebox.parse_rows(json.loads((LOGS / f"{season - 1}-{team}.json").read_text()), season - 1)
     last_season = gamebox.carry(past)
+    score_start = gamescore.season_end(gamescore.team_games(past))
     sched = gamebox.parse_schedule(schedule(season))
     sides: dict[str, dict[int, list]] = defaultdict(lambda: defaultdict(list))
     for pid, gl in g.items():
@@ -142,7 +143,7 @@ def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
             for k in keys:
                 total[k] += x.get(k, 0.0)
     for day in sorted(todo):
-        box = gamebox.build(season, [r for r in rows if r.day < day], prior, sched, last_season)
+        box = gamebox.build(season, [r for r in rows if r.day < day], prior, sched, last_season, score_start)
         for pid, gid, team, line, x, so_far in todo[day]:
             opp = next((t for t in sides[gid] if t != team), None)
             ctx = gamebox.context(box, pid, team, day)

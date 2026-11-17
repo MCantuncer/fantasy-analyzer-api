@@ -65,7 +65,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 📝 | **Trade feedback and rules:** rate a trade idea and have it checked against today's league; your own rules hide ideas that break them | `/api/trade-feedback`, `/api/trade-check`, `/api/trade-rules` |
 | 📈 | **Usage numbers:** daily visitors, page views and sign-ups, with no cookies or ids: a visitor is a hash under a salt that is deleted each day | `/api/usage` |
 | 🔥 | **Straw fire or bigger role:** a player on a hot run over his last 15 days gets what it was made of (more minutes, more shots per minute, hot shooting) and how much of it tends to last, checked on five seasons | `/api/analyze`, `/api/player-card` |
-| 🎯 | **Next game:** every player's line for his next game (minutes, points, rebounds, assists, steals, blocks, threes, turnovers, FG% and FT%), the line this week's odds count, set to the level players reach, plus the minutes teammates ruled out of that game leave him, then the game itself: the opponent's defense in each stat, his recent form (recent games count most, last season's end included), his minutes lately and whether he started his last game, teammates' shots and points freed by injuries, his first games back, home court, how favored his team is and back-to-backs; each line carries its usual line and the reasons it moved ("Against PHX", "His recent form", "Started his last game", "Teammates out: 25 points a game to share"), with the tip-off time; on FA Targets and on every player card | `/api/analyze`, `/api/player-card/extras` |
+| 🎯 | **Next game:** every player's line for his next game (minutes, points, rebounds, assists, steals, blocks, threes, turnovers, FG% and FT%), the line this week's odds count, set to the level players reach, plus the minutes teammates ruled out of that game leave him, then the game itself: the opponent's defense in each stat, his recent form (recent games count most, last season's end included), his minutes lately and whether he started his last game, teammates' shots and points freed by injuries, his first games back, home court, how favored his team is and back-to-backs, and teammates' lines held to their team's expected score (`app/analysis/gamescore.py`); each line carries its usual line and the reasons it moved ("Against PHX", "His recent form", "Started his last game", "Teammates out: 25 points a game to share"), with the tip-off time; on FA Targets and on every player card | `/api/analyze`, `/api/player-card/extras` |
 | 🧊 | **Injury risk:** players who miss games year after year are valued for fewer games, checked on past seasons | `/api/analyze` |
 | 💬 | **Moves feed and league chat:** transactions, posts, replies and reactions | `/api/feed`, `/api/posts` |
 | 🔐 | **Accounts and verified managers:** email or Google sign-in, password reset by email, team ownership proven through ESPN | `/api/auth/*`, `/api/team-link/*` |
@@ -446,6 +446,29 @@ uv run python -m scripts.next_game_matchup_backtest
 | FT (makes over league rate) | 0.469 | 0.465 | 0.462 | +0.1% +0.6% +0.3% +0.2% +0.2% | +0.1% +0.2% +0.2% +0.2% +0.1% |
 
 The signals and weights were picked on these seasons (one season left out at a time, and again fitted on earlier seasons only): each kept signal lowered the squared miss in all five. Kept: his form, every game he played (last season's too) counting half as much every 12 to 35 games further back depending on the stat, per minute against his line and trusted by how many of that stat his line expects over those minutes (most of the gap lasts, weights 0.6 to 1.0; it replaced his last 10 games, which carried about a third); his minutes lately (decayed over about 5 games), in his last game and over a longer run, and whether he started his last game against how often he has started lately (a new starter plays up to about 2 more minutes); games he just missed and his first three games back; the opponent's defense in each stat, measured as what the players it faced made over what they usually make a minute (raw points allowed was half as good; a split by guards, wings and bigs, or by his own mix of 2s, 3s and free throws, added nothing), free throws included; teammates ruled out, by their shots and points a game and their minutes (more minutes for bench players); lines over 36 minutes (lower); home court (assists, FG%); how favored his team is (blocks); a back-to-back (steals). Not kept: his history against the team, pace, travel and time zones, altitude, tip time, back-to-backs for minutes, the opponent's injuries, playing a former team, tanking late in the season, blowout risk for minutes, the opponent's rim protection, rebounding, steals or fouls against his own profile, and FG% or FT% form. A gradient-boosted model on the earlier signals did about one point better than #156 (points +3.1% to +4.2%); this model is now level with it, and a boosted model with the new signals is ahead mostly in minutes (about 2 points) and turnovers (about 1). Even knowing a player's true level and his real minutes in hindsight, his points miss by about 4 a game. The study behind the new signals: `/mnt/project-files/next-game-model/round-1/`.
+
+### Game score backtest
+
+Replays a game's expected score (`app/analysis/gamescore.py`) day by day on five seasons, and its check on next-game lines: a team's lines should add up to the points it is expected to score.
+
+```sh
+uv run python -m scripts.game_score_backtest            # both parts
+uv run python -m scripts.game_score_backtest --scores   # the score only (a minute)
+```
+
+The score: each team's points per possession, points per possession allowed and pace, recent games counting most (half-life 20 games), from last season's end regressed halfway; then home court (+0.9 at home), three-point luck (about 75% of an opponent's 3P% allowed above the league and 40% of a team's own does not last) and back-to-backs (-1.1). Each weight lowers the squared miss in every season, left out and forward; rest, the opponent's back-to-back, players ruled out (fails 2021-22), shorter-run form and FT luck did not.
+
+| Season | Mean miss of a team's score: league average | Team's own average | Expected score | Winner picked |
+| --- | --- | --- | --- | --- |
+| 2021-22 | 10.03 | 9.74 | 9.26 | 64.5% |
+| 2022-23 | 9.34 | 9.24 | 8.94 | 62.5% |
+| 2023-24 | 10.30 | 9.88 | 9.28 | 63.3% |
+| 2024-25 | 10.04 | 9.56 | 9.06 | 65.1% |
+| 2025-26 | 10.21 | 9.99 | 9.43 | 67.7% |
+
+Calls move 3+ points from a team's average in 39-51% of games, and those moves are the right size (actual change over called change 0.93-1.04 by season): not an average, not overfitted.
+
+Lines held to the score (`report.team_sum_gap`, `TEAM_SUM_SHARE`): a team's next-game points lines plus what the rest of the team scores a game, against the expected score, move each line by a share of the gap. Less squared miss than without it, 2021-22 to 2025-26: minutes +0.28% +0.68% +0.09% +0.63% +0.75%, points +0.22% +0.58% +0.41% +0.56% +0.73%, rebounds +0.23% +0.30% +0.10% +0.19% +0.05%, assists +0.04% +0.16% +0.14% +0.37% +0.72%, steals +0.03% +0.03% +0.01% +0.11% +0.14%, FG impact +0.05% +0.06% +0.10% +0.11% +0.03%. Blocks, threes, turnovers and FT failed a season and are left as they are. Knowing a team's real final score would cut the points miss by about 4.5%, so most of what a score says about players is only known after the game.
 
 ### Next-game weights check
 

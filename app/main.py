@@ -41,7 +41,7 @@ from app.accounts import (
     team_of,
     verify_google,
 )
-from app.analysis import absence, gamebox, teammates
+from app.analysis import absence, gamebox, gamescore, teammates
 from app.analysis.checks import REASON_CHECKS, IdeaChecker, StaleIdea, focus_order
 from app.analysis.checks import TITLES as CHECK_TITLES
 from app.analysis.daily import trade_of_the_day
@@ -361,7 +361,7 @@ def create_app(
     app.state.absence_minutes = TTLCache(GAMELOG_TTL, max_items=2048)
     app.state.game_boxes = TTLCache(GAME_BOX_TTL, max_items=2)
     app.state.prior_rates = TTLCache(PAST_GAMES_TTL, max_items=2)
-    app.state.last_season_form = TTLCache(PAST_GAMES_TTL, max_items=2)  # gamebox.carry, per season
+    app.state.last_season_form = TTLCache(PAST_GAMES_TTL, max_items=2)  # gamebox.carry + gamescore.season_end
     app.state.game_box_jobs = {}
     app.state.absence_jobs: dict[int, asyncio.Task] = {}
     app.state.cards = TTLCache(PLAYER_CARD_TTL, max_items=2048)
@@ -529,20 +529,24 @@ def create_app(
                 app.state.prior_rates.set(season - 1, prior)
             # Last season's games, for form across the summer: read once a week (they don't change)
             # and kept as a few decayed sums a player, so a 4-hourly build reads only this season's 30.
-            last = app.state.last_season_form.get(season - 1)
-            if last is None:
+            # Teams' scoring starts from last season's end the same way (gamescore.season_end).
+            cached = app.state.last_season_form.get(season - 1)
+            if cached is None:
                 past: list[gamebox.GameRow] = []
                 for team in sorted(PRO_TEAM_ABBREV):
                     if team:
                         past += gamebox.parse_rows(await peek_gamelogs(season - 1, team, past=True), season - 1)
-                last = await run_in_threadpool(gamebox.carry, past)
-                app.state.last_season_form.set(season - 1, last)
+                carried = await run_in_threadpool(gamebox.carry, past)
+                end = await run_in_threadpool(lambda: gamescore.season_end(gamescore.team_games(past)))
+                cached = (carried, end)
+                app.state.last_season_form.set(season - 1, cached)
+            last, score_start = cached
             rows: list[gamebox.GameRow] = []
             for team in sorted(PRO_TEAM_ABBREV):
                 if team:
                     rows += gamebox.parse_rows(await peek_gamelogs(season, team, past=False), season)
             schedule = gamebox.parse_schedule(raw)
-            box = await run_in_threadpool(gamebox.build, season, rows, prior, schedule, last)
+            box = await run_in_threadpool(gamebox.build, season, rows, prior, schedule, last, score_start)
             app.state.game_boxes.set(season, box)
             logging.getLogger(__name__).info("league box for %s: %d player games", season, len(rows))
         except EspnError:
