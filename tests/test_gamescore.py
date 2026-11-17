@@ -100,3 +100,30 @@ def test_the_gap_is_capped_and_empty_without_lines():
     assert team_sum_gap(200.0, 60.0, 60.0, 60.0) == pytest.approx(TEAM_SUM_CAP)
     assert team_sum_gap(110.0, 0.0, 0.0, 110.0) == 0.0
     assert team_adjust({PTS: 10.0}, 0.0) == {PTS: 10.0}
+
+
+def test_win_chance_grows_with_the_margin_and_is_even_at_zero():
+    assert gamescore.win_chance(0.0) == pytest.approx(0.5)
+    assert gamescore.win_chance(5.0) == pytest.approx(gamescore.win_chance(-5.0))
+    assert 0.65 < gamescore.win_chance(5.0) < 0.67
+    assert 0.83 < gamescore.win_chance(12.0) < 0.85
+
+
+def test_a_call_is_never_tied():
+    c = gamescore.call(112.4, 112.6)
+    assert (c.away, c.home) == (112, 113)
+    assert 0.5 < c.chance < 0.51
+    c = gamescore.call(118.2, 104.6)
+    assert (c.away, c.home) == (118, 105) and c.chance > 0.8
+
+
+def test_a_days_call_comes_from_the_games_before_it():
+    rows = _game(1, 1, 1, 2, 125, 100) + _game(2, 3, 1, 2, 125, 100)
+    schedule = {
+        1: [gamebox.Game(1, 2, True), gamebox.Game(3, 2, True), gamebox.Game(5, 2, True)],
+        2: [gamebox.Game(1, 1, False), gamebox.Game(3, 1, False), gamebox.Game(5, 1, False)],
+    }
+    box = gamebox.build(2026, rows, {}, schedule)
+    before, after = box.call(3, 2, 1), box.call(5, 2, 1)
+    assert after.home - after.away > before.home - before.away > 0  # one more blowout counted by day 5
+    assert box.call(3, 2, 1) == before  # the same call after the game

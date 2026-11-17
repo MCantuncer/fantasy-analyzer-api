@@ -1155,6 +1155,14 @@ class GameSide(BaseModel):
     score: int | None = Field(default=None, description="None before tip-off")
 
 
+class GameCall(BaseModel):
+    """Our call for a game (analysis/gamescore.py), from the games before its day: fixed at tip-off."""
+
+    away: int = Field(description="Points we expect the away team to score")
+    home: int = Field(description="Points we expect the home team to score; never equal to away")
+    chance: float = Field(description="How sure the call is of its winner, 0.5-1 (calibrated on five seasons)")
+
+
 class Game(BaseModel):
     id: int
     start: str = Field(description="UTC start time, ISO 8601")
@@ -1163,6 +1171,7 @@ class Game(BaseModel):
     away: GameSide
     home: GameSide
     lines: list[GameLine] = Field(description="Everyone who played, most minutes first")
+    call: GameCall | None = Field(default=None, description="Our call for the score; None before the box is built")
 
 
 class FixturePlayer(BaseModel):

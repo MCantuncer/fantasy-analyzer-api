@@ -242,6 +242,19 @@ class Box:
     played: dict[int, list[int]] = field(default_factory=dict)  # team -> days it played, in order
     schedule: dict[int, list[Game]] = field(default_factory=dict)  # team -> its games this season, in order
     scores: gamescore.Scores | None = None  # every team's scoring so far, for its expected score
+    team_games: list[gamescore.TeamGame] = field(default_factory=list, repr=False)  # for calls on past days
+    score_start: gamescore.SeasonEnd | None = field(default=None, repr=False)
+    _day_scores: dict[int, gamescore.Scores] = field(default_factory=dict, repr=False, compare=False)
+
+    def call(self, day: int, away: int, home: int) -> gamescore.Call:
+        """Our call for a game on ``day`` from the games before it: the same before tip-off and after."""
+        s = self._day_scores.get(day)
+        if s is None:
+            s = gamescore.build([g for g in self.team_games if g.day < day], self.score_start)
+            self._day_scores[day] = s
+        a = gamescore.expected(s, away, home, False, self.back_to_back(away, day))
+        h = gamescore.expected(s, home, away, True, self.back_to_back(home, day))
+        return gamescore.call(a, h)
 
     def games_missed(self, player: int, team: int, day: int) -> int:
         """Team games since his last one, before ``day``, up to MISSED_CAP. 0 without games of his."""
@@ -437,7 +450,9 @@ def build(
         team_points={t: points_sum[t] / len(played[t]) for t in played},
         played=team_days,
         schedule=schedule,
-        scores=gamescore.build(gamescore.team_games(rows), score_start),
+        scores=gamescore.build(games := gamescore.team_games(rows), score_start),
+        team_games=games,
+        score_start=score_start,
     )
 
 

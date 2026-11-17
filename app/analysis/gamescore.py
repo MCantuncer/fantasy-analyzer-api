@@ -29,6 +29,7 @@ report.next_game_line uses it as a check on player lines: teammates' lines shoul
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -52,6 +53,10 @@ HOME = 0.925  # at home; minus this away
 OPP_THREE_LUCK = -0.757  # x the opponent's 3P% allowed above the league's, in points tonight
 OWN_THREE_LUCK = -0.395  # x the team's own 3P% above the league's, in points tonight
 BACK_TO_BACK = -1.094
+# How sure a call is of its winner: P = Normal-CDF(called margin / WIN_SPREAD). Fitted on who won,
+# each season left out (12.1-12.4); the stated chances held in every season (55% calls won 52-56%,
+# 65%: 62-69%, 75%: 73-81%, 84%: 77-91%). Widening early-season calls failed 2 of 5 seasons.
+WIN_SPREAD = 12.2
 
 # The sums a team keeps, per game: its points, the points it allows, possessions (both teams'
 # average), its threes and free throws made and tried, and the same allowed.
@@ -201,3 +206,28 @@ def expected(s: Scores, team: int, opponent: int, home: bool | None, back_to_bac
         + OWN_THREE_LUCK * x["own_three_luck"]
         + (BACK_TO_BACK if back_to_back else 0.0)
     )
+
+
+def win_chance(margin: float) -> float:
+    """How sure a called margin (points, either sign) is of its winner: 0.5 to 1."""
+    return 0.5 * (1 + math.erf(abs(margin) / (WIN_SPREAD * math.sqrt(2))))
+
+
+@dataclass(frozen=True)
+class Call:
+    """Our call for a game: whole points a side (never tied) and how sure it is of the winner."""
+
+    away: int
+    home: int
+    chance: float
+
+
+def call(away_points: float, home_points: float) -> Call:
+    """Each side rounded on its own; when both land on one number the favourite gets one more."""
+    a, h = round(away_points), round(home_points)
+    if a == h:
+        if home_points >= away_points:
+            h += 1
+        else:
+            a += 1
+    return Call(a, h, win_chance(home_points - away_points))
