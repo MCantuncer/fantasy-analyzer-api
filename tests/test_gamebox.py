@@ -313,3 +313,21 @@ def test_the_next_game_line_says_why(league):
     assert top.text == "Against PHX"
     assert top.pts > 0 and top.value > 0
     assert [abs(r.value) for r in ng.reasons] == sorted((abs(r.value) for r in ng.reasons), reverse=True)
+
+
+def test_a_team_expected_to_outscore_its_lines_lifts_them(league):
+    lg = copy.deepcopy(league)
+    p = lg.team(3).roster[0]
+    p.per_game = {**p.per_game, MINUTES: 30.0, PTS: 20.0, REB: 5.0, AST: 4.0, FGM: 8.0, FGA: 16.0}
+    p.minute_shifts = ()
+    p.recent_minutes = (None, None)
+    p.injury_status = "ACTIVE"
+    p.games_played = 10
+    p.season_line = {PTS: 20.0}
+    p.game_context = _ctx(opponent=21, team_points=110.0)
+    even = Analyzer(lg, 3).ref(p).next_game
+    for call, higher in ((140.0, True), (90.0, False)):
+        p.game_context = _ctx(opponent=21, team_points=110.0, team_score=call)
+        ng = Analyzer(lg, 3).ref(p).next_game
+        assert (ng.pts > even.pts) is higher and (ng.minutes > even.minutes) is higher
+        assert ng.usual.pts == even.usual.pts  # the usual line is before the game: unchanged

@@ -13,7 +13,7 @@ from itertools import chain
 import numpy as np
 
 from app import schemas
-from app.analysis import gamebox
+from app.analysis import gamebox, gamescore
 from app.analysis.absence import is_out
 from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.durability import injury_prone
@@ -201,30 +201,35 @@ def one_at_a_time(progress: Progress | None, waiting: str, at: float) -> Iterato
 NEXT_GAME_LEVEL = {PTS: 0.968, REB: 0.963, BLK: 0.913, TO: 0.947}
 
 
-def next_game_line(model: CategoryModel, p: Player, teammates: Iterable[Player]) -> schemas.NextGameLine | None:
+def next_game_line(
+    model: CategoryModel,
+    p: Player,
+    teammates: Iterable[Player],
+    team_sums: dict[tuple[int, int], tuple[float, float]] | None = None,
+) -> schemas.NextGameLine | None:
     """His next game's line: the this-week line the odds count (CategoryModel.horizon_line), plus
     the minutes teammates ruled out of it leave him (tonight.py), at the level his games land
     (NEXT_GAME_LEVEL), then the game itself when the league box knows it (gamebox.apply, from
-    ``p.game_context``): opponent, his recent games, teammates' shots, home court. ``teammates`` are the
-    players of his NBA team this league knows; none while he is out."""
-    if is_out(p):
-        return None
-    line = model.horizon_line(p, model.league.current_period)
-    minutes = line.get(MINUTES, 0.0)
-    if minutes <= 0:
-        return None
+    ``p.game_context``): opponent, his recent games, teammates' shots, home court; then his team's
+    lines held to its expected score (team_sum_gap). ``teammates`` are the players of his NBA team
+    this league knows; none while he is out. ``team_sums`` keeps each team's sum of lines across calls."""
     mates = [t for t in teammates if t.id != p.id]
-    gained = 0.0
-    if not p.minute_shifts:  # a measured gain from teammates.py already holds an absence
-        gained = min(minutes_gained(p, mates), MAX_MINUTES - minutes) if minutes < MAX_MINUTES else 0.0
-        if gained:
-            line = with_minutes(line, minutes + gained)
-    line = {k: v * NEXT_GAME_LEVEL.get(k, 1.0) for k, v in line.items()}
+    parts = _game_line(model, p, mates)
+    if parts is None:
+        return None
+    line, applied = parts
     m = p.game_context
-    if m is None:
+    if m is None or applied is None:
         return schemas.NextGameLine(**_stats(line))
-    out = [_teammate(t) for t in mates if ruled_out(t)]
-    new, usual, found = gamebox.apply(line, m, out, gained)
+    new, usual, found = applied
+    if m.team_score is not None:
+        key = (p.pro_team_id, m.day)
+        sums = team_sums.get(key) if team_sums is not None else None
+        if sums is None:
+            sums = _team_lines(model, [p, *mates], m.day)
+            if team_sums is not None:
+                team_sums[key] = sums
+        new = team_adjust(new, team_sum_gap(m.team_score, *sums, m.team_points))
     fga = new.get(FGA, 0.0)
     pct = new.get(FGM, 0.0) / fga if fga > 0 else FG_SCALE[0]
     reasons = sorted((_reason(r, m, pct, fga) for r in found), key=lambda r: -abs(r.value))
@@ -236,6 +241,73 @@ def next_game_line(model: CategoryModel, p: Player, teammates: Iterable[Player])
         usual=schemas.NextGameStats(**_stats(usual)),
         reasons=[r for r in reasons if abs(r.value) >= MIN_REASON_VALUE][:MAX_REASONS],
     )
+
+
+def _game_line(
+    model: CategoryModel, p: Player, mates: list[Player]
+) -> tuple[dict[int, float], tuple[dict[int, float], dict[int, float], list[gamebox.Reason]] | None] | None:
+    """next_game_line before his team's sum: None while he is out or without minutes; else his line and,
+    with a game context, gamebox.apply's (new line, usual line, reasons); None without one."""
+    if is_out(p):
+        return None
+    line = model.horizon_line(p, model.league.current_period)
+    minutes = line.get(MINUTES, 0.0)
+    if minutes <= 0:
+        return None
+    gained = 0.0
+    if not p.minute_shifts:  # a measured gain from teammates.py already holds an absence
+        gained = min(minutes_gained(p, mates), MAX_MINUTES - minutes) if minutes < MAX_MINUTES else 0.0
+        if gained:
+            line = with_minutes(line, minutes + gained)
+    line = {k: v * NEXT_GAME_LEVEL.get(k, 1.0) for k, v in line.items()}
+    m = p.game_context
+    if m is None:
+        return line, None
+    out = [_teammate(t) for t in mates if ruled_out(t)]
+    return line, gamebox.apply(line, m, out, gained)
+
+
+# Teammates' lines should add up to their team's expected score (gamescore.py). Their points lines,
+# plus what the rest of the team scores a game (the team's points a game less these players'
+# season points a game), against the expected score: the gap, capped at TEAM_SUM_CAP, moves each
+# line by these shares of it (scripts/game_score_backtest.py replays this day by day: kept for the
+# stats where it lowered the squared miss in every season of five, fitted with that season left out
+# and on earlier seasons only: minutes 0.1-0.7%, points 0.2-0.7%, rebounds 0.03-0.3%, assists
+# 0.03-0.7%, steals 0.01-0.1%, FG impact 0.03-0.1%; blocks, threes, turnovers and FT failed a season).
+# Players count once they have MIN_TEAM_GAMES games this season.
+TEAM_SUM_SHARE = {MINUTES: 0.190, PTS: 0.385, REB: 0.251, AST: 0.359, STL: 0.332, FGM: 0.835, FGA: 0.835}
+TEAM_SUM_CAP = 0.4
+MIN_TEAM_GAMES = 3
+
+
+def _team_lines(model: CategoryModel, players: list[Player], day: int) -> tuple[float, float]:
+    """The points lines of a team's players in its game on ``day`` (not out, MIN_TEAM_GAMES+ games
+    this season), and their season points a game."""
+    lines = season = 0.0
+    for q in players:
+        if q.game_context is None or q.game_context.day != day or q.games_played < MIN_TEAM_GAMES:
+            continue
+        parts = _game_line(model, q, [t for t in players if t.id != q.id])
+        if parts is None or parts[1] is None:
+            continue
+        lines += parts[1][0].get(PTS, 0.0)  # the new line
+        season += q.season_line.get(PTS, 0.0)
+    return lines, season
+
+
+def team_sum_gap(call: float, lines: float, season: float, team_points: float) -> float:
+    """How far the team's expected score runs over (+) or under (-) what its lines add up to, a share."""
+    if lines <= 0 or team_points <= 0:
+        return 0.0
+    implied = max(lines + max(team_points - season, 0.0), gamescore.FLOOR)
+    return float(np.clip(call / implied - 1, -TEAM_SUM_CAP, TEAM_SUM_CAP))
+
+
+def team_adjust(line: dict[int, float], gap: float) -> dict[int, float]:
+    """A line moved by its share of the team's gap (TEAM_SUM_SHARE); FG% stays."""
+    if not gap:
+        return line
+    return {k: v * (1 + TEAM_SUM_SHARE.get(k, 0.0) * gap) for k, v in line.items()}
 
 
 MIN_REASON_VALUE = 0.05  # 9-category value a game: about a quarter of a point or a fifth of a three
@@ -360,6 +432,7 @@ class Analyzer:
     ):
         self.league = league
         self._pro_teams: dict[int, list[Player]] | None = None
+        self._team_sums: dict[tuple[int, int], tuple[float, float]] = {}  # next_game_line's, per team and day
         self.now = now or datetime.now(UTC)
         self.progress = progress
         self.model = CategoryModel(league)
@@ -418,7 +491,7 @@ class Analyzer:
 
     def next_game(self, p: Player) -> schemas.NextGameLine | None:
         """His next game's line (next_game_line), with his NBA teammates from this league's players."""
-        return next_game_line(self.model, p, self._by_pro_team().get(p.pro_team_id, ()))
+        return next_game_line(self.model, p, self._by_pro_team().get(p.pro_team_id, ()), self._team_sums)
 
     def _tick(self, span: tuple[str, float, float] | None, done: int, total: int) -> None:
         """Report how far through ``span`` the work is, for callers showing a progress bar."""

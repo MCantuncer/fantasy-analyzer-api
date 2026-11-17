@@ -41,6 +41,8 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
+from app.analysis import gamescore
+
 PTS, BLK, STL, AST, REB, TO, FGM, FGA, FTM, FTA, TPM = 0, 1, 2, 3, 6, 11, 13, 14, 15, 16, 17
 MINUTES, GS, GP = 40, 41, 42  # GS: started the game
 COUNTING = (PTS, REB, AST, STL, BLK, TPM, TO, FGM, FGA, FTM, FTA)
@@ -170,7 +172,7 @@ def parse_rows(players: list[dict], season: int) -> list[GameRow]:
             if st.get("seasonId") not in (None, season):
                 continue
             s = st.get("stats") or {}
-            line = {k: float(s.get(str(k), 0) or 0) for k in (*COUNTING, MINUTES, GS)}
+            line = {k: float(s.get(str(k), 0) or 0) for k in (*COUNTING, MINUTES, GS, *gamescore.TEAM_STATS)}
             if line[MINUTES] <= 0:
                 continue
             out.append(
@@ -239,6 +241,7 @@ class Box:
     team_points: dict[int, float] = field(default_factory=dict)  # team -> points a game
     played: dict[int, list[int]] = field(default_factory=dict)  # team -> days it played, in order
     schedule: dict[int, list[Game]] = field(default_factory=dict)  # team -> its games this season, in order
+    scores: gamescore.Scores | None = None  # every team's scoring so far, for its expected score
 
     def games_missed(self, player: int, team: int, day: int) -> int:
         """Team games since his last one, before ``day``, up to MISSED_CAP. 0 without games of his."""
@@ -317,9 +320,11 @@ def build(
     prior: dict[int, dict[int, float]],
     schedule: dict[int, list[Game]],
     last_season: dict[int, Carry] | None = None,
+    score_start: gamescore.SeasonEnd | None = None,
 ) -> Box:
     """The box from every game row so far: defenses, margins and each player's recent games.
-    ``last_season``: carry() of last season's rows, for form that runs across the summer."""
+    ``last_season``: carry() of last season's rows, for form that runs across the summer;
+    ``score_start``: gamescore.season_end of last season's rows, where teams' scoring starts."""
     last_season = last_season or {}
     # League rate a minute, for players without a last season to start from.
     total_min = sum(r.line[MINUTES] for r in rows) or 1.0
@@ -432,6 +437,7 @@ def build(
         team_points={t: points_sum[t] / len(played[t]) for t in played},
         played=team_days,
         schedule=schedule,
+        scores=gamescore.build(gamescore.team_games(rows), score_start),
     )
 
 
@@ -460,6 +466,7 @@ class GameContext:
     tip: int | None = None  # tip-off, epoch ms
     team_points: float = 0.0  # his team's points a game so far
     game_back: int = 0  # 1, 2, 3: his first, second, third game after missing RAMP_GAP+ team games
+    team_score: float | None = None  # points his team should score (gamescore.expected)
 
 
 def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
@@ -483,7 +490,15 @@ def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
         tip=game.tip,
         team_points=box.team_points.get(team, 0.0),
         game_back=back if back in RAMP else 0,
+        team_score=expected_score(box, team, game),
     )
+
+
+def expected_score(box: Box, team: int, game: Game) -> float | None:
+    """Points ``team`` should score in ``game`` (gamescore.expected), None before the box has scores."""
+    if box.scores is None:
+        return None
+    return gamescore.expected(box.scores, team, game.opponent, game.home, box.back_to_back(team, game.day))
 
 
 @dataclass
