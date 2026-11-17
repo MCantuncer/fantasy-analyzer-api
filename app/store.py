@@ -42,6 +42,14 @@ create table if not exists trade_votes (
 );
 -- The pick can change during the day; a vote counts only for the deal it was cast on.
 alter table trade_votes add column if not exists pick_id text not null default '';
+-- Each player's injury tag as it stood before his game tipped off (app/pregame.py), per NBA day.
+create table if not exists pregame_status (
+    season int not null,
+    day int not null,
+    body jsonb not null,
+    saved_at timestamptz not null default now(),
+    primary key (season, day)
+);
 create table if not exists nba_days (
     season int not null,
     day int not null,
@@ -110,6 +118,8 @@ class Store(Protocol):
     def tally(self, key: TradeKey, pick_id: str) -> dict[int, tuple[int, int]]: ...
     def get_day(self, season: int, day: int) -> dict | None: ...
     def save_day(self, season: int, day: int, body: dict) -> None: ...
+    def get_pregame(self, season: int, day: int) -> dict | None: ...
+    def save_pregame(self, season: int, day: int, body: dict) -> None: ...
     def get_recap(self, league_id: int, season: int, period: int) -> dict | None: ...
     def save_recap(self, league_id: int, season: int, period: int, body: dict) -> None: ...
     def save_news_items(self, items: list[dict]) -> None: ...
@@ -129,6 +139,7 @@ class MemoryStore:
         self.trades: dict[TradeKey, dict] = {}
         self.votes: dict[TradeKey, dict[tuple[int, str], tuple[str, bool]]] = {}
         self.days: dict[tuple[int, int], dict] = {}
+        self.pregame: dict[tuple[int, int], dict] = {}
         self.recaps: dict[tuple[int, int, int], dict] = {}
         self.news: dict[str, dict] = {}
         self.news_state: dict[str, dict] = {}
@@ -158,6 +169,12 @@ class MemoryStore:
 
     def save_day(self, season: int, day: int, body: dict) -> None:
         self.days[(season, day)] = body
+
+    def get_pregame(self, season: int, day: int) -> dict | None:
+        return self.pregame.get((season, day))
+
+    def save_pregame(self, season: int, day: int, body: dict) -> None:
+        self.pregame[(season, day)] = body
 
     def get_recap(self, league_id: int, season: int, period: int) -> dict | None:
         return self.recaps.get((league_id, season, period))
@@ -255,6 +272,19 @@ class PostgresStore:
         with self._connect() as conn:
             conn.execute(
                 "insert into nba_days (season, day, body) values (%s, %s, %s) "
+                "on conflict (season, day) do update set body = excluded.body, saved_at = now()",
+                (season, day, json.dumps(body)),
+            )
+
+    def get_pregame(self, season: int, day: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("select body from pregame_status where season=%s and day=%s", (season, day)).fetchone()
+        return row[0] if row else None
+
+    def save_pregame(self, season: int, day: int, body: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "insert into pregame_status (season, day, body) values (%s, %s, %s) "
                 "on conflict (season, day) do update set body = excluded.body, saved_at = now()",
                 (season, day, json.dumps(body)),
             )
