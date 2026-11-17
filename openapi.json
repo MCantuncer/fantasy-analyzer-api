@@ -6635,6 +6635,12 @@
             ],
             "title": "Injury Status",
             "description": "ESPN injury status (OUT, DAY_TO_DAY...) when known; null when healthy"
+          },
+          "on_roster": {
+            "type": "boolean",
+            "title": "On Roster",
+            "description": "On his NBA team's roster today (ESPN keeps long-gone players on their old team): rostered in this league, or in ESPN's news in the last 120 days",
+            "default": true
           }
         },
         "type": "object",

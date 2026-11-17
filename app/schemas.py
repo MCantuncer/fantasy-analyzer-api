@@ -1320,6 +1320,11 @@ class IndexedPlayer(BaseModel):
     injury_status: str | None = Field(
         default=None, description="ESPN injury status (OUT, DAY_TO_DAY...) when known; null when healthy"
     )
+    on_roster: bool = Field(
+        default=True,
+        description="On his NBA team's roster today (ESPN keeps long-gone players on their old team): "
+        "rostered in this league, or in ESPN's news in the last 120 days",
+    )
 
 
 class PlayerIndex(BaseModel):

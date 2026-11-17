@@ -1,5 +1,6 @@
 import gzip
 import json
+from datetime import UTC, datetime
 
 import httpx
 from fastapi.testclient import TestClient
@@ -7,14 +8,21 @@ from fastapi.testclient import TestClient
 from app.accounts import MemoryAccountStore
 from app.espn.client import EspnClient
 from app.main import create_app
-from app.playersearch import injury_tag, parse_index
+from app.playersearch import injury_tag, on_roster, parse_index
 from app.store import MemoryStore
 
 from .conftest import LEAGUE_ID, FakeEspn, signed_in
 
 INDEX = [
     {"id": 1, "fullName": "Bench Guy", "proTeamId": 0, "defaultPositionId": 2, "ownership": {"percentOwned": 0.04}},
-    {"id": 2, "fullName": "Nikola Jokić", "proTeamId": 7, "defaultPositionId": 5, "ownership": {"percentOwned": 100}},
+    {
+        "id": 2,
+        "fullName": "Nikola Jokić",
+        "proTeamId": 7,
+        "defaultPositionId": 5,
+        "ownership": {"percentOwned": 100},
+        "lastNewsDate": 1794700000000,  # 2026-11-14
+    },
     {"id": 3, "fullName": "  ", "proTeamId": 1},
     {"id": 2, "fullName": "Nikola Jokić", "proTeamId": 7, "defaultPositionId": 5},
     {"fullName": "No Id"},
@@ -26,6 +34,18 @@ def test_parse_index_keeps_named_players_most_rostered_first():
     assert [p.id for p in players] == [2, 1]
     assert (players[0].name, players[0].pro_team, players[0].position) == ("Nikola Jokić", "DEN", "C")
     assert (players[1].pro_team, players[1].percent_owned) == ("", 0.0), "no NBA team; ownership rounded"
+
+
+def test_on_roster_means_recent_news_or_rostered_here():
+    now = datetime(2026, 11, 16, tzinfo=UTC)
+    jokic, bench = parse_index(INDEX)
+    assert jokic.news_at is not None and on_roster(jokic, now)
+    long_gone = parse_index([{"id": 9, "fullName": "Jarnell Stokes", "proTeamId": 29}])[0]
+    assert not on_roster(long_gone, now), "ESPN keeps him on his old team, with no news"
+    assert on_roster(long_gone, now, owned=True), "anyone rostered in the league counts"
+    stale = parse_index([{"id": 8, "fullName": "Old News", "proTeamId": 29, "lastNewsDate": 1751328000000}])[0]
+    assert not on_roster(stale, now), "news from July 2025"
+    assert not on_roster(bench, now, owned=True), "no NBA team, no roster"
 
 
 def test_injury_tag_only_for_a_real_tag():
@@ -47,6 +67,7 @@ def search_app(recorded, pro_schedule):
     app = create_app(
         EspnClient(transport=httpx.MockTransport(espn)), store=MemoryStore(), accounts=MemoryAccountStore()
     )
+    app.state.now = lambda: datetime(2026, 11, 16, tzinfo=UTC)
     owner = recorded["league"]["teams"][0]["id"]
     return app, fake, rostered["id"], owner
 
@@ -63,6 +84,7 @@ def test_players_index_endpoint(recorded, pro_schedule):
     by_id = {p["player_id"]: p for p in d["players"]}
     assert by_id[2]["owner_team_id"] is None and by_id[2]["pro_team"] == "DEN"
     assert by_id[rostered]["owner_team_id"] == owner, "who has him in this league"
+    assert by_id[2]["on_roster"] and by_id[rostered]["on_roster"] and not by_id[1]["on_roster"]
 
     calls = fake.calls
     zipped = client.post("/api/players/index", json=body, headers={"Accept-Encoding": "gzip"})
