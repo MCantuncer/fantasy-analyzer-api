@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import errors as error_reports
-from app import pregame, schemas
+from app import playchance, pregame, schemas
 from app.accounts import (
     PASSWORD_MIN,
     PASSWORD_OFF_NOTICE,
@@ -166,6 +166,8 @@ IMPACT_TRACK_RECORD = (
 LIVE_SCORES_TTL = 60.0
 # A lineup change in the ESPN app shows within this long; a finished day's lineup never changes.
 LINEUP_TTL = 30.0
+# ESPN's injury feed (play chances): teams file the NBA report every 15 minutes.
+INJURY_FEED_TTL = 300.0
 PAST_LINEUP_TTL = 6 * 3600.0
 PLAYER_CARD_TTL = 300.0  # a card a few people open in a row is one ESPN call; box scores land after games
 CARD_NEWS_TTL = 60.0  # player cards share one build of the news stories
@@ -349,6 +351,7 @@ def create_app(
     app.state.on_court = TTLCache(LIVE_SCORES_TTL)
     app.state.lineups = TTLCache(LINEUP_TTL)
     app.state.past_lineups = TTLCache(PAST_LINEUP_TTL)
+    app.state.injury_feed = TTLCache(INJURY_FEED_TTL)
     app.state.clock_transport = clock_transport
     app.state.summaries = SummaryBook()  # finished games' play-by-play notes, read once
     app.state.settled_days = TTLCache(7 * 24 * 3600, max_items=512)
@@ -2654,6 +2657,7 @@ def create_app(
             cache.set(key, hit)
         spots, fetched_at = hit
         week = week_of(sched, day)
+        plays = {} if past else await play_chances(spots, sched, season, day, now)
         return schemas.DayLineup(
             league_id=body.league_id,
             season=season,
@@ -2674,6 +2678,7 @@ def create_app(
                     season_avg=schemas.SeasonAverage(**s.season_avg) if s.season_avg else None,
                     next_game=lineup_next_game(sched, s.pro_team_id, day),
                     week_games=team_days(sched, s.pro_team_id, week),
+                    play=plays.get(s.player_id),
                 )
                 for s in spots
             ],
@@ -2681,6 +2686,61 @@ def create_app(
             week=[schemas.LineupDay(day=d, date=_iso_date(sched.date_of(d))) for d in week],
             fetched_at=fetched_at,
         )
+
+    async def injury_feed() -> dict[int, playchance.FeedNote]:
+        """ESPN's injury feed, shared by every lineup; empty when ESPN can't be reached."""
+        feed = app.state.injury_feed.get("feed")
+        if feed is None:
+            feed = await playchance.fetch_feed(app.state.clock_transport) or {}
+            app.state.injury_feed.set("feed", feed)
+        return feed
+
+    async def play_chances(
+        spots: list, sched: Schedule, season: int, day: int, now: datetime
+    ) -> dict[int, schemas.PlayChance]:
+        """The chance each tagged player plays his game that day, if it hasn't started (app/playchance.py)."""
+        tips = {t: g.start for g in sched.games.get(day, []) for t in (g.away, g.home)}
+        tagged = [
+            s for s in spots if s.injury_status != "ACTIVE" and s.pro_team_id in tips and now < tips[s.pro_team_id]
+        ]
+        if not tagged:
+            return {}
+        feed = await injury_feed()
+        out_ids = sorted(s.player_id for s in tagged if s.injury_status in ("OUT", "INJURY_RESERVE"))
+        played: dict[int, set[int]] = {}
+        if out_ids:
+            try:
+                played = absence.played_days(await player_gamelogs(season, out_ids, past=False), season)
+            except EspnError:
+                played = {}
+        out: dict[int, schemas.PlayChance] = {}
+        for s in tagged:
+            days = sorted(
+                d for d, games in sched.games.items() if any(s.pro_team_id in (g.away, g.home) for g in games)
+            )
+            before = [d for d in days if d < day]
+            last_tip = (
+                next(g.start for g in sched.games[before[-1]] if s.pro_team_id in (g.away, g.home)) if before else None
+            )
+            if last_tip is not None and last_tip > now:
+                continue  # not his next game: the history is for the game right ahead
+            missed = absence.missed_in_a_row(days, played[s.player_id], day) if s.player_id in played else None
+            minutes = (s.season_avg or {}).get("min")
+            note = feed.get(s.player_id)
+            got = playchance.estimate(s.injury_status, note, tips[s.pro_team_id], last_tip, now, minutes, missed)
+            if got is None:
+                continue
+            out[s.player_id] = schemas.PlayChance(
+                chance=round(got.chance, 2),
+                tag=got.tag,
+                basis=got.basis,
+                news=(note.comment or None) if note else None,
+                news_at=iso(note.at) if note and note.at else None,
+                return_date=note.return_date if note else None,
+                upgraded=got.upgraded,
+                missed_in_a_row=got.missed_in_a_row,
+            )
+        return out
 
     def lineup_next_game(sched: Schedule, pro_team_id: int, day: int) -> schemas.NextGame | None:
         g = next_game(sched, pro_team_id, day)

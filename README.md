@@ -59,6 +59,7 @@ The web client lives in [fantasy-analyzer-web](https://github.com/MCantuncer/fan
 | 🏀 | **Live scores:** NBA scores and box scores tagged with fantasy teams, plus our call for each game (expected final score and how sure we are of the winner) | `/api/scores` |
 | 📰 | **Checked NBA news:** stories confirmed across sources before they show | `/api/news` |
 | 🩹 | **Injury impact:** which teammates gain while a player is out | `/api/injury-impact` |
+| 🚦 | **Chance to play:** for each player in your lineup tagged day-to-day or out, the chance he plays that day's game (probable, questionable, doubtful, how long before tip-off, his role) and whether an out player is coming back | `/api/scores/lineup` |
 | 🃏 | **Player cards:** any player's latest team games (final score, his garbage-time line, missed ones marked with his current injury), health, news and every move of him in the league | `/api/player-card` |
 | 🔎 | **Player search:** any NBA player from the header on every page, results with each key press, who has him in your league, and a tap opens his card | `/api/players/index` |
 | 👥 | **NBA team card:** search a team and see its record, streak, last five results with each top scorer, next game and roster; tap a player for his card on top | `/api/nba-team` |
@@ -199,7 +200,7 @@ All settings are optional for local development.
 | POST | `/api/scores/games` | `{league_id, season?, day?, team_id?}` | The same day at once from the NBA calendar, with no stats call: teams, tip-off and status, plus this week's fixtures. `complete` is false until the scores are in; ask `/api/scores` for them |
 | POST | `/api/recap` | `{league_id, season?, period?}` | A finished week in review (default: the last one): matchups by category, top players by 9-cat value with their owner, free agents who stood out (who added them, which day, still free?), each team's MVP, best add and bench, and `weeks` for a picker. Built once per league and week, then stored; 404 `week_not_finished` before any week is over |
 | POST | `/api/scores/sits` | `{league_id, season?, team_id}` | Who sits on each crowded day left this week, on its own (the slow part of the Scores page) |
-| POST | `/api/scores/lineup` | `{league_id, season?, team_id, day?}` | `team_id`'s lineup that day, read fresh from ESPN (30 s cache, so a change in the ESPN app shows within a minute): each player's slot, whether it counts, and his game that day, his season per-game line, his next game and the days he plays this week; plus empty starting slots and the week's days |
+| POST | `/api/scores/lineup` | `{league_id, season?, team_id, day?}` | `team_id`'s lineup that day, read fresh from ESPN (30 s cache, so a change in the ESPN app shows within a minute): each player's slot, whether it counts, and his game that day, his season per-game line, his next game and the days he plays this week, and for a player with an injury tag and a game not yet started his chance to play it (`play`: chance, the NBA report's tag, ESPN's latest note); plus empty starting slots and the week's days |
 | POST | `/api/injury-impact` | `{player_id, league_id?, season?}` | Teammates who gain while a player is out, from games his team played without him, each tagged with his fantasy team in `league_id` |
 | POST | `/api/news` | `{league_id?, season?, include_held?}` | Checked NBA news from every source, each player tagged with his fantasy team in `league_id`; source health; today's most-added players |
 | GET | `/api/news/refresh` | | Starts a check of every news source if the last is over 10 minutes old. For the scheduled ping |
@@ -319,6 +320,23 @@ The endpoint lists teammates whose 9-category value goes up and who would play 1
 | This model | 3.85 | 35% |
 
 Chance is about 20%. Even knowing the real minutes, the best value pick would be right about 41% of the time, because stats over a few games are noisy; the model's value pick was right 27% (backup rule 24%).
+
+### Chance to play
+
+ESPN's fantasy data tags a player only DAY_TO_DAY or OUT. The NBA's own injury report says probable, questionable, doubtful, out or available, and teams file it every 15 minutes. `app/playchance.py` reads the tag from ESPN's injury feed (its one-line notes use the report's words: "is questionable for Wednesday's game") and gives the share of past players in the same spot who played: the same tag, read as long before tip-off, and the same role (under 15, 15 to 25, 25+ minutes a game). A note counts only for the game it is about: ESPN re-dates old notes, so one naming a weekday counts only for a game that day in New York, and one naming none only when written after his team's last game. With no note about the game a day-to-day player gets the rate of all three tags together. A player listed out with no word yet gets the share of regulars out that long who played their next game; a note that upgrades him for the game (questionable, probable, available) is the clearest sign he's coming back and switches to the tag's chance.
+
+Five seasons of NBA injury reports (every version, sportsdataverse's archive) matched to ESPN's game lines (about 46,000 listed player-games, 15,000 of them probable, questionable or doubtful), each season tested against tables made from the other four (`scripts/play_chance_backtest.py`, log loss, lower is better):
+
+| Season | Flat day-to-day | Tag + hours | + Role |
+|---|---|---|---|
+| 2021-22 | 0.685 | 0.569 | 0.566 |
+| 2022-23 | 0.685 | 0.559 | 0.548 |
+| 2023-24 | 0.674 | 0.539 | 0.523 |
+| 2024-25 | 0.680 | 0.533 | 0.525 |
+| 2025-26 | 0.680 | 0.527 | 0.522 |
+| 2026-27 so far | | 0.563 | 0.557 |
+
+Questionable means about 55% for a regular most of the day and 69% when still questionable half an hour out; probable 90 to 98%; doubtful 1 to 7%. A player out after one missed game played the next 47% of the time, after 2-3 20%, after 4-6 14%, after 7+ 10% (better than one flat rate in every season). Tried and not kept, since they didn't help in every season: injury type (soreness, sprain, ...), missing his last game, back-to-backs.
 
 ## Testing and validation
 
