@@ -146,6 +146,8 @@ All settings are optional for local development.
 | `USAGE_FLUSH_SECONDS` | `60` | How often usage counts held in memory are written to the database |
 | `SAMPLE_LEAGUE_ID` | none | A public ESPN 9-cat league shown to visitors before they sign in, team names masked; the sample is off until it is set |
 | `SAMPLE_SEASON` | current season | Freezes the sample on one season |
+| `LINE_LOG_LEAGUE_ID` | sample league | Public league whose players' next-game lines are saved at tip-off (`app/linelog.py`); off when neither is set |
+| `LINE_LOG_SECONDS` | `900` | How often the line log looks in the hours before tip-off; 0 turns it off |
 
 ## API reference
 
@@ -526,6 +528,8 @@ Lines held to the score (`report.team_sum_gap`, `TEAM_SUM_SHARE`): a team's next
 Tested on the same five seasons and not kept (2026-11-17, none lowered the miss in every season): three games in four nights, four in six, overtime the night before, a third straight road game, starters' heavy minutes the night before, revenge for the last meeting, win and losing streaks, tanking late in the season, a favourite or underdog by 8+ points, and the opponent's defence rank. None of them explains a team's free-throw night either. Rest days against the opponent's helps a third of a point a day on its own, but not on top of the back-to-back.
 
 **Injury tags at tip-off.** Whether tonight's lineup news sharpens the call can only be tested with the news as it stood before tip-off, which ESPN doesn't keep. So the pregame watch (`app/pregame.py`, every 10 minutes, `PREGAME_WATCH_SECONDS`, 0 turns it off) reads ESPN's injury tags of the most-owned players and, for each team playing in the next 24 hours, keeps the last reading before its game starts, in `pregame_status` (one row per NBA day).
+
+**Every player's line against what he did.** To see over a season who lands near his next-game line and who jumps above and below it, the line log (`app/linelog.py`, every 15 minutes in the 2 hours before tip-offs, `LINE_LOG_SECONDS`) reads one public league's players (`LINE_LOG_LEAGUE_ID`, else the sample league: rosters plus the most-owned free agents, about 300) and, for each team, keeps the last line before its game starts. When the box is built after a settled night, each player's stats are added from the game rows (none yet: it waits up to 3 days). One row per NBA day in `player_lines`, numbers in fixed-order arrays, about 25-35 KB a day before Postgres compresses it. Admins read it back with `POST /api/admin/player-lines` (`season`, `last` days, `min_games`): per player, average line, result, miss and swing (root mean square miss) for minutes and the counting stats, biggest points swing first.
 
 **The box behind the calls stays built.** The calls come from the league box, all 30 teams' game logs, which a league load used to build and which expires after 4 hours. Opened in the morning with no league loaded overnight, Scores had no box and showed no calls. Now the box watch (every 10 minutes, `BOX_WATCH_SECONDS`, 0 turns it off; first look 30 seconds after a start) builds it again once it expires or once a finished night is missing from it (at most once an hour for the same night), and Scores keeps using the last box built while a new one builds.
 
