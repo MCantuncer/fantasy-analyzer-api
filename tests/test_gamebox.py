@@ -392,3 +392,49 @@ def test_a_team_expected_to_outscore_its_lines_lifts_them(league):
         ng = Analyzer(lg, 3).ref(p).next_game
         assert (ng.pts > even.pts) is higher and (ng.minutes > even.minutes) is higher
         assert ng.usual.pts == even.usual.pts  # the usual line is before the game: unchanged
+
+
+def test_week_contexts_are_his_teams_games_on_the_days_left():
+    box = gamebox.build(2027, _rows(), PRIOR, SCHEDULE)
+    # Team 1 plays on days 4 and 5 of days 4..7; a team with no games has none.
+    games = gamebox.week_contexts(box, 11, 1, [4, 5, 6, 7])
+    assert [m.day for m in games] == [4, 5]
+    assert games[1] == gamebox.context(box, 11, 1, 5)
+    assert gamebox.week_contexts(box, 11, 9, [4, 5]) == ()
+
+
+def test_a_week_line_is_his_games_one_by_one():
+    easy = _ctx(day=5, defense={PTS: 0.2, REB: 0.1})
+    hard = _ctx(day=6, defense={PTS: -0.2, REB: -0.1}, home=True)
+    week = gamebox.week_line(LINE, [easy, hard])
+    a, b, level = gamebox.apply(LINE, easy, [])[0], gamebox.apply(LINE, hard, [])[0], gamebox.level_line(LINE)
+    for k in (MINUTES, PTS, REB, AST, FGM, FGA):
+        assert week[k] == pytest.approx(LINE[k] + (a[k] + b[k]) / 2 - level[k])
+    assert a[PTS] > b[PTS]  # the two games differ, the week holds both
+    # No games, or a line with no minutes: the line as it was.
+    assert gamebox.week_line(LINE, []) is LINE
+    assert gamebox.week_line(_line(0.0), [easy]) == _line(0.0)
+
+
+def test_a_week_line_keeps_the_level_of_his_line():
+    # Plain games (no opponent or form in them), one at home and one away, move nothing: apply's levels
+    # stay out of a week.
+    week = gamebox.week_line(LINE, [_ctx(home=True), _ctx(day=6)])
+    for k in (MINUTES, PTS, REB, AST, STL, TO, FGM, FGA):
+        assert week[k] == pytest.approx(LINE[k])
+    # A soft defense then shows in full.
+    soft = gamebox.week_line(LINE, [_ctx(defense={PTS: 0.2})])
+    assert soft[PTS] > LINE[PTS] and soft[MINUTES] == pytest.approx(LINE[MINUTES])
+
+
+def test_a_week_line_keeps_free_throws_and_one_game_signals_to_the_first_game():
+    line = {**LINE, gamebox.FTM: 4.0, gamebox.FTA: 5.0}
+    week = gamebox.week_line(line, [_ctx(defense={gamebox.FTA: 0.3})])
+    assert (week[gamebox.FTM], week[gamebox.FTA]) == (4.0, 5.0)
+    # A coach who just sat him takes minutes off his next game only.
+    sat = _ctx(sat_ago=1)
+    one = gamebox.week_line(LINE, [sat])[MINUTES]
+    two = gamebox.week_line(LINE, [sat, _ctx(day=6, sat_ago=2)])[MINUTES]
+    plain = gamebox.week_line(LINE, [_ctx()])[MINUTES]
+    assert one == pytest.approx(plain + gamebox.COACH_SAT_MINUTES)
+    assert two == pytest.approx(plain + gamebox.COACH_SAT_MINUTES / 2)

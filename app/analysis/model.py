@@ -21,6 +21,7 @@ from operator import itemgetter
 
 import numpy as np
 
+from app.analysis import gamebox
 from app.analysis.durability import keep_share, kept
 from app.analysis.teammates import MAX_MINUTES
 from app.espn.parse import IR_SLOT, MINUTES, UTIL_SLOT, Category, League, Player, with_minutes
@@ -141,17 +142,33 @@ class CategoryModel:
         """``row`` over one horizon: a player whose minutes move while a teammate is out
         (teammates.py) gets the share of that horizon's games the teammate misses, not the
         rest-of-season share ``per_game`` holds. In the week under way everyone else gets the
-        minutes his last few weeks point to (``recent_shift``). Otherwise ``row``."""
+        minutes his last few weeks point to (``recent_shift``), and every player his games left
+        that week one by one, each with its opponent and his form in it (``week_line``).
+        Otherwise ``row``."""
         if horizon == "season" or not self.cal or horizon not in self.horizon:
             return self.row(p)
         this_week = horizon == self.league.current_period
-        if not p.minute_shifts and not (this_week and any(m is not None for m in p.recent_minutes)):
+        by_game = this_week and bool(p.week_contexts)
+        recent = this_week and any(m is not None for m in p.recent_minutes)
+        if not p.minute_shifts and not recent and not by_game:
             return self.row(p)
         key = (p.id, horizon)
         cached = self._horizon_rows.get(key)
         if cached is None:
-            cached = self._horizon_rows[key] = self._row_of(self.horizon_line(p, horizon))
+            line = self.horizon_line(p, horizon)
+            cached = self._horizon_rows[key] = self._row_of(self.week_line(p, line) if by_game else line)
         return cached
+
+    def week_line(self, p: Player, line: dict[int, float]) -> dict[int, float]:
+        """``line`` (``horizon_line`` for the week under way) built game by game over the games he
+        has left this week (gamebox.week_line): from his first game back when he is listed out.
+        Called on a week's first day it missed the week's totals by less than ``line`` in each of
+        five seasons, in every category but FT%, which it leaves alone (scripts/week_lines_backtest.py):
+        points 4.6-8.9% less squared miss, rebounds 2.5-9.3%, assists 3.8-7.5%. One line for all his
+        games that week, so a day he sits on a crowded day counts like his others."""
+        back = self.return_day(p)
+        games = [m for m in p.week_contexts if m.day >= back] or list(p.week_contexts)
+        return gamebox.week_line(line, games)
 
     def horizon_line(self, p: Player, horizon: object) -> dict[int, float]:
         """His per-game line over one horizon, as ``horizon_row`` counts it: the minutes a teammate's
