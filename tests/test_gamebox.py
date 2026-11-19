@@ -148,6 +148,52 @@ def test_a_player_his_coach_just_sat_plays_fewer_minutes():
         assert all(r.kind != "coach_decision" for r in gamebox.apply(line, ctx, [])[2])
 
 
+def _form(**kw) -> Form:
+    base = dict(rate={}, minutes=34.0, minutes_long=34.0, usage=0.0, last_day=4, team=1)
+    return Form(**{**base, **kw})
+
+
+def test_the_box_knows_what_his_games_were_decided_by_and_overtime():
+    box = gamebox.build(2027, _rows(), PRIOR, SCHEDULE)
+    # Team 2 won 25-20 three times, in regulation.
+    assert box.form[11].decided_by == pytest.approx(5.0)
+    assert not box.form[11].overtime
+    # The last game goes to overtime: both teams' players are on the court for 265 minutes.
+    rows = _rows() + [GameRow(13 + t, 103, 4, 1 + t % 2, _line(110)) for t in range(4)]
+    late = gamebox.build(2027, rows, PRIOR, SCHEDULE)
+    assert late.form[11].overtime and late.form[21].overtime
+
+
+def test_one_sided_games_move_a_core_players_minutes():
+    core = _line(34.0, pts=24.0)
+    plain = gamebox.apply(core, _ctx(form=_form(decided_by=gamebox.LOPSIDED_USUAL)), [])[0][MINUTES]
+    # His last games were decided by 22: the minutes he sat then come back.
+    new, _, reasons = gamebox.apply(core, _ctx(form=_form(decided_by=gamebox.LOPSIDED_USUAL + 10)), [])
+    assert new[MINUTES] - plain == pytest.approx(gamebox.LOPSIDED_MINUTES)
+    assert next(r for r in reasons if r.kind == "lopsided_games").minutes == pytest.approx(gamebox.LOPSIDED_MINUTES)
+    # A game that looks one-sided takes some: favored by 18 is 10 past BLOWOUT_MARGIN, either way round.
+    for margin in (gamebox.BLOWOUT_MARGIN + 10, -gamebox.BLOWOUT_MARGIN - 10):
+        new, _, reasons = gamebox.apply(core, _ctx(margin=margin), [])
+        blowout = next(r for r in reasons if r.kind == "blowout")
+        assert blowout.minutes == pytest.approx(gamebox.BLOWOUT_MINUTES)
+    # Neither for a bench player, nor a blowout term inside BLOWOUT_MARGIN.
+    bench = _line(gamebox.CORE_MINUTES - 1, pts=10.0)
+    kinds = {r.kind for r in gamebox.apply(bench, _ctx(margin=20.0, form=_form(decided_by=30.0)), [])[2]}
+    assert not kinds & {"lopsided_games", "blowout"}
+    assert all(r.kind != "blowout" for r in gamebox.apply(core, _ctx(margin=gamebox.BLOWOUT_MARGIN), [])[2])
+
+
+def test_the_game_after_overtime_plays_fewer_minutes():
+    plain = gamebox.apply(LINE, _ctx(form=_form(minutes=30.0, minutes_long=30.0)), [])[0][MINUTES]
+    new, _, reasons = gamebox.apply(LINE, _ctx(form=_form(minutes=30.0, minutes_long=30.0, overtime=True)), [])
+    assert new[MINUTES] - plain == pytest.approx(gamebox.OVERTIME_MINUTES)
+    assert next(r for r in reasons if r.kind == "overtime").minutes == pytest.approx(gamebox.OVERTIME_MINUTES)
+    # In a week built game by game it counts in the first game only.
+    ctx = _ctx(form=_form(minutes=30.0, minutes_long=30.0, overtime=True))
+    one, two = gamebox.week_line(LINE, [ctx])[MINUTES], gamebox.week_line(LINE, [ctx, ctx])[MINUTES]
+    assert one - two == pytest.approx(gamebox.OVERTIME_MINUTES / 2)
+
+
 def _ctx(**kw) -> GameContext:
     base = dict(day=5, opponent=2, home=False, back_to_back=False, margin=0.0, defense={}, form=None, games_missed=0)
     return GameContext(**{**base, **kw})
@@ -264,6 +310,10 @@ def test_reason_texts():
     assert text("season_end") == "Last games of the season"
     assert text("coach_decision", days=1) == "Coach sat him yesterday"
     assert text("coach_decision", days=3) == "Coach sat him 3 days ago"
+    assert _reason_text(gamebox.Reason("lopsided_games", minutes=0.8), _ctx()) == "One-sided games lately"
+    assert _reason_text(gamebox.Reason("lopsided_games", minutes=-0.4), _ctx()) == "Close games lately"
+    assert text("blowout") == "This game may get one-sided"
+    assert text("overtime") == "Overtime in his last game"
     assert text("back_from_absence", games=0, game_back=2) == "Second game back"
     assert text("back_from_absence", games=3, game_back=1) == "First game back after 3 missed"
     assert text("teammates_out", names="Jaylen Brown", points=24.6) == "Teammates out: 25 points a game to share"
