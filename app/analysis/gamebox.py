@@ -256,6 +256,10 @@ class Box:
         h = gamescore.expected(s, home, away, True, self.back_to_back(home, day))
         return gamescore.call(a, h)
 
+    def latest_day(self) -> int:
+        """The last day with a game in the box: 0 for a box with no games yet."""
+        return max((d[-1] for d in self.played.values() if d), default=0)
+
     def games_missed(self, player: int, team: int, day: int) -> int:
         """Team games since his last one, before ``day``, up to MISSED_CAP. 0 without games of his."""
         f = self.form.get(player)
