@@ -408,6 +408,10 @@ def _reason_text(r: gamebox.Reason, m: gamebox.GameContext) -> str:
         return "Started his last game" if r.detail.get("started") else "Moved to the bench"
     if r.kind == "heavy_minutes":
         return "Big minutes ease off"
+    if r.kind == "new_team":
+        return "First game for his new team"
+    if r.kind == "season_end":
+        return "Last games of the season"
     if r.kind == "coach_decision":
         days = int(r.detail.get("days") or 0)
         return "Coach sat him yesterday" if days == 1 else f"Coach sat him {days} days ago"

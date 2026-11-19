@@ -91,7 +91,11 @@ LONG_MINUTES = 0.1336  # per minute his longer run (LONG_HALF_LIFE) ran over the
 ROLE_MINUTES = 0.7156  # x (share of games he started lately - 0.5): starters play more than lines say
 SWITCH_MINUTES = 2.126  # x (started his last game - share he started lately): a new starter, or benched
 HEAVY_LEVEL = -0.5084  # per minute of line over HEAVY_MINUTES
-# A coach's call a line can't see in his games so far (scripts/next_game_tuning.py, every season of five):
+# Coaches' calls a line can't see in his games so far (scripts/next_game_tuning.py, every season of five):
+NEW_TEAM_MINUTES = -4.5  # his first game for a new team this season: eased in
+SEASON_END_MINUTES = -2.3  # a core player (CORE_MINUTES+) in his team's last SEASON_END_GAMES games: rested
+CORE_MINUTES = 28.0
+SEASON_END_GAMES = 3
 COACH_SAT_MINUTES = -2.2  # he sat a game by coach's decision in the last COACH_SAT_DAYS days: still out of favor
 COACH_SAT_DAYS = 4
 COACH_SAT_LINE = 10.0  # minutes of line it takes: a deep-bench line has little left to lose
@@ -105,6 +109,8 @@ MINUTE_WEIGHTS = {
     "role": ROLE_MINUTES,
     "switch": SWITCH_MINUTES,
     "heavy": HEAVY_LEVEL,
+    "new_team": NEW_TEAM_MINUTES,
+    "season_end": SEASON_END_MINUTES,
     "coach_sat": COACH_SAT_MINUTES,
 }
 MINUTE_KINDS = {
@@ -116,6 +122,8 @@ MINUTE_KINDS = {
     "long": "recent_minutes",
     "switch": "starter_switch",
     "heavy": "heavy_minutes",
+    "new_team": "new_team",
+    "season_end": "season_end",
     "coach_sat": "coach_decision",
 }  # role: part of his usual line, not a reason
 
@@ -496,6 +504,8 @@ class GameContext:
     team_points: float = 0.0  # his team's points a game so far
     game_back: int = 0  # 1, 2, 3: his first, second, third game after missing RAMP_GAP+ team games
     team_score: float | None = None  # points his team should score (gamescore.expected)
+    new_team: bool = False  # his first game for this team after playing for another one this season
+    games_left: int | None = None  # his team's games left this season, this one included
     sat_ago: int | None = None  # days since he last sat a game by coach's decision (none: never, or not known)
 
 
@@ -505,6 +515,7 @@ def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
         return None
     margin = box.margin.get(team, 0.0) - box.margin.get(game.opponent, 0.0) + (HOME_EDGE if game.home else -HOME_EDGE)
     f = box.form.get(player)
+    new_team = f is not None and f.team != team
     f = f if f is not None and f.team == team else None
     missed = box.games_missed(player, team, game.day)
     sat = [d for d in box.sat.get(player, ()) if d < game.day]
@@ -522,6 +533,8 @@ def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
         team_points=box.team_points.get(team, 0.0),
         game_back=back if back in RAMP else 0,
         team_score=expected_score(box, team, game),
+        new_team=new_team,
+        games_left=sum(1 for g in box.schedule.get(team, []) if g.day >= game.day),
         sat_ago=game.day - max(sat) if sat else None,
     )
 
@@ -538,7 +551,7 @@ class Reason:
     """One thing that moved his line: the minutes it moved and each stat (stat id -> change)."""
 
     kind: str  # opponent, form, teammates_out, back_from_absence, heavy_minutes, recent_minutes,
-    # starter_switch, coach_decision, home, away, favored, underdog, back_to_back
+    # starter_switch, new_team, season_end, coach_decision, home, away, favored, underdog, back_to_back
     minutes: float = 0.0
     stats: dict[int, float] = field(default_factory=dict)
     detail: dict[str, float | str] = field(default_factory=dict)
@@ -555,6 +568,9 @@ def minute_signals(minutes: float, m: GameContext, out: list[Teammate]) -> dict[
     sig["ramp"] = RAMP.get(m.game_back, 0.0)
     sig["bench_out"] = sum(t.minutes for t in out) * max(0.0, 1 - minutes / BENCH_MINUTES)
     sig["heavy"] = max(0.0, minutes - HEAVY_MINUTES)
+    sig["new_team"] = float(m.new_team)
+    last_games = m.games_left is not None and m.games_left <= SEASON_END_GAMES
+    sig["season_end"] = float(last_games and minutes >= CORE_MINUTES)
     sat_lately = m.sat_ago is not None and m.sat_ago <= COACH_SAT_DAYS
     sig["coach_sat"] = float(sat_lately and minutes >= COACH_SAT_LINE)
     if f is not None:

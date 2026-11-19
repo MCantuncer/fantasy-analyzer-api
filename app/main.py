@@ -803,6 +803,16 @@ def create_app(
             days=days,
         )
 
+    @app.post("/api/admin/news-log", response_model=schemas.NewsLog, responses={403: {"model": schemas.ErrorBody}})
+    async def admin_news_log(
+        body: schemas.NewsLogRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.NewsLog:
+        """Admins only: the news kept for a later test of news text (app/news/emotion.py), newest first."""
+        await admin_user(authorization)
+        since = news_iso(app.state.now() - timedelta(days=body.days))
+        rows = await run_in_threadpool(app.state.store.news_log, since, body.limit, body.tagged)
+        return schemas.NewsLog(rows=[schemas.NewsLogRow(**r) for r in rows])
+
     @app.post("/api/admin/errors/resolve", responses={403: {"model": schemas.ErrorBody}})
     async def resolve_error(
         body: schemas.ResolveErrorRequest, authorization: str | None = Header(default=None)

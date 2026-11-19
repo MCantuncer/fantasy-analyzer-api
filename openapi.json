@@ -258,6 +258,73 @@
         }
       }
     },
+    "/api/admin/news-log": {
+      "post": {
+        "summary": "Admin News Log",
+        "description": "Admins only: the news kept for a later test of news text (app/news/emotion.py), newest first.",
+        "operationId": "admin_news_log_api_admin_news_log_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsLogRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewsLog"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/errors/resolve": {
       "post": {
         "summary": "Resolve Error",
@@ -7863,6 +7930,115 @@
         ],
         "title": "NewsCheck"
       },
+      "NewsLog": {
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/NewsLogRow"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rows"
+        ],
+        "title": "NewsLog"
+      },
+      "NewsLogRequest": {
+        "properties": {
+          "days": {
+            "type": "integer",
+            "maximum": 366.0,
+            "minimum": 1.0,
+            "title": "Days",
+            "description": "How many days back, by when an item was published",
+            "default": 7
+          },
+          "tagged": {
+            "type": "boolean",
+            "title": "Tagged",
+            "description": "Only items with at least one emotion tag",
+            "default": false
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "description": "At most this many, newest first",
+            "default": 2000
+          }
+        },
+        "type": "object",
+        "title": "NewsLogRequest"
+      },
+      "NewsLogRow": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "source_id": {
+            "type": "string",
+            "title": "Source Id"
+          },
+          "published": {
+            "type": "string",
+            "title": "Published"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "injury",
+              "return",
+              "trade",
+              "rumor",
+              "signing",
+              "waive",
+              "role",
+              "other"
+            ],
+            "title": "Kind"
+          },
+          "player_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Player Ids"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "Emotion tags from the item's words (app/news/emotion.py)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source_id",
+          "published",
+          "title",
+          "summary",
+          "kind",
+          "player_ids",
+          "tags"
+        ],
+        "title": "NewsLogRow"
+      },
       "NewsPage": {
         "properties": {
           "league_id": {
@@ -8431,7 +8607,9 @@
               "away",
               "favored",
               "underdog",
-              "back_to_back"
+              "back_to_back",
+              "new_team",
+              "season_end"
             ],
             "title": "Kind"
           },
