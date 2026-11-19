@@ -347,16 +347,19 @@ def _stats(line: dict[int, float]) -> dict:
 
 
 def _teammate(t: Player) -> gamebox.Teammate:
-    """A teammate ruled out: his minutes, shots and points a game over his last games, else his line's."""
+    """A teammate ruled out: his minutes, shots, points and rebounds, assists and blocks a game over
+    his last games, else his line's."""
     f = t.game_context.form if t.game_context is not None else None
     if f is not None:
-        return gamebox.Teammate(t.name, f.minutes_long, f.usage, f.rate.get(PTS, 0.0) * f.minutes_long)
+        made = {k: f.rate.get(k, 0.0) * f.minutes_long for k in gamebox.FREED}
+        return gamebox.Teammate(t.name, f.minutes_long, f.usage, f.rate.get(PTS, 0.0) * f.minutes_long, made)
     g = t.per_game
     return gamebox.Teammate(
         t.name,
         g.get(MINUTES, 0.0),
         g.get(FGA, 0.0) + gamebox.USAGE_FTA * g.get(FTA, 0.0) + g.get(TO, 0.0),
         g.get(PTS, 0.0),
+        {k: g.get(k, 0.0) for k in gamebox.FREED},
     )
 
 

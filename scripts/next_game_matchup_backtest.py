@@ -193,7 +193,9 @@ def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
                 if f is None:
                     mates.append(gamebox.Teammate("", q_min, 0.0))
                 else:
-                    mates.append(gamebox.Teammate("", f.minutes_long, f.usage, f.rate.get(PTS, 0.0) * f.minutes_long))
+                    made = {k: f.rate.get(k, 0.0) * f.minutes_long for k in gamebox.FREED}
+                    points = f.rate.get(PTS, 0.0) * f.minutes_long
+                    mates.append(gamebox.Teammate("", f.minutes_long, f.usage, points, made))
             yield box, Case(season, day, pid, team, opp, today, ctx, mates, gained, x, so_far)
 
 
