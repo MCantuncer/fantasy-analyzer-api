@@ -123,6 +123,7 @@ class Case:
     context: gamebox.GameContext
     mates: list[gamebox.Teammate]
     gained: float
+    back: list[gamebox.Teammate]  # regulars who play this game after missing their team's last one or more
     actual: dict[int, float]
     so_far: dict[int, float]
 
@@ -177,6 +178,7 @@ def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
                 total[k] += x.get(k, 0.0)
     for day in sorted(todo):
         box = gamebox.build(season, [r for r in rows if r.day < day], prior, sched, last_season, score_start, sat)
+        returned: dict[tuple[str, int], list[tuple[int, gamebox.Teammate]]] = {}
         for pid, gid, team, line, x, so_far in todo[day]:
             opp = next((t for t in sides[gid] if t != team), None)
             ctx = gamebox.context(box, pid, team, day)
@@ -195,8 +197,18 @@ def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
                 else:
                     made = {k: f.rate.get(k, 0.0) * f.minutes_long for k in gamebox.FREED}
                     points = f.rate.get(PTS, 0.0) * f.minutes_long
-                    mates.append(gamebox.Teammate("", f.minutes_long, f.usage, points, made))
-            yield box, Case(season, day, pid, team, opp, today, ctx, mates, gained, x, so_far)
+                    missed = box.games_missed(q, team, day)
+                    mates.append(gamebox.Teammate("", f.minutes_long, f.usage, points, missed, made))
+            if (gid, team) not in returned:
+                returned[(gid, team)] = []
+                for q, _ in sides[gid][team]:
+                    f = box.form.get(q)
+                    missed = box.games_missed(q, team, day)
+                    if f is not None and missed and f.minutes_long >= gamebox.BACK_MINUTES:
+                        points = f.rate.get(PTS, 0.0) * f.minutes_long
+                        returned[(gid, team)].append((q, gamebox.Teammate("", f.minutes_long, f.usage, points, missed)))
+            back = [t for q, t in returned[(gid, team)] if q != pid]
+            yield box, Case(season, day, pid, team, opp, today, ctx, mates, gained, back, x, so_far)
 
 
 def season_cases(season: int, keys: list | None = None) -> tuple[list, list, list, list]:
@@ -204,7 +216,7 @@ def season_cases(season: int, keys: list | None = None) -> tuple[list, list, lis
     ``keys`` gets (season, day, player) of each case."""
     now, new, avg, act = [], [], [], []
     for _box, c in cases(season):
-        line_new, _, _ = gamebox.apply(c.line, c.context, c.mates, c.gained)
+        line_new, _, _ = gamebox.apply(c.line, c.context, c.mates, c.gained, c.back)
         now.append(cats(c.line))
         new.append(cats(line_new))
         avg.append(cats(c.so_far))

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 
 import numpy as np
@@ -110,6 +111,10 @@ BLOWOUT_MINUTES = -0.6  # per 10 points his team is favored (or the underdog) by
 BLOWOUT_MARGIN = 8.0
 OVERTIME_MINUTES = -0.55  # his last game went to overtime: its extra minutes aren't his role
 OVERTIME_TEAM_MINUTES = 252.0  # player minutes of a team in a game that went to overtime (240 without)
+# Who was missing in his last games. His minutes lately already hold the games a teammate sat:
+BACK_SHARE = -0.058  # per minute of regulars back from an absence, x (1 - his minutes / BENCH_MINUTES)
+OLD_OUT_SHARE = -0.049  # per minute of teammates ruled out who already missed a game, x the same
+BACK_MINUTES = 15.0  # minutes a game that make a teammate coming back a regular
 MINUTE_WEIGHTS = {
     "missed": MISSED_MINUTES,
     "ramp": RAMP_MINUTES,
@@ -126,6 +131,8 @@ MINUTE_WEIGHTS = {
     "lopsided": LOPSIDED_MINUTES,
     "blowout": BLOWOUT_MINUTES,
     "overtime": OVERTIME_MINUTES,
+    "bench_back": BACK_SHARE,
+    "bench_old": OLD_OUT_SHARE,
 }
 MINUTE_KINDS = {
     "missed": "back_from_absence",
@@ -142,6 +149,8 @@ MINUTE_KINDS = {
     "lopsided": "lopsided_games",
     "blowout": "blowout",
     "overtime": "overtime",
+    "bench_back": "teammates_back",
+    "bench_old": "teammates_out",
 }  # role: part of his usual line, not a reason
 
 # Per minute: his line's rate x (1 + sum of weight x signal) + level, per stat.
@@ -152,15 +161,24 @@ MINUTE_KINDS = {
 #   vac: points a game of teammates ruled out, over his team's points a game
 #   freed: the share of his team's rebounds (assists, blocks) a game that teammates ruled out make,
 #     less their share of its minutes: a rebounder ruled out leaves more of them than his minutes hold
+#   usage_back: shots a game of regulars back from an absence, / 100: his form holds the shots he took for them
 #   home: +0.5 at home, -0.5 away; margin: expected margin / 10; b2b: 1 on a back-to-back
 RATE_WEIGHTS: dict[int, dict[str, float]] = {
-    PTS: {"form": 0.7683, "opp": 1.0751, "usage_out": 0.1212, "vac": 0.2043},
+    PTS: {"form": 0.7683, "opp": 1.0751, "usage_out": 0.1212, "vac": 0.2043, "usage_back": -0.15},
     REB: {"form": 0.8233, "opp": 0.8943, "freed": 0.5},
-    AST: {"form": 0.4122, "form_fast": 0.5042, "opp": 0.8339, "usage_out": 0.2245, "home": 0.0325, "freed": 0.85},
+    AST: {
+        "form": 0.4122,
+        "form_fast": 0.5042,
+        "opp": 0.8339,
+        "usage_out": 0.2245,
+        "home": 0.0325,
+        "usage_back": -0.17,
+        "freed": 0.85,
+    },
     STL: {"form": 0.9928, "opp": 0.7837, "b2b": -0.0343},
     BLK: {"opp": 0.893, "margin": 0.0576, "form": 0.1027, "freed": 0.5},
     TPM: {"form": 0.6247, "form_fast": 0.2113, "opp": 0.6939},
-    TO: {"form": 0.7926, "opp": 0.8042, "usage_out": 0.2392},
+    TO: {"form": 0.7926, "opp": 0.8042, "usage_out": 0.2392, "usage_back": -0.2},
     FGA: {"form": 0.5567, "opp": 1.0615, "usage_out": 0.2991},
     FTA: {"opp": 0.9368},
 }
@@ -525,12 +543,14 @@ def build(
 
 @dataclass(frozen=True)
 class Teammate:
-    """A teammate ruled out of the game (tonight.ruled_out)."""
+    """A teammate ruled out of the game (tonight.ruled_out), or a regular back from an absence
+    (tonight.came_back)."""
 
     name: str
     minutes: float  # a game, lately
     usage: float  # FGA + 0.44 FTA + TO a game, lately
     points: float = 0.0  # a game, lately
+    missed: int = 0  # his team's games he already missed before this one
     made: dict[int, float] = field(default_factory=dict)  # his rebounds, assists and blocks (FREED) a game, lately
 
 
@@ -656,8 +676,8 @@ class Reason:
     """One thing that moved his line: the minutes it moved and each stat (stat id -> change)."""
 
     kind: str  # opponent, form, teammates_out, back_from_absence, heavy_minutes, recent_minutes,
-    # starter_switch, new_team, season_end, coach_decision, lopsided_games, blowout, overtime, home, away,
-    # favored, underdog, back_to_back
+    # starter_switch, new_team, season_end, coach_decision, lopsided_games, blowout, overtime,
+    # teammates_back, home, away, favored, underdog, back_to_back
     minutes: float = 0.0
     stats: dict[int, float] = field(default_factory=dict)
     detail: dict[str, float | str] = field(default_factory=dict)
@@ -666,13 +686,18 @@ class Reason:
         self.stats[stat] = self.stats.get(stat, 0.0) + change
 
 
-def minute_signals(minutes: float, m: GameContext, out: list[Teammate]) -> dict[str, float]:
+def minute_signals(
+    minutes: float, m: GameContext, out: list[Teammate], back: Sequence[Teammate] = ()
+) -> dict[str, float]:
     """What moves his minutes (MINUTE_WEIGHTS), for a line of ``minutes``."""
     f = m.form
     sig = dict.fromkeys(MINUTE_WEIGHTS, 0.0)
     sig["missed"] = float(m.games_missed)
     sig["ramp"] = RAMP.get(m.game_back, 0.0)
-    sig["bench_out"] = sum(t.minutes for t in out) * max(0.0, 1 - minutes / BENCH_MINUTES)
+    bench = max(0.0, 1 - minutes / BENCH_MINUTES)
+    sig["bench_out"] = sum(t.minutes for t in out) * bench
+    sig["bench_old"] = sum(t.minutes for t in out if t.missed) * bench
+    sig["bench_back"] = sum(t.minutes for t in back) * bench
     sig["heavy"] = max(0.0, minutes - HEAVY_MINUTES)
     sig["new_team"] = float(m.new_team)
     last_games = m.games_left is not None and m.games_left <= SEASON_END_GAMES
@@ -696,8 +721,12 @@ def minute_signals(minutes: float, m: GameContext, out: list[Teammate]) -> dict[
     return sig
 
 
-def rate_signal(name: str, stat: int, rate: float, m: GameContext, out: list[Teammate]) -> float:
+def rate_signal(
+    name: str, stat: int, rate: float, m: GameContext, out: list[Teammate], back: Sequence[Teammate] = ()
+) -> float:
     """One per-minute signal of RATE_WEIGHTS for a stat whose line makes ``rate`` a minute."""
+    if name == "usage_back":
+        return sum(t.usage for t in back) / 100
     if name == "form":
         return _form(m.form, stat, rate)
     if name == "form_fast":
@@ -726,12 +755,13 @@ def rate_signal(name: str, stat: int, rate: float, m: GameContext, out: list[Tea
 
 
 def apply(
-    line: dict[int, float], m: GameContext, out: list[Teammate], gained: float = 0.0
+    line: dict[int, float], m: GameContext, out: list[Teammate], gained: float = 0.0, back: Sequence[Teammate] = ()
 ) -> tuple[dict[int, float], dict[int, float], list[Reason]]:
     """His line with the game in it, his usual line (the same model on a plain night: no opponent,
     form, teammates out or absence, at his usual role), and the reasons one differs from the other.
     ``line`` is today's next-game line (report.next_game_line), ``gained`` the minutes in it from
-    teammates ruled out (tonight.minutes_gained)."""
+    teammates ruled out (tonight.minutes_gained), ``back`` the regulars back from an absence
+    (tonight.came_back)."""
     minutes = line.get(MINUTES, 0.0)
     if minutes <= 0:
         return line, line, []
@@ -741,7 +771,7 @@ def apply(
         return reasons.setdefault(kind, Reason(kind))
 
     # Minutes
-    sig = minute_signals(minutes, m, out)
+    sig = minute_signals(minutes, m, out, back)
     moves = {k: MINUTE_WEIGHTS[k] * x for k, x in sig.items()}
     new_minutes = min(max(minutes + MINUTES_LEVEL + sum(moves.values()), 0.0), MAX_MINUTES)
     rate = {k: line.get(k, 0.0) / minutes for k in COUNTING}
@@ -764,6 +794,8 @@ def apply(
     if out:
         reason("teammates_out").detail["names"] = ", ".join(t.name for t in out)
         reason("teammates_out").detail["points"] = round(sum(t.points for t in out), 1)
+    if back:
+        reason("teammates_back").detail["names"] = ", ".join(t.name for t in back)
     # Per minute
     kinds = {
         "form": "form",
@@ -772,6 +804,7 @@ def apply(
         "usage_out": "teammates_out",
         "vac": "teammates_out",
         "freed": "teammates_out",
+        "usage_back": "teammates_back",
         "home": "home" if m.home else "away",
         "margin": "favored" if m.margin > 0 else "underdog",
         "b2b": "back_to_back",
@@ -789,7 +822,7 @@ def apply(
         base = rate[k] * new_minutes
         total = RATE_LEVEL[k]
         for name, w in weights.items():
-            change = base * w * rate_signal(name, k, rate[k], m, out)
+            change = base * w * rate_signal(name, k, rate[k], m, out, back)
             total += change
             if abs(change) > 1e-6:
                 reason(kinds[name]).add(k, change)

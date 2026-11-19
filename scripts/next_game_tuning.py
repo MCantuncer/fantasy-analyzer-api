@@ -89,19 +89,19 @@ def collect(seasons: tuple[int, ...]) -> dict[str, np.ndarray]:
         for box, c in cases(season):
             line, m = c.line, c.context
             lm = line.get(MINUTES, 0.0)
-            new, _, _ = gamebox.apply(line, m, c.mates, c.gained)
+            new, _, _ = gamebox.apply(line, m, c.mates, c.gained, c.back)
             put("season", season)
             put("lm", lm)
             put("gained", c.gained)
             put("act_min", c.actual.get(MINUTES, 0.0))
-            for k, v in gamebox.minute_signals(lm, m, c.mates).items():
+            for k, v in gamebox.minute_signals(lm, m, c.mates, c.back).items():
                 put(f"m_{k}", v)
             put("home", 0.5 if m.home else -0.5)
             for name, stat in RATE_STATS.items():
                 rate = line.get(stat, 0.0) / lm if lm > 0 else 0.0
                 put(f"rate_{name}", rate)
                 for sig in gamebox.RATE_WEIGHTS[stat]:
-                    put(f"r_{name}_{sig}", gamebox.rate_signal(sig, stat, rate, m, c.mates))
+                    put(f"r_{name}_{sig}", gamebox.rate_signal(sig, stat, rate, m, c.mates, c.back))
                 put(f"act_{name}", c.actual.get(stat, 0.0))
             for stat, name in ((FGM, "fgm"), (FTM, "ftm")):
                 put(f"rate_{name}", line.get(stat, 0.0) / lm if lm > 0 else 0.0)
