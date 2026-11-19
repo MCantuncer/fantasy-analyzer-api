@@ -96,6 +96,9 @@ NEW_TEAM_MINUTES = -4.5  # his first game for a new team this season: eased in
 SEASON_END_MINUTES = -2.3  # a core player (CORE_MINUTES+) in his team's last SEASON_END_GAMES games: rested
 CORE_MINUTES = 28.0
 SEASON_END_GAMES = 3
+COACH_SAT_MINUTES = -2.2  # he sat a game by coach's decision in the last COACH_SAT_DAYS days: still out of favor
+COACH_SAT_DAYS = 4
+COACH_SAT_LINE = 10.0  # minutes of line it takes: a deep-bench line has little left to lose
 MINUTE_WEIGHTS = {
     "missed": MISSED_MINUTES,
     "ramp": RAMP_MINUTES,
@@ -108,6 +111,7 @@ MINUTE_WEIGHTS = {
     "heavy": HEAVY_LEVEL,
     "new_team": NEW_TEAM_MINUTES,
     "season_end": SEASON_END_MINUTES,
+    "coach_sat": COACH_SAT_MINUTES,
 }
 MINUTE_KINDS = {
     "missed": "back_from_absence",
@@ -120,6 +124,7 @@ MINUTE_KINDS = {
     "heavy": "heavy_minutes",
     "new_team": "new_team",
     "season_end": "season_end",
+    "coach_sat": "coach_decision",
 }  # role: part of his usual line, not a reason
 
 # Per minute: his line's rate x (1 + sum of weight x signal) + level, per stat.
@@ -250,6 +255,7 @@ class Box:
     team_points: dict[int, float] = field(default_factory=dict)  # team -> points a game
     played: dict[int, list[int]] = field(default_factory=dict)  # team -> days it played, in order
     schedule: dict[int, list[Game]] = field(default_factory=dict)  # team -> its games this season, in order
+    sat: dict[int, list[int]] = field(default_factory=dict)  # player -> days he sat by coach's decision
     scores: gamescore.Scores | None = None  # every team's scoring so far, for its expected score
     team_games: list[gamescore.TeamGame] = field(default_factory=list, repr=False)  # for calls on past days
     score_start: gamescore.SeasonEnd | None = field(default=None, repr=False)
@@ -347,10 +353,12 @@ def build(
     schedule: dict[int, list[Game]],
     last_season: dict[int, Carry] | None = None,
     score_start: gamescore.SeasonEnd | None = None,
+    sat: dict[int, list[int]] | None = None,
 ) -> Box:
     """The box from every game row so far: defenses, margins and each player's recent games.
     ``last_season``: carry() of last season's rows, for form that runs across the summer;
-    ``score_start``: gamescore.season_end of last season's rows, where teams' scoring starts."""
+    ``score_start``: gamescore.season_end of last season's rows, where teams' scoring starts;
+    ``sat``: the days each player sat a game by coach's decision (ESPN's box scores, app/benched.py)."""
     last_season = last_season or {}
     # League rate a minute, for players without a last season to start from.
     total_min = sum(r.line[MINUTES] for r in rows) or 1.0
@@ -466,6 +474,7 @@ def build(
         scores=gamescore.build(games := gamescore.team_games(rows), score_start),
         team_games=games,
         score_start=score_start,
+        sat=sat or {},
     )
 
 
@@ -497,6 +506,7 @@ class GameContext:
     team_score: float | None = None  # points his team should score (gamescore.expected)
     new_team: bool = False  # his first game for this team after playing for another one this season
     games_left: int | None = None  # his team's games left this season, this one included
+    sat_ago: int | None = None  # days since he last sat a game by coach's decision (none: never, or not known)
 
 
 def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
@@ -508,6 +518,7 @@ def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
     new_team = f is not None and f.team != team
     f = f if f is not None and f.team == team else None
     missed = box.games_missed(player, team, game.day)
+    sat = [d for d in box.sat.get(player, ()) if d < game.day]
     back = 1 if missed >= RAMP_GAP else (f.since_return + 1 if f is not None and f.since_return else 0)
     return GameContext(
         day=game.day,
@@ -524,6 +535,7 @@ def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
         team_score=expected_score(box, team, game),
         new_team=new_team,
         games_left=sum(1 for g in box.schedule.get(team, []) if g.day >= game.day),
+        sat_ago=game.day - max(sat) if sat else None,
     )
 
 
@@ -539,7 +551,7 @@ class Reason:
     """One thing that moved his line: the minutes it moved and each stat (stat id -> change)."""
 
     kind: str  # opponent, form, teammates_out, back_from_absence, heavy_minutes, recent_minutes,
-    # starter_switch, new_team, season_end, home, away, favored, underdog, back_to_back
+    # starter_switch, new_team, season_end, coach_decision, home, away, favored, underdog, back_to_back
     minutes: float = 0.0
     stats: dict[int, float] = field(default_factory=dict)
     detail: dict[str, float | str] = field(default_factory=dict)
@@ -559,6 +571,8 @@ def minute_signals(minutes: float, m: GameContext, out: list[Teammate]) -> dict[
     sig["new_team"] = float(m.new_team)
     last_games = m.games_left is not None and m.games_left <= SEASON_END_GAMES
     sig["season_end"] = float(last_games and minutes >= CORE_MINUTES)
+    sat_lately = m.sat_ago is not None and m.sat_ago <= COACH_SAT_DAYS
+    sig["coach_sat"] = float(sat_lately and minutes >= COACH_SAT_LINE)
     if f is not None:
         sig["recent"] = f.minutes - minutes
         if f.last_minutes is not None:
@@ -627,6 +641,8 @@ def apply(
         reasons["back_from_absence"].detail.update(games=m.games_missed, game_back=m.game_back)
     if "starter_switch" in reasons and m.form is not None:
         reasons["starter_switch"].detail["started"] = int(bool(m.form.started))
+    if "coach_decision" in reasons:
+        reasons["coach_decision"].detail["days"] = m.sat_ago
     if out:
         reason("teammates_out").detail["names"] = ", ".join(t.name for t in out)
         reason("teammates_out").detail["points"] = round(sum(t.points for t in out), 1)
