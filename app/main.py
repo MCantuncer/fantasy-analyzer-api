@@ -518,7 +518,8 @@ def create_app(
             start_measuring(league.id, season, missing)
 
     def attach_game_contexts(league: League) -> None:
-        """Each player's next game as the league box sees it (gamebox.py), for next-game lines.
+        """Each player's next game as the league box sees it (gamebox.py), for next-game lines, and his
+        games left this matchup week, for the week's lines (CategoryModel.week_line).
 
         The box reads all 30 teams' game logs, too slow for a league load: a load uses the box
         already built for the season (shared by every league) and starts one background build when
@@ -531,8 +532,10 @@ def create_app(
         if box is None:
             start_game_box(league.season)
             return
+        week = cal.days_left(league.current_period)
         for p in chain((p for t in league.teams for p in t.roster), league.free_agents):
             p.game_context = gamebox.context(box, p.id, p.pro_team_id, cal.today)
+            p.week_contexts = gamebox.week_contexts(box, p.id, p.pro_team_id, week)
 
     def start_game_box(season: int) -> None:
         job = app.state.game_box_jobs.get(season)
@@ -3629,7 +3632,9 @@ def create_app(
             app.state.deep_free_agents.set(key, p)
         box = app.state.game_boxes.get(league.season)
         if box is not None and league.calendar is not None:
-            p.game_context = gamebox.context(box, p.id, p.pro_team_id, league.calendar.today)
+            cal = league.calendar
+            p.game_context = gamebox.context(box, p.id, p.pro_team_id, cal.today)
+            p.week_contexts = gamebox.week_contexts(box, p.id, p.pro_team_id, cal.days_left(league.current_period))
         return p
 
     def shown_games(card, season: int) -> list:

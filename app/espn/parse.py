@@ -135,6 +135,9 @@ class Player:
     recent_minutes: tuple[float | None, float | None] = (None, None)
     hot_run: HotRun | None = None  # what a hot last 15 days was made of (analysis/form.py)
     game_context: GameContext | None = None  # his next game: opponent, home, his recent games (analysis/gamebox.py)
+    # His team's games left in the matchup week under way, each as the league box sees it, in order
+    # (the first is ``game_context``'s game when that falls in the week): CategoryModel.week_line.
+    week_contexts: tuple[GameContext, ...] = ()
 
     @property
     def available(self) -> bool:

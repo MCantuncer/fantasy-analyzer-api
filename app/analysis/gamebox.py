@@ -539,6 +539,62 @@ def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
     )
 
 
+def week_contexts(box: Box, player: int, team: int, days: list[int]) -> tuple[GameContext, ...]:
+    """His team's games on ``days`` (the days left of a matchup week), each as ``context`` sees it today."""
+    playing = {g.day for g in box.schedule.get(team, [])}
+    out = []
+    for day in days:
+        if day in playing:
+            m = context(box, player, team, day)
+            if m is not None and m.day == day:
+                out.append(m)
+    return tuple(out)
+
+
+def week_line(line: dict[int, float], games: tuple[GameContext, ...] | list[GameContext]) -> dict[int, float]:
+    """A week's per-game line built game by game: ``line`` (his line this week, the same for every
+    game) plus what ``apply`` moves it by in each of ``games``, averaged: the opponent, home court, his
+    form, his minutes lately. Only what moves players apart: ``apply``'s levels stay out
+    (``level_line``), so a week's totals keep the level they had. What belongs to one game only (a
+    game he just missed, his first games back, a coach who just sat him, a first game for a new team)
+    counts in the first; teammates ruled out stay with ``line``, which holds the minutes they leave
+    him. Free throws keep ``line``'s: game by game didn't beat it there
+    (scripts/week_lines_backtest.py). ``line`` itself without games or minutes."""
+    if not games or line.get(MINUTES, 0.0) <= 0:
+        return line
+    level = level_line(line)
+    moved: dict[int, float] = defaultdict(float)
+    for i, m in enumerate(games):
+        if i:
+            m = replace(m, games_missed=0, game_back=0, sat_ago=None, new_team=False)
+        new = apply(line, m, [])[0]
+        for k in (MINUTES, *COUNTING):
+            moved[k] += new.get(k, 0.0) - level.get(k, 0.0)
+    out = dict(line)
+    for k, v in moved.items():
+        if k not in (FTM, FTA):
+            out[k] = max(line.get(k, 0.0) + v / len(games), 0.0)
+    return out
+
+
+def level_line(line: dict[int, float]) -> dict[int, float]:
+    """``line`` through ``apply`` with nothing in it but the levels (MINUTES_LEVEL, RATE_LEVEL): what
+    a game's line is measured against to see what the game, his form and his role moved."""
+    minutes = line.get(MINUTES, 0.0)
+    if minutes <= 0:
+        return line
+    plain = min(max(minutes + MINUTES_LEVEL, 0.0), MAX_MINUTES)
+    out = dict(line)
+    out[MINUTES] = plain
+    for k in COUNTING:
+        out[k] = max(line.get(k, 0.0) / minutes * plain + RATE_LEVEL.get(k, 0.0), 0.0)
+    fga = line.get(FGA, 0.0)
+    if fga > 0:
+        out[FGM] = out[FGA] * line.get(FGM, 0.0) / fga
+    out[FTM] = out[FTA] * ft_line_pct(line)
+    return out
+
+
 def expected_score(box: Box, team: int, game: Game) -> float | None:
     """Points ``team`` should score in ``game`` (gamescore.expected), None before the box has scores."""
     if box.scores is None:
