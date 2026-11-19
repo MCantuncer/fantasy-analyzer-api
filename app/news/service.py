@@ -196,7 +196,10 @@ class NewsService:
             # Tips (Reddit) are fans talking, and ESPN's status changes are already in the game logs.
             logged = [log_row(i) for i in new_items if i.player_ids and i.title and i.source_kind == "outlet"]
             if logged:
-                await asyncio.to_thread(self.store.save_news_log, logged)
+                try:
+                    await asyncio.to_thread(self.store.save_news_log, logged)
+                except Exception:  # the log is for a later test: the news itself must still come through
+                    log.warning("news log not saved", exc_info=True)
             await asyncio.to_thread(self.store.save_news_state, "health", health)
             await asyncio.to_thread(self.store.save_news_state, "meta", {"refreshed_at": iso(now), "season": season})
 

@@ -619,6 +619,17 @@ def test_outlet_items_naming_a_player_are_logged_with_their_tags(recorded, fake_
     assert [r["player_ids"] for r in app.state.store.news_log("2026-10-01T00:00:00Z", 100, tagged=True)] == [[DUNN]]
 
 
+def test_a_failing_news_log_never_stops_the_news(recorded, fake_espn, monkeypatch):
+    app = news_client(recorded, fake_espn, {"www.cbssports.com": httpx.Response(200, content=LOGGED)})
+
+    def broken(_):
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(app.state.store, "save_news_log", broken)
+    body = signed_in(app).post("/api/news", json={"season": 2027}).json()
+    assert any("Kris Dunn" in s["headline"] for s in body["stories"]) and body["updated_at"]
+
+
 def test_only_admins_read_the_news_log(recorded, fake_espn):
     app = news_client(recorded, fake_espn, {"www.cbssports.com": httpx.Response(200, content=LOGGED)})
     someone = signed_in(app)
