@@ -55,6 +55,8 @@ DEFENSE_PRIOR_GAMES = 8.0  # team games of league-average defense a team's own r
 MARGIN_PRIOR_GAMES = 8.0  # team games of an even record in a team's margin a game
 HOME_EDGE = 2.5  # points of home court in the expected margin
 FORM_GAMES = 10  # blocks and shots: his last this many games
+FREED = (REB, AST, BLK)  # what a teammate ruled out leaves behind beyond his shots (RATE_WEIGHTS "freed")
+TEAM_MINUTES = 240.0  # player minutes of a team in a game
 MISSED_CAP = 10
 BENCH_MINUTES = 36.0  # starters' minutes; below it a player gains minutes when teammates sit
 HEAVY_MINUTES = 36.0  # lines above this come in lower
@@ -157,14 +159,24 @@ MINUTE_KINDS = {
 #   opp: the opponent's defense in that stat (+0.05 = players make 5% more against it than usual)
 #   usage_out: shots a game (FGA + 0.44 FTA + TO) of teammates ruled out, / 100
 #   vac: points a game of teammates ruled out, over his team's points a game
+#   freed: the share of his team's rebounds (assists, blocks) a game that teammates ruled out make,
+#     less their share of its minutes: a rebounder ruled out leaves more of them than his minutes hold
 #   usage_back: shots a game of regulars back from an absence, / 100: his form holds the shots he took for them
 #   home: +0.5 at home, -0.5 away; margin: expected margin / 10; b2b: 1 on a back-to-back
 RATE_WEIGHTS: dict[int, dict[str, float]] = {
     PTS: {"form": 0.7683, "opp": 1.0751, "usage_out": 0.1212, "vac": 0.2043, "usage_back": -0.15},
-    REB: {"form": 0.8233, "opp": 0.8943},
-    AST: {"form": 0.4122, "form_fast": 0.5042, "opp": 0.8339, "usage_out": 0.2245, "home": 0.0325, "usage_back": -0.17},
+    REB: {"form": 0.8233, "opp": 0.8943, "freed": 0.5},
+    AST: {
+        "form": 0.4122,
+        "form_fast": 0.5042,
+        "opp": 0.8339,
+        "usage_out": 0.2245,
+        "home": 0.0325,
+        "usage_back": -0.17,
+        "freed": 0.85,
+    },
     STL: {"form": 0.9928, "opp": 0.7837, "b2b": -0.0343},
-    BLK: {"opp": 0.893, "margin": 0.0576, "form": 0.1027},
+    BLK: {"opp": 0.893, "margin": 0.0576, "form": 0.1027, "freed": 0.5},
     TPM: {"form": 0.6247, "form_fast": 0.2113, "opp": 0.6939},
     TO: {"form": 0.7926, "opp": 0.8042, "usage_out": 0.2392, "usage_back": -0.2},
     FGA: {"form": 0.5567, "opp": 1.0615, "usage_out": 0.2991},
@@ -280,6 +292,7 @@ class Box:
     margin: dict[int, float]  # team -> points a game over its opponents, shrunk to even
     form: dict[int, Form]  # player -> his recent games
     team_points: dict[int, float] = field(default_factory=dict)  # team -> points a game
+    team_made: dict[int, dict[int, float]] = field(default_factory=dict)  # team -> FREED stat -> a game
     played: dict[int, list[int]] = field(default_factory=dict)  # team -> days it played, in order
     schedule: dict[int, list[Game]] = field(default_factory=dict)  # team -> its games this season, in order
     sat: dict[int, list[int]] = field(default_factory=dict)  # player -> days he sat by coach's decision
@@ -393,13 +406,17 @@ def build(
     teams_in: dict[int, set[int]] = defaultdict(set)
     for r in rows:
         teams_in[r.game].add(r.team)
-    # Each game's points and court time by team: what it was decided by, and whether it went to overtime.
+    # Each game's points, court time and FREED stats by team: what it was decided by, whether it went
+    # to overtime, and what each team makes a game.
     points: dict[tuple[int, int], float] = defaultdict(float)
     court: dict[tuple[int, int], float] = defaultdict(float)
+    made: dict[tuple[int, int], dict[int, float]] = defaultdict(lambda: dict.fromkeys(FREED, 0.0))
     days: dict[int, int] = {}
     for r in rows:
         points[(r.game, r.team)] += r.line[PTS]
         court[(r.game, r.team)] += r.line[MINUTES]
+        for k in FREED:
+            made[(r.game, r.team)][k] += r.line[k]
         days[r.game] = r.day
     decided: dict[int, float] = {}
     overtime: set[int] = set()
@@ -477,6 +494,7 @@ def build(
     # Margin and points a game, and the days each team played.
     margin_sum: dict[int, float] = defaultdict(float)
     points_sum: dict[int, float] = defaultdict(float)
+    made_sum: dict[int, dict[int, float]] = defaultdict(lambda: dict.fromkeys(FREED, 0.0))
     played: dict[int, set[int]] = defaultdict(set)
     for game, teams in teams_in.items():
         if len(teams) != 2:
@@ -487,6 +505,9 @@ def build(
         margin_sum[b] -= diff
         points_sum[a] += points[(game, a)]
         points_sum[b] += points[(game, b)]
+        for t in (a, b):
+            for k in FREED:
+                made_sum[t][k] += made[(game, t)][k]
         played[a].add(days[game])
         played[b].add(days[game])
     margin = {t: margin_sum[t] / (len(played[t]) + MARGIN_PRIOR_GAMES) for t in played}
@@ -510,6 +531,7 @@ def build(
         margin=margin,
         form=form,
         team_points={t: points_sum[t] / len(played[t]) for t in played},
+        team_made={t: {k: v / len(played[t]) for k, v in made_sum[t].items()} for t in played},
         played=team_days,
         schedule=schedule,
         scores=gamescore.build(games := gamescore.team_games(rows), score_start),
@@ -529,6 +551,7 @@ class Teammate:
     usage: float  # FGA + 0.44 FTA + TO a game, lately
     points: float = 0.0  # a game, lately
     missed: int = 0  # his team's games he already missed before this one
+    made: dict[int, float] = field(default_factory=dict)  # his rebounds, assists and blocks (FREED) a game, lately
 
 
 @dataclass(frozen=True)
@@ -545,6 +568,7 @@ class GameContext:
     games_missed: int
     tip: int | None = None  # tip-off, epoch ms
     team_points: float = 0.0  # his team's points a game so far
+    team_made: dict[int, float] = field(default_factory=dict)  # its rebounds, assists and blocks (FREED) a game
     game_back: int = 0  # 1, 2, 3: his first, second, third game after missing RAMP_GAP+ team games
     team_score: float | None = None  # points his team should score (gamescore.expected)
     new_team: bool = False  # his first game for this team after playing for another one this season
@@ -574,6 +598,7 @@ def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
         games_missed=missed,
         tip=game.tip,
         team_points=box.team_points.get(team, 0.0),
+        team_made=box.team_made.get(team, {}),
         game_back=back if back in RAMP else 0,
         team_score=expected_score(box, team, game),
         new_team=new_team,
@@ -713,6 +738,13 @@ def rate_signal(
         return sum(t.usage for t in out) / 100
     if name == "vac":
         return min(sum(t.points for t in out) / m.team_points, 1.0) if m.team_points > 0 else 0.0
+    if name == "freed":
+        team = m.team_made.get(stat, 0.0)
+        known = [t for t in out if t.made]
+        if not known or team <= 0:
+            return 0.0
+        share = min(sum(t.made.get(stat, 0.0) for t in known) / team, 1.0)
+        return share - min(sum(t.minutes for t in known) / TEAM_MINUTES, 1.0)
     if name == "home":
         return 0.5 if m.home else -0.5
     if name == "margin":
@@ -771,6 +803,7 @@ def apply(
         "opp": "opponent",
         "usage_out": "teammates_out",
         "vac": "teammates_out",
+        "freed": "teammates_out",
         "usage_back": "teammates_back",
         "home": "home" if m.home else "away",
         "margin": "favored" if m.margin > 0 else "underdog",

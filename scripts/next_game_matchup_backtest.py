@@ -195,9 +195,10 @@ def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
                 if f is None:
                     mates.append(gamebox.Teammate("", q_min, 0.0))
                 else:
+                    made = {k: f.rate.get(k, 0.0) * f.minutes_long for k in gamebox.FREED}
                     points = f.rate.get(PTS, 0.0) * f.minutes_long
                     missed = box.games_missed(q, team, day)
-                    mates.append(gamebox.Teammate("", f.minutes_long, f.usage, points, missed))
+                    mates.append(gamebox.Teammate("", f.minutes_long, f.usage, points, missed, made))
             if (gid, team) not in returned:
                 returned[(gid, team)] = []
                 for q, _ in sides[gid][team]:

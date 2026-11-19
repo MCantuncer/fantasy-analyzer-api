@@ -367,6 +367,29 @@ def test_points_of_teammates_out_go_to_those_left():
     assert next(r for r in reasons if r.kind == "teammates_out").detail["points"] == 25.0
 
 
+def test_the_box_knows_what_a_team_makes_a_game():
+    rows = [GameRow(r.player, r.game, r.day, r.team, {**r.line, REB: 6.0, AST: 2.0}) for r in _rows()]
+    box = gamebox.build(2027, rows, PRIOR, SCHEDULE)
+    # Two players a team, 6 rebounds and 2 assists each, every game.
+    assert box.team_made[1] == {REB: 12.0, AST: 4.0, gamebox.BLK: 0.0}
+    assert gamebox.context(box, 11, 1, 5).team_made == box.team_made[1]
+
+
+def test_a_rebounder_ruled_out_leaves_rebounds_beyond_his_minutes():
+    team = {REB: 44.0, AST: 25.0, gamebox.BLK: 5.0}
+    # 24 minutes are a tenth of his team's; his 11 rebounds are a quarter of its rebounds, his assists a tenth.
+    big = Teammate("Zach Edey", 24.0, 10.0, 12.0, made={REB: 11.0, AST: 2.5, gamebox.BLK: 0.5})
+    plain = gamebox.apply(LINE, _ctx(), [big])[0]
+    new, _, reasons = gamebox.apply(LINE, _ctx(team_made=team), [big])
+    base = 5.0 / 30.0 * new[MINUTES]
+    assert new[REB] - plain[REB] == pytest.approx(base * gamebox.RATE_WEIGHTS[REB]["freed"] * (0.25 - 0.10))
+    assert new[AST] == pytest.approx(plain[AST])
+    assert next(r for r in reasons if r.kind == "teammates_out").stats[REB] > 0
+    # A teammate whose rebounds aren't known moves nothing here.
+    blank = Teammate("Zach Edey", 24.0, 10.0, 12.0)
+    assert gamebox.apply(LINE, _ctx(team_made=team), [blank])[0][REB] == pytest.approx(plain[REB])
+
+
 def test_a_regular_coming_back_takes_minutes_and_shots_from_the_bench():
     back = [Teammate("Jaylen Brown", 34.0, 22.0, 25.0, 2)]
     plain = gamebox.apply(LINE, _ctx(), [])[0]
