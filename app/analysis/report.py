@@ -40,7 +40,7 @@ from app.analysis.projection import CLOSE
 from app.analysis.sim import EACH_CATEGORY, SeasonResult, SeasonSim, simulate_season
 from app.analysis.tiers import droppable, has_market, tier
 from app.analysis.timing import MatchupTiming, Timing
-from app.analysis.tonight import MAX_MINUTES, minutes_gained, ruled_out
+from app.analysis.tonight import MAX_MINUTES, came_back, minutes_gained, ruled_out
 from app.analysis.trades import SCREEN_MIN_THEIR_GAIN, Deal, Mode, TradeFinder, acceptance_label, mix_shapes
 from app.espn.parse import PRO_TEAM_ABBREV, League, Player, Team, with_minutes
 
@@ -264,7 +264,8 @@ def _game_line(
     if m is None:
         return line, None
     out = [_teammate(t) for t in mates if ruled_out(t)]
-    return line, gamebox.apply(line, m, out, gained)
+    back = [_teammate(t) for t in mates if came_back(t)]
+    return line, gamebox.apply(line, m, out, gained, back)
 
 
 # Teammates' lines should add up to their team's expected score (gamescore.py). Their points lines,
@@ -347,16 +348,20 @@ def _stats(line: dict[int, float]) -> dict:
 
 
 def _teammate(t: Player) -> gamebox.Teammate:
-    """A teammate ruled out: his minutes, shots and points a game over his last games, else his line's."""
-    f = t.game_context.form if t.game_context is not None else None
+    """A teammate ruled out or back: his minutes, shots and points a game over his last games (else
+    his line's), and his team's games he already missed."""
+    m = t.game_context
+    f = m.form if m is not None else None
+    missed = m.games_missed if m is not None else 0
     if f is not None:
-        return gamebox.Teammate(t.name, f.minutes_long, f.usage, f.rate.get(PTS, 0.0) * f.minutes_long)
+        return gamebox.Teammate(t.name, f.minutes_long, f.usage, f.rate.get(PTS, 0.0) * f.minutes_long, missed)
     g = t.per_game
     return gamebox.Teammate(
         t.name,
         g.get(MINUTES, 0.0),
         g.get(FGA, 0.0) + gamebox.USAGE_FTA * g.get(FTA, 0.0) + g.get(TO, 0.0),
         g.get(PTS, 0.0),
+        missed,
     )
 
 
@@ -396,6 +401,9 @@ def _reason_text(r: gamebox.Reason, m: gamebox.GameContext) -> str:
             return f"Teammates out: {points:.0f} points a game to share"
         names = [n.split(" ")[-1] for n in str(r.detail.get("names", "")).split(", ") if n]
         return f"{' and '.join(names[:2])}{' and others' if len(names) > 2 else ''} out" if names else "Teammates out"
+    if r.kind == "teammates_back":
+        names = [n.split(" ")[-1] for n in str(r.detail.get("names", "")).split(", ") if n]
+        return f"{' and '.join(names[:2])}{' and others' if len(names) > 2 else ''} back" if names else "Teammates back"
     if r.kind == "back_from_absence":
         back = int(r.detail.get("game_back", 0))
         if back == 2:

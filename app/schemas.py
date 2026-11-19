@@ -84,6 +84,7 @@ class NextGameReason(BaseModel):
         "opponent",
         "form",
         "teammates_out",
+        "teammates_back",
         "back_from_absence",
         "heavy_minutes",
         "recent_minutes",
