@@ -8430,7 +8430,9 @@
               "away",
               "favored",
               "underdog",
-              "back_to_back"
+              "back_to_back",
+              "new_team",
+              "season_end"
             ],
             "title": "Kind"
           },
