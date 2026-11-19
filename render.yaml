@@ -37,3 +37,6 @@ services:
       # Analysed once a day (.github/workflows/sample.yml). The sample stays off until it is set.
       - key: SAMPLE_LEAGUE_ID
         sync: false
+      # Public league whose players' next-game lines are saved at tip-off (app/linelog.py). Unset: the sample league.
+      - key: LINE_LOG_LEAGUE_ID
+        sync: false

@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import errors as error_reports
-from app import playchance, pregame, schemas
+from app import linelog, playchance, pregame, schemas
 from app.accounts import (
     PASSWORD_MIN,
     PASSWORD_OFF_NOTICE,
@@ -198,6 +198,11 @@ NEWS_WATCH_SECONDS = float(os.getenv("NEWS_WATCH_SECONDS", "120"))
 # The pregame watch (app/pregame.py): every few minutes on a game day, each player's injury tag for
 # teams yet to tip off, so the news as it stood at tip-off is kept for testing our calls. 0 turns it off.
 PREGAME_WATCH_SECONDS = float(os.getenv("PREGAME_WATCH_SECONDS", "600"))
+# The line log (app/linelog.py): in the hours before tip-off, every player's next-game line from one
+# public league (LINE_LOG_LEAGUE_ID, else the sample league), kept as it stood at tip-off; the box
+# build fills in results once the night settles. 0 turns it off.
+LINE_LOG_SECONDS = float(os.getenv("LINE_LOG_SECONDS", "900"))
+LINE_RESULTS_WAIT = 3  # days a settled night waits for its game rows before it is closed without them
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
 NOT_LINKED = {"code": "not_linked", "message": "Verify your team in this league first."}
 NOT_YOUR_TEAM = {"code": "not_your_team", "message": "Only this team's verified manager can see its analysis."}
@@ -396,6 +401,7 @@ def create_app(
     app.state.sample_started: float | None = None  # monotonic time of the last run's start
     app.state.sample_reads = TTLCache(300, max_items=128)
     app.state.sample_analyse = lambda lg, team_id: Analyzer(lg, team_id, now=app.state.now()).report()
+    app.state.line_log_league_id = env_int("LINE_LOG_LEAGUE_ID")
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
     app.add_middleware(
@@ -567,10 +573,35 @@ def create_app(
             app.state.game_boxes.set(season, box)
             app.state.last_boxes[season] = box
             logging.getLogger(__name__).info("league box for %s: %d player games", season, len(rows))
+            await settle_line_log(season, parse_schedule(raw), rows)
         except EspnError:
             return  # lines stay as before; a later load tries again
         except Exception:
             logging.getLogger(__name__).exception("building the league box failed for %s", season)
+
+    async def settle_line_log(season: int, sched: Schedule, rows: list[gamebox.GameRow]) -> None:
+        """Results for the line log's settled nights, from the game rows the box was just built from.
+        A night with no rows yet waits (ESPN's logs can lag), up to LINE_RESULTS_WAIT days."""
+        try:
+            now = app.state.now()
+            pending = await run_in_threadpool(app.state.store.player_lines, season, False)
+            if not pending:
+                return
+            by_day: dict[int, list[gamebox.GameRow]] = defaultdict(list)
+            for r in rows:
+                by_day[r.day].append(r)
+            for day, record in pending:
+                if not settled(sched, day, now):
+                    continue
+                late = now >= max(g.start for g in sched.games[day]) + timedelta(days=LINE_RESULTS_WAIT)
+                if not by_day.get(day) and not late:
+                    continue
+                done = linelog.settle(record, by_day.get(day, []))
+                await run_in_threadpool(app.state.store.save_player_lines, season, day, done, True)
+        except Exception:  # the box stands either way
+            logging.getLogger(__name__).exception("settling the line log failed for %s", season)
+
+    app.state.settle_line_log = settle_line_log
 
     def start_measuring(league_id: int, season: int, wanted: list[tuple[int, int]]) -> None:
         """One measuring job per season at a time; absences it doesn't cover wait for the next load."""
@@ -808,6 +839,35 @@ def create_app(
         since = news_iso(app.state.now() - timedelta(days=body.days))
         rows = await run_in_threadpool(app.state.store.news_log, since, body.limit, body.tagged)
         return schemas.NewsLog(rows=[schemas.NewsLogRow(**r) for r in rows])
+
+    @app.post(
+        "/api/admin/player-lines", response_model=schemas.PlayerLines, responses={403: {"model": schemas.ErrorBody}}
+    )
+    async def admin_player_lines(
+        body: schemas.PlayerLinesRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.PlayerLines:
+        """Admins only: each player's next-game lines against what he did (app/linelog.py), biggest
+        points swing first."""
+        await admin_user(authorization)
+        season = body.season or current_season(app.state.now())
+        records = await run_in_threadpool(app.state.store.player_lines, season, True)
+        if body.last:
+            records = records[-body.last :]
+        rows = [r for r in linelog.summary(b for _, b in records) if r["games"] >= body.min_games]
+        try:
+            names = {p.id: p.name for p in await player_index(season)}
+        except Exception:  # ids alone still read
+            names = {}
+        rows.sort(key=lambda r: -r["stats"]["pts"]["swing"])
+        return schemas.PlayerLines(
+            days=len(records),
+            players=[
+                schemas.PlayerLineSummary(
+                    **r, name=names.get(r["player_id"], ""), team_abbrev=PRO_TEAM_ABBREV.get(r["team"], "")
+                )
+                for r in rows
+            ],
+        )
 
     @app.post("/api/admin/errors/resolve", responses={403: {"model": schemas.ErrorBody}})
     async def resolve_error(
@@ -1407,6 +1467,40 @@ def create_app(
             except Exception:
                 logging.getLogger(__name__).warning("pregame watch failed", exc_info=True)
 
+    async def line_log_sweep() -> list[int]:
+        """One look by the line log: the days it wrote (none when no game tips off soon)."""
+        league_id = app.state.line_log_league_id or app.state.sample_league_id
+        if league_id is None:
+            return []
+        now = app.state.now()
+        season = current_season(now)
+        raw = await pro_schedule(season)
+        if raw is None:
+            return []
+        sched = parse_schedule(raw)
+        days = linelog.days_to_watch(sched, now)
+        if not days:
+            return []
+        league = await load_league(league_id, season, None, with_fa=True)
+        if any(p.game_context is None for t in league.teams for p in t.roster):
+            attach_game_contexts(league)  # a box built after this league was loaded
+        lines = await run_in_threadpool(linelog.tonight_lines, league)
+        for day in days:
+            record = await run_in_threadpool(app.state.store.get_player_lines, season, day)
+            new = linelog.update(record, sched, day, lines.get(day, {}), now)
+            await run_in_threadpool(app.state.store.save_player_lines, season, day, new, False)
+        return days
+
+    app.state.line_log_sweep = line_log_sweep
+
+    async def watch_line_log() -> None:
+        while True:
+            await asyncio.sleep(LINE_LOG_SECONDS)
+            try:
+                await line_log_sweep()
+            except Exception:
+                logging.getLogger(__name__).warning("line log watch failed", exc_info=True)
+
     async def box_sweep() -> bool:
         """One look by the box watch: builds the season's league box when it has expired, or when the
         last finished night isn't in it yet. True when it built one."""
@@ -1453,11 +1547,12 @@ def create_app(
         news_watch = asyncio.create_task(watch_news()) if NEWS_WATCH_SECONDS > 0 else None
         pregame_watch = asyncio.create_task(watch_pregame()) if PREGAME_WATCH_SECONDS > 0 else None
         box_watch = asyncio.create_task(watch_box()) if BOX_WATCH_SECONDS > 0 else None
+        line_watch = asyncio.create_task(watch_line_log()) if LINE_LOG_SECONDS > 0 else None
         usage_flush = asyncio.create_task(flush_usage_every_minute())
         try:
             yield
         finally:
-            for task in (watch, news_watch, pregame_watch, box_watch):
+            for task in (watch, news_watch, pregame_watch, box_watch, line_watch):
                 if task is not None:
                     task.cancel()
             usage_flush.cancel()

@@ -50,6 +50,16 @@ create table if not exists pregame_status (
     saved_at timestamptz not null default now(),
     primary key (season, day)
 );
+-- Each player's next-game line as it stood at tip-off, and once the night settles what he did
+-- (app/linelog.py), one row per NBA day. Never trimmed: it shows over a season who lands near his line.
+create table if not exists player_lines (
+    season int not null,
+    day int not null,
+    settled boolean not null default false,
+    body jsonb not null,
+    saved_at timestamptz not null default now(),
+    primary key (season, day)
+);
 create table if not exists nba_days (
     season int not null,
     day int not null,
@@ -129,6 +139,9 @@ class Store(Protocol):
     def save_day(self, season: int, day: int, body: dict) -> None: ...
     def get_pregame(self, season: int, day: int) -> dict | None: ...
     def save_pregame(self, season: int, day: int, body: dict) -> None: ...
+    def get_player_lines(self, season: int, day: int) -> dict | None: ...
+    def save_player_lines(self, season: int, day: int, body: dict, settled: bool) -> None: ...
+    def player_lines(self, season: int, settled: bool) -> list[tuple[int, dict]]: ...
     def get_recap(self, league_id: int, season: int, period: int) -> dict | None: ...
     def save_recap(self, league_id: int, season: int, period: int, body: dict) -> None: ...
     def save_news_items(self, items: list[dict]) -> None: ...
@@ -151,6 +164,7 @@ class MemoryStore:
         self.votes: dict[TradeKey, dict[tuple[int, str], tuple[str, bool]]] = {}
         self.days: dict[tuple[int, int], dict] = {}
         self.pregame: dict[tuple[int, int], dict] = {}
+        self.lines: dict[tuple[int, int], tuple[bool, dict]] = {}
         self.recaps: dict[tuple[int, int, int], dict] = {}
         self.news: dict[str, dict] = {}
         self.log: dict[str, dict] = {}
@@ -187,6 +201,16 @@ class MemoryStore:
 
     def save_pregame(self, season: int, day: int, body: dict) -> None:
         self.pregame[(season, day)] = body
+
+    def get_player_lines(self, season: int, day: int) -> dict | None:
+        got = self.lines.get((season, day))
+        return got[1] if got else None
+
+    def save_player_lines(self, season: int, day: int, body: dict, settled: bool) -> None:
+        self.lines[(season, day)] = (settled, body)
+
+    def player_lines(self, season: int, settled: bool) -> list[tuple[int, dict]]:
+        return sorted((d, b) for (s, d), (done, b) in self.lines.items() if s == season and done == settled)
 
     def get_recap(self, league_id: int, season: int, period: int) -> dict | None:
         return self.recaps.get((league_id, season, period))
@@ -309,6 +333,27 @@ class PostgresStore:
                 "on conflict (season, day) do update set body = excluded.body, saved_at = now()",
                 (season, day, json.dumps(body)),
             )
+
+    def get_player_lines(self, season: int, day: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("select body from player_lines where season=%s and day=%s", (season, day)).fetchone()
+        return row[0] if row else None
+
+    def save_player_lines(self, season: int, day: int, body: dict, settled: bool) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "insert into player_lines (season, day, settled, body) values (%s, %s, %s, %s) "
+                "on conflict (season, day) do update set settled = excluded.settled, body = excluded.body, "
+                "saved_at = now()",
+                (season, day, settled, json.dumps(body, separators=(",", ":"))),
+            )
+
+    def player_lines(self, season: int, settled: bool) -> list[tuple[int, dict]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select day, body from player_lines where season=%s and settled=%s order by day", (season, settled)
+            ).fetchall()
+        return [(day, body) for day, body in rows]
 
     def get_recap(self, league_id: int, season: int, period: int) -> dict | None:
         with self._connect() as conn:
