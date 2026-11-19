@@ -150,6 +150,13 @@ PAST_GAMELOG_TTL = 7 * 24 * 3600.0
 # The league box behind next-game lines (analysis/gamebox.py): all 30 teams' game logs, read again
 # a few times a day so last night's games count by the morning.
 GAME_BOX_TTL = 4 * 3600.0
+# The box watch keeps that box built even when nobody loads a league, so our calls on Scores are there
+# when the page opens: a few seconds after a start, then every few minutes it builds the box again
+# once it has expired, or once a finished night is missing from it (at most once a GAME_BOX_RETRY).
+# 0 turns it off.
+BOX_WATCH_SECONDS = float(os.getenv("BOX_WATCH_SECONDS", "600"))
+BOX_WATCH_FIRST = 30.0
+GAME_BOX_RETRY = 3600.0
 GAMELOG_BATCH = 40  # players per game-log request: every line of a season is ~30 KB a player
 IMPACT_METHOD = (
     "Each teammate's minutes and per-minute stats in games his team played without him, against games he "
@@ -366,6 +373,10 @@ def create_app(
     app.state.prior_rates = TTLCache(PAST_GAMES_TTL, max_items=2)
     app.state.last_season_form = TTLCache(PAST_GAMES_TTL, max_items=2)  # gamebox.carry + gamescore.season_end
     app.state.game_box_jobs = {}
+    # The last box built for each season, kept past GAME_BOX_TTL: our calls on Scores use it while a
+    # new one builds, so they never drop out between builds.
+    app.state.last_boxes: dict[int, gamebox.Box] = {}
+    app.state.box_tried: dict[int, float] = {}  # season -> when the watch last started a build (monotonic)
     app.state.absence_jobs: dict[int, asyncio.Task] = {}
     app.state.cards = TTLCache(PLAYER_CARD_TTL, max_items=2048)
     app.state.card_stories = TTLCache(CARD_NEWS_TTL, max_items=4)
@@ -551,6 +562,7 @@ def create_app(
             schedule = gamebox.parse_schedule(raw)
             box = await run_in_threadpool(gamebox.build, season, rows, prior, schedule, last, score_start)
             app.state.game_boxes.set(season, box)
+            app.state.last_boxes[season] = box
             logging.getLogger(__name__).info("league box for %s: %d player games", season, len(rows))
         except EspnError:
             return  # lines stay as before; a later load tries again
@@ -1382,6 +1394,38 @@ def create_app(
             except Exception:
                 logging.getLogger(__name__).warning("pregame watch failed", exc_info=True)
 
+    async def box_sweep() -> bool:
+        """One look by the box watch: builds the season's league box when it has expired, or when the
+        last finished night isn't in it yet. True when it built one."""
+        now = app.state.now()
+        season = current_season(now)
+        box = app.state.game_boxes.get(season)
+        if box is not None:
+            raw = await pro_schedule(season)
+            if raw is None:
+                return False
+            sched = parse_schedule(raw)
+            done = [d for d in sched.games if settled(sched, d, now)]
+            tried = app.state.box_tried.get(season)
+            recent = tried is not None and time.monotonic() - tried < GAME_BOX_RETRY
+            if not done or box.latest_day() >= max(done) or recent:
+                return False
+        app.state.box_tried[season] = time.monotonic()
+        start_game_box(season)
+        await asyncio.shield(app.state.game_box_jobs[season])
+        return app.state.game_boxes.get(season) is not box
+
+    app.state.box_sweep = box_sweep
+
+    async def watch_box() -> None:
+        await asyncio.sleep(BOX_WATCH_FIRST)
+        while True:
+            try:
+                await box_sweep()
+            except Exception:
+                logging.getLogger(__name__).warning("box watch failed", exc_info=True)
+            await asyncio.sleep(BOX_WATCH_SECONDS)
+
     async def watch_news() -> None:
         while True:
             await asyncio.sleep(NEWS_WATCH_SECONDS)
@@ -1395,11 +1439,12 @@ def create_app(
         watch = asyncio.create_task(watch_injuries()) if WATCH_SECONDS > 0 else None
         news_watch = asyncio.create_task(watch_news()) if NEWS_WATCH_SECONDS > 0 else None
         pregame_watch = asyncio.create_task(watch_pregame()) if PREGAME_WATCH_SECONDS > 0 else None
+        box_watch = asyncio.create_task(watch_box()) if BOX_WATCH_SECONDS > 0 else None
         usage_flush = asyncio.create_task(flush_usage_every_minute())
         try:
             yield
         finally:
-            for task in (watch, news_watch, pregame_watch):
+            for task in (watch, news_watch, pregame_watch, box_watch):
                 if task is not None:
                     task.cancel()
             usage_flush.cancel()
@@ -2481,9 +2526,9 @@ def create_app(
         ]
 
     def game_calls(season: int, data: dict) -> dict[int, schemas.GameCall]:
-        """Our call for each game of the day, from the season's league box (gamebox.Box.call). None
-        until a league load has built the box (attach_game_contexts)."""
-        box = app.state.game_boxes.get(season)
+        """Our call for each game of the day, from the season's league box (gamebox.Box.call), or the
+        last one built while the box watch builds it again. None until a box has been built."""
+        box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
         if box is None:
             return {}
         out = {}

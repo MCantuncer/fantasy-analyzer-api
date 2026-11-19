@@ -1,5 +1,7 @@
+import asyncio
 import gzip
 import json
+import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -531,3 +533,37 @@ def test_scores_carry_our_call_once_the_league_box_is_built(recorded, schedule_r
         c = g["call"]
         assert c["away"] != c["home"] and 0.5 <= c["chance"] <= 1
         assert c["home"] > c["away"]  # even teams: home court
+
+
+def _box(played: dict[int, list[int]] | None = None) -> gamebox.Box:
+    return gamebox.Box(2027, {}, {}, {}, played=played or {}, scores=gamescore.build([]))
+
+
+def test_our_call_stays_on_scores_after_the_box_expires(recorded, schedule_raw, day4_players):
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
+    client.app.state.last_boxes[2027] = _box()  # built earlier; gone from game_boxes after GAME_BOX_TTL
+    body = client.post("/api/scores", json={"league_id": LEAGUE_ID, "season": 2027}).json()
+    assert body["games"] and all(g["call"] is not None for g in body["games"])
+    quick = client.post("/api/scores/games", json={"league_id": LEAGUE_ID, "season": 2027, "day": 5}).json()
+    assert quick["games"] and all(g["call"] is not None for g in quick["games"])
+
+
+def test_box_watch_builds_the_box_when_there_is_none_or_a_finished_night_is_missing(recorded, schedule_raw):
+    fake = FakeEspn(recorded, schedule=schedule_raw)
+    app = create_app(EspnClient(transport=httpx.MockTransport(fake.handler)), store=MemoryStore())
+    app.state.now = lambda: MORNING_AFTER  # day 4 is over, day 5 not started
+    asyncio.run(app.state.box_sweep())
+    assert 2027 in app.state.box_tried  # no box: a build was started (ESPN's logs aren't in the fake)
+
+    app.state.box_tried.clear()
+    app.state.game_boxes.set(2027, _box({HOU: [1, 4], SA: [2, 4]}))
+    assert asyncio.run(app.state.box_sweep()) is False
+    assert 2027 not in app.state.box_tried  # last night is in the box: nothing to do
+
+    app.state.game_boxes.set(2027, _box({HOU: [1, 3], SA: [2, 3]}))
+    asyncio.run(app.state.box_sweep())
+    assert 2027 in app.state.box_tried  # last night is missing: built again
+    tried = app.state.box_tried[2027] = time.monotonic()
+    calls = fake.calls
+    assert asyncio.run(app.state.box_sweep()) is False
+    assert app.state.box_tried[2027] == tried and fake.calls == calls  # tried within the hour: wait
