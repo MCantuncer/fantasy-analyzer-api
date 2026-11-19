@@ -101,6 +101,15 @@ SEASON_END_GAMES = 3
 COACH_SAT_MINUTES = -2.2  # he sat a game by coach's decision in the last COACH_SAT_DAYS days: still out of favor
 COACH_SAT_DAYS = 4
 COACH_SAT_LINE = 10.0  # minutes of line it takes: a deep-bench line has little left to lose
+# One-sided games: a coach sits his core players (CORE_MINUTES+) once a game is decided. Their minutes
+# lately then read lower than their role, and a game that looks one-sided will cost them some again.
+LOPSIDED_MINUTES = 1.0  # per 10 points his last LOPSIDED_GAMES games were decided by, over LOPSIDED_USUAL
+LOPSIDED_GAMES = 5
+LOPSIDED_USUAL = 12.0  # points a game is decided by, on average
+BLOWOUT_MINUTES = -0.6  # per 10 points his team is favored (or the underdog) by, past BLOWOUT_MARGIN
+BLOWOUT_MARGIN = 8.0
+OVERTIME_MINUTES = -0.55  # his last game went to overtime: its extra minutes aren't his role
+OVERTIME_TEAM_MINUTES = 252.0  # player minutes of a team in a game that went to overtime (240 without)
 MINUTE_WEIGHTS = {
     "missed": MISSED_MINUTES,
     "ramp": RAMP_MINUTES,
@@ -114,6 +123,9 @@ MINUTE_WEIGHTS = {
     "new_team": NEW_TEAM_MINUTES,
     "season_end": SEASON_END_MINUTES,
     "coach_sat": COACH_SAT_MINUTES,
+    "lopsided": LOPSIDED_MINUTES,
+    "blowout": BLOWOUT_MINUTES,
+    "overtime": OVERTIME_MINUTES,
 }
 MINUTE_KINDS = {
     "missed": "back_from_absence",
@@ -127,6 +139,9 @@ MINUTE_KINDS = {
     "new_team": "new_team",
     "season_end": "season_end",
     "coach_sat": "coach_decision",
+    "lopsided": "lopsided_games",
+    "blowout": "blowout",
+    "overtime": "overtime",
 }  # role: part of his usual line, not a reason
 
 # Per minute: his line's rate x (1 + sum of weight x signal) + level, per stat.
@@ -235,6 +250,8 @@ class Form:
     started: bool | None = None  # his last game
     start_share: float | None = None  # of his games lately (START_HALF_LIFE)
     since_return: int = 0  # games played since missing RAMP_GAP+ team games in a row, while in RAMP
+    decided_by: float | None = None  # points his last LOPSIDED_GAMES games were decided by, on average
+    overtime: bool = False  # his last game went to overtime
 
 
 Carry = dict[float, list[float]]  # half-life -> [weight, then _DECAY_ROW], decayed to the end of a season
@@ -371,6 +388,26 @@ def build(
     teams_in: dict[int, set[int]] = defaultdict(set)
     for r in rows:
         teams_in[r.game].add(r.team)
+    # Each game's points, court time and FREED stats by team: what it was decided by, whether it went
+    # to overtime, and what each team makes a game.
+    points: dict[tuple[int, int], float] = defaultdict(float)
+    court: dict[tuple[int, int], float] = defaultdict(float)
+    made: dict[tuple[int, int], dict[int, float]] = defaultdict(lambda: dict.fromkeys(FREED, 0.0))
+    days: dict[int, int] = {}
+    for r in rows:
+        points[(r.game, r.team)] += r.line[PTS]
+        court[(r.game, r.team)] += r.line[MINUTES]
+        for k in FREED:
+            made[(r.game, r.team)][k] += r.line[k]
+        days[r.game] = r.day
+    decided: dict[int, float] = {}
+    overtime: set[int] = set()
+    for game, teams in teams_in.items():
+        if len(teams) == 2:
+            a, b = sorted(teams)
+            decided[game] = abs(points[(game, a)] - points[(game, b)])
+            if max(court[(game, a)], court[(game, b)]) > OVERTIME_TEAM_MINUTES:
+                overtime.add(game)
     # What each player usually makes a minute before each game: his games before it this season,
     # plus PRIOR_MINUTES of last season (or the league's rate).
     by_player: dict[int, list[GameRow]] = defaultdict(list)
@@ -402,6 +439,7 @@ def build(
         sums = {h: _decayed(x, h, before) for h in _half_lives()}
         this = {h: _decayed(x, h, None) for h in _this_season_half_lives()}
         long = sums[LONG_HALF_LIFE]
+        gaps = [decided[r.game] for r in games[-LOPSIDED_GAMES:] if r.game in decided]
         form[pid] = Form(
             rate={k: sum(r.line[k] for r in last) / minutes for k in COUNTING},
             minutes=float(this[RECENT_HALF_LIFE][col[MINUTES]] / this[RECENT_HALF_LIFE][0]),
@@ -415,6 +453,8 @@ def build(
             last_minutes=games[-1].line[MINUTES],
             started=games[-1].line.get(GS, 0.0) > 0,
             start_share=float(this[START_HALF_LIFE][col[GS]] / this[START_HALF_LIFE][0]),
+            decided_by=sum(gaps) / len(gaps) if gaps else None,
+            overtime=games[-1].game in overtime,
         )
     # Defense: what all its opponents made over what they usually make, with DEFENSE_PRIOR_GAMES
     # average team games blended in.
@@ -434,14 +474,6 @@ def build(
             if mean_exp[i] > 0
         }
     # Margin and points a game, and the days each team played.
-    points: dict[tuple[int, int], float] = defaultdict(float)
-    made: dict[tuple[int, int], dict[int, float]] = defaultdict(lambda: dict.fromkeys(FREED, 0.0))
-    days: dict[int, int] = {}
-    for r in rows:
-        points[(r.game, r.team)] += r.line[PTS]
-        for k in FREED:
-            made[(r.game, r.team)][k] += r.line[k]
-        days[r.game] = r.day
     margin_sum: dict[int, float] = defaultdict(float)
     points_sum: dict[int, float] = defaultdict(float)
     made_sum: dict[int, dict[int, float]] = defaultdict(lambda: dict.fromkeys(FREED, 0.0))
@@ -572,9 +604,9 @@ def week_line(line: dict[int, float], games: tuple[GameContext, ...] | list[Game
     game) plus what ``apply`` moves it by in each of ``games``, averaged: the opponent, home court, his
     form, his minutes lately. Only what moves players apart: ``apply``'s levels stay out
     (``level_line``), so a week's totals keep the level they had. What belongs to one game only (a
-    game he just missed, his first games back, a coach who just sat him, a first game for a new team)
-    counts in the first; teammates ruled out stay with ``line``, which holds the minutes they leave
-    him. Free throws keep ``line``'s: game by game didn't beat it there
+    game he just missed, his first games back, a coach who just sat him, a first game for a new team,
+    an overtime game just played) counts in the first; teammates ruled out stay with ``line``, which
+    holds the minutes they leave him. Free throws keep ``line``'s: game by game didn't beat it there
     (scripts/week_lines_backtest.py). ``line`` itself without games or minutes."""
     if not games or line.get(MINUTES, 0.0) <= 0:
         return line
@@ -582,7 +614,8 @@ def week_line(line: dict[int, float], games: tuple[GameContext, ...] | list[Game
     moved: dict[int, float] = defaultdict(float)
     for i, m in enumerate(games):
         if i:
-            m = replace(m, games_missed=0, game_back=0, sat_ago=None, new_team=False)
+            form = replace(m.form, overtime=False) if m.form is not None else None
+            m = replace(m, games_missed=0, game_back=0, sat_ago=None, new_team=False, form=form)
         new = apply(line, m, [])[0]
         for k in (MINUTES, *COUNTING):
             moved[k] += new.get(k, 0.0) - level.get(k, 0.0)
@@ -623,7 +656,8 @@ class Reason:
     """One thing that moved his line: the minutes it moved and each stat (stat id -> change)."""
 
     kind: str  # opponent, form, teammates_out, back_from_absence, heavy_minutes, recent_minutes,
-    # starter_switch, new_team, season_end, coach_decision, home, away, favored, underdog, back_to_back
+    # starter_switch, new_team, season_end, coach_decision, lopsided_games, blowout, overtime, home, away,
+    # favored, underdog, back_to_back
     minutes: float = 0.0
     stats: dict[int, float] = field(default_factory=dict)
     detail: dict[str, float | str] = field(default_factory=dict)
@@ -645,7 +679,12 @@ def minute_signals(minutes: float, m: GameContext, out: list[Teammate]) -> dict[
     sig["season_end"] = float(last_games and minutes >= CORE_MINUTES)
     sat_lately = m.sat_ago is not None and m.sat_ago <= COACH_SAT_DAYS
     sig["coach_sat"] = float(sat_lately and minutes >= COACH_SAT_LINE)
+    core = minutes >= CORE_MINUTES
+    sig["blowout"] = max(0.0, abs(m.margin) - BLOWOUT_MARGIN) / 10 if core else 0.0
     if f is not None:
+        if core and f.decided_by is not None:
+            sig["lopsided"] = (f.decided_by - LOPSIDED_USUAL) / 10
+        sig["overtime"] = float(f.overtime)
         sig["recent"] = f.minutes - minutes
         if f.last_minutes is not None:
             sig["last_game"] = f.last_minutes - minutes
