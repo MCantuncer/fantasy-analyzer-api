@@ -1,20 +1,23 @@
 import asyncio
 import json
+import os
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from app.accounts import MemoryAccountStore
 from app.espn.client import EspnClient
 from app.main import create_app
-from app.news import facts, sources
+from app.news import emotion, facts, sources
 from app.news.extract import NameIndex, body_part, kind_of, newsworthy, severity, tag
 from app.news.sources import parse_bluesky, parse_espn, parse_rss
 from app.news.verify import Item, build_stories
-from app.store import MemoryStore
+from app.social import hash_token
+from app.store import MemoryStore, PostgresStore
 from tests.conftest import LEAGUE_ID, signed_in
 
 NOW = datetime(2026, 10, 26, 12, 0, tzinfo=UTC)
@@ -557,3 +560,98 @@ def test_a_readers_refresh_checks_sources_now_but_at_most_every_2_minutes(record
 def test_a_readers_refresh_needs_sign_in(recorded, fake_espn):
     app = news_client(recorded, fake_espn, {})
     assert TestClient(app).post("/api/news/check").status_code == 401
+
+
+# -- news text kept for a later test (app/news/emotion.py)
+
+
+def test_emotion_tags_come_from_the_words():
+    assert emotion.tags("Knicks' Andre Drummond bristles after being benched for lack of effort") == [
+        "benched",
+        "friction",
+    ]
+    assert emotion.tags("Kingston Flemings Suspended 1 Game For Elbowing Bryce McGowens") == ["discipline"]
+    assert emotion.tags("Sabonis wants out of Kings", "So he's not happy and the team knows it.") == ["trade_unrest"]
+    assert emotion.tags("Thunder decline option for Nikola Topic") == ["contract"]
+    assert emotion.tags("Dejounte Murray (personal) ruled out Monday") == ["personal"]
+    assert emotion.tags("Walker Kessler's emotional Jazz homecoming goes awry") == ["motivation"]
+    assert emotion.tags("Shai Gilgeous-Alexander's 20-point streak is over") == ["milestone"]
+    assert emotion.tags("Ex-NBA player negotiating plea deal in illegal sports betting case") == ["legal"]
+    # The words of the summary count too, and an ordinary update has no tag.
+    assert emotion.tags("Kris Dunn: Out of rotation", "Coach's decision for a third game.") == ["benched"]
+    assert emotion.tags("Zach LaVine (elbow) upgraded to available Monday") == []
+    assert emotion.tags("Knicks lose again amid three-game losing streak") == []
+
+
+LOGGED = b"""<rss><channel>
+<item><title>Kris Dunn bristles after being benched for lack of effort</title><link>https://cbs.example/dunn</link>
+<pubDate>Sun, 26 Oct 2026 09:00:00 GMT</pubDate><description>Dunn sat the whole second half.</description></item>
+<item><title>Zach LaVine scores 37 in loss</title><link>https://cbs.example/lavine</link>
+<pubDate>Sun, 26 Oct 2026 10:00:00 GMT</pubDate></item>
+<item><title>Clippers fined for resting healthy players</title><link>https://cbs.example/fine</link>
+<pubDate>Sun, 26 Oct 2026 11:00:00 GMT</pubDate></item>
+</channel></rss>"""
+
+
+def boss(app) -> TestClient:
+    user = app.state.accounts.create_user("boss@example.com", None)
+    user.user_type = "admin"  # set by hand in the database in production
+    app.state.accounts.save_session(hash_token("admin-token"), user.id)
+    return TestClient(app, headers={"Authorization": "Bearer admin-token"})
+
+
+def test_outlet_items_naming_a_player_are_logged_with_their_tags(recorded, fake_espn):
+    feeds = {
+        "www.cbssports.com": httpx.Response(200, content=LOGGED),
+        "www.reddit.com": httpx.Response(200, content=ATOM),
+    }
+    app = news_client(recorded, fake_espn, feeds)
+    signed_in(app).post("/api/news", json={"season": 2027})
+
+    rows = app.state.store.news_log("2026-10-01T00:00:00Z", 100)
+    # Newest first. The fine names no player and Reddit is a tip, so neither is kept.
+    assert [(r["title"], r["player_ids"], r["tags"]) for r in rows] == [
+        ("Zach LaVine scores 37 in loss", [LAVINE], []),
+        ("Kris Dunn bristles after being benched for lack of effort", [DUNN], ["benched", "friction"]),
+    ]
+    assert rows[1]["source_id"] == "cbs" and rows[1]["summary"] == "Dunn sat the whole second half."
+    assert rows[1]["published"] == "2026-10-26T09:00:00Z" and rows[1]["kind"] == "role"
+    assert [r["player_ids"] for r in app.state.store.news_log("2026-10-01T00:00:00Z", 100, tagged=True)] == [[DUNN]]
+
+
+def test_only_admins_read_the_news_log(recorded, fake_espn):
+    app = news_client(recorded, fake_espn, {"www.cbssports.com": httpx.Response(200, content=LOGGED)})
+    someone = signed_in(app)
+    someone.post("/api/news", json={"season": 2027})
+    assert TestClient(app).post("/api/admin/news-log", json={}).status_code == 401
+    assert someone.post("/api/admin/news-log", json={}).status_code == 403
+
+    admin = boss(app)
+    rows = admin.post("/api/admin/news-log", json={}).json()["rows"]
+    assert [r["player_ids"] for r in rows] == [[LAVINE], [DUNN]]
+    [tagged] = admin.post("/api/admin/news-log", json={"tagged": True}).json()["rows"]
+    assert tagged["tags"] == ["benched", "friction"] and tagged["title"].startswith("Kris Dunn bristles")
+    assert len(admin.post("/api/admin/news-log", json={"limit": 1}).json()["rows"]) == 1
+    app.state.now = lambda: NOW + timedelta(days=30)
+    assert admin.post("/api/admin/news-log", json={"days": 7}).json()["rows"] == []
+    assert len(admin.post("/api/admin/news-log", json={"days": 60}).json()["rows"]) == 2
+
+
+@pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="set TEST_DATABASE_URL to test against Postgres")
+def test_postgres_keeps_the_news_log():
+    store = PostgresStore(os.environ["TEST_DATABASE_URL"])
+    with store._connect() as conn:
+        conn.execute("delete from news_log where id like 'test:%'")
+    row = {"id": "test:1", "source_id": "cbs", "published": "2020-01-02T00:00:00Z", "title": "Old", "summary": ""}
+    row |= {"kind": "role", "player_ids": [DUNN], "tags": ["benched"]}
+    plain = row | {"id": "test:2", "published": "2020-01-03T00:00:00Z", "title": "Older news", "tags": []}
+    store.save_news_log([row, plain])
+    store.save_news_log([row | {"title": "Listed again"}])  # first seen wins
+    # Years old and still there: saving news trims news_items, never the log.
+    store.save_news_items([])
+    since = "2020-01-01T00:00:00Z"
+    mine = [r for r in store.news_log(since, 10000) if r["id"].startswith("test:")]
+    assert [(r["id"], r["title"]) for r in mine] == [("test:2", "Older news"), ("test:1", "Old")]
+    assert [r["id"] for r in store.news_log(since, 10000, tagged=True) if r["id"].startswith("test:")] == ["test:1"]
+    with store._connect() as conn:
+        conn.execute("delete from news_log where id like 'test:%'")

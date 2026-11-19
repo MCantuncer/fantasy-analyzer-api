@@ -1879,6 +1879,27 @@ class ResolveErrorRequest(BaseModel):
     id: int = Field(gt=0)
 
 
+class NewsLogRequest(BaseModel):
+    days: int = Field(default=7, ge=1, le=366, description="How many days back, by when an item was published")
+    tagged: bool = Field(default=False, description="Only items with at least one emotion tag")
+    limit: int = Field(default=2000, ge=1, le=10000, description="At most this many, newest first")
+
+
+class NewsLogRow(BaseModel):
+    id: str
+    source_id: str
+    published: str
+    title: str
+    summary: str
+    kind: NewsKind
+    player_ids: list[int]
+    tags: list[str] = Field(description="Emotion tags from the item's words (app/news/emotion.py)")
+
+
+class NewsLog(BaseModel):
+    rows: list[NewsLogRow]
+
+
 class UsageRequest(BaseModel):
     days: int = Field(default=30, ge=1, le=366, description="How many days back, today included")
 

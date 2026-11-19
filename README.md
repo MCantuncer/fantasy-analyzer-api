@@ -91,7 +91,7 @@ app/
 ├── schemas.py     Pydantic request and response models (source of openapi.json)
 ├── espn/          ESPN client and parsing into projections and rosters
 ├── analysis/      Weekly model, trade finder, perceived value, simulation, injury impact
-├── news/          News sources, extraction, verification against ESPN facts
+├── news/          News sources, extraction, verification against ESPN facts, emotion tags for the news log
 ├── backtest/      Week-by-week replays of finished seasons
 ├── accounts.py    Sign-up, sessions and team verification
 ├── feed.py        Moves feed from ESPN transactions
@@ -167,6 +167,7 @@ All settings are optional for local development.
 | POST | `/api/admin/errors` | | Admins only: error reports, most recent first |
 | POST | `/api/admin/usage` | `{days?}` | Admins only: daily visitors, page views, server events and new accounts, plus account totals |
 | POST | `/api/admin/errors/resolve` | `{id}` | Admins only: marks a report fixed; it opens again if it happens again |
+| POST | `/api/admin/news-log` | `{days?, tagged?, limit?}` | Admins only: outlet news that names a player, kept for a later test of news text, newest first; `tagged` keeps only items with an emotion tag |
 | POST | `/api/my-leagues/add` | `{league_id, season?}` | Follows a league (no team yet) |
 | POST | `/api/my-leagues/remove` | `{league_id, season?}` | Unfollows it |
 | POST | `/api/league-overview` | `{league_id, season?}` | League-only view: this week's matchups, the MVP candidate, league pulse, which teams have a manager |
@@ -290,6 +291,8 @@ Each item is tagged with the players its headline names in full (ESPN's own athl
 When sources disagree on how bad an injury is (for example ESPN lists day-to-day and an outlet reports a fracture), the story's `conflict` says so, naming each source, and `severity` is the worst one. Headlines and summaries are always the sources' own; a story with only ESPN data gets a plain line from that data ("ESPN lists X as out").
 
 A check runs at most every 10 minutes. The server's news watch asks for one every 2 minutes (`NEWS_WATCH_SECONDS`, 0 turns it off), so news stays current with nobody on the site, and any news request or player card also starts one when due. The News page's refresh button (`/api/news/check`) can start one sooner, but never more than once every 2 minutes in total, since every reader shares one feed. Items are stored in `news_items` (kept 14 days), and the last player snapshot, source health and trending players in `news_state`. On the free Render plan the server sleeps, so the `News refresh` GitHub workflow calls `/api/news/refresh` every 30 minutes; set the repository variable `API_URL` (e.g. `https://fantasy-analyzer-api.onrender.com`) to turn it on.
+
+**News text kept for a later test.** Whether what is going on around a player (a benching, a feud, a trade demand, a family matter, a milestone) moves his next games can't be tested on past seasons: nobody keeps the news as it read that day, and `news_items` is trimmed after 14 days. So every outlet item that names a player is also written to `news_log`, which is never trimmed: its title, summary, source, time, players, kind and its emotion tags (`app/news/emotion.py`: discipline, benched, trade_unrest, contract, personal, friction, motivation, milestone, legal). The tags are keyword rules on the item's own words, right about 6 times in 7 on 227 real headlines, and the text is kept so it can be read again with better rules. Reddit tips and ESPN's status changes are left out. Nothing reads the log yet: it changes no page and no number. After a few weeks, admins can pull it from `/api/admin/news-log` and check the tagged players' next games against their lines.
 
 ### Sample league
 
