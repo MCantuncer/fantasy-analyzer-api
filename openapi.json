@@ -325,6 +325,73 @@
         }
       }
     },
+    "/api/admin/player-lines": {
+      "post": {
+        "summary": "Admin Player Lines",
+        "description": "Admins only: each player's next-game lines against what he did (app/linelog.py), biggest\npoints swing first.",
+        "operationId": "admin_player_lines_api_admin_player_lines_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlayerLinesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayerLines"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/errors/resolve": {
       "post": {
         "summary": "Resolve Error",
@@ -9905,6 +9972,112 @@
         "title": "PlayerIndex",
         "description": "Every NBA player this season, for search as you type: the device filters, not the server."
       },
+      "PlayerLineSummary": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "team": {
+            "type": "integer",
+            "title": "Team",
+            "description": "NBA team id in his last saved game"
+          },
+          "team_abbrev": {
+            "type": "string",
+            "title": "Team Abbrev"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games",
+            "description": "Games he played with a saved line"
+          },
+          "dnp": {
+            "type": "integer",
+            "title": "Dnp",
+            "description": "Nights he had a line but his team played without him"
+          },
+          "stats": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/StatMiss"
+            },
+            "type": "object",
+            "title": "Stats",
+            "description": "minutes, pts, reb, ast, stl, blk, three_pm, to"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "team",
+          "team_abbrev",
+          "games",
+          "dnp",
+          "stats"
+        ],
+        "title": "PlayerLineSummary"
+      },
+      "PlayerLines": {
+        "properties": {
+          "days": {
+            "type": "integer",
+            "title": "Days",
+            "description": "Settled days read"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/PlayerLineSummary"
+            },
+            "type": "array",
+            "title": "Players"
+          }
+        },
+        "type": "object",
+        "required": [
+          "days",
+          "players"
+        ],
+        "title": "PlayerLines"
+      },
+      "PlayerLinesRequest": {
+        "properties": {
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season (the year it ends); the current one when unset"
+          },
+          "last": {
+            "type": "integer",
+            "maximum": 400.0,
+            "minimum": 0.0,
+            "title": "Last",
+            "description": "Only the last N settled days; 0 for the whole season",
+            "default": 0
+          },
+          "min_games": {
+            "type": "integer",
+            "maximum": 200.0,
+            "minimum": 0.0,
+            "title": "Min Games",
+            "description": "Only players with at least this many games",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "title": "PlayerLinesRequest"
+      },
       "PlayerMove": {
         "properties": {
           "id": {
@@ -12463,6 +12636,38 @@
           "team_id"
         ],
         "title": "SitsRequest"
+      },
+      "StatMiss": {
+        "properties": {
+          "line": {
+            "type": "number",
+            "title": "Line",
+            "description": "His average line"
+          },
+          "actual": {
+            "type": "number",
+            "title": "Actual",
+            "description": "What he averaged"
+          },
+          "miss": {
+            "type": "number",
+            "title": "Miss",
+            "description": "Average of result less line: + he beat his line"
+          },
+          "swing": {
+            "type": "number",
+            "title": "Swing",
+            "description": "Typical size of a miss either way (root mean square)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "line",
+          "actual",
+          "miss",
+          "swing"
+        ],
+        "title": "StatMiss"
       },
       "TargetFit": {
         "properties": {

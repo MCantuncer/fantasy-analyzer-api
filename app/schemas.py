@@ -1903,6 +1903,34 @@ class NewsLog(BaseModel):
     rows: list[NewsLogRow]
 
 
+class PlayerLinesRequest(BaseModel):
+    season: int | None = Field(default=None, description="ESPN season (the year it ends); the current one when unset")
+    last: int = Field(default=0, ge=0, le=400, description="Only the last N settled days; 0 for the whole season")
+    min_games: int = Field(default=1, ge=0, le=200, description="Only players with at least this many games")
+
+
+class StatMiss(BaseModel):
+    line: float = Field(description="His average line")
+    actual: float = Field(description="What he averaged")
+    miss: float = Field(description="Average of result less line: + he beat his line")
+    swing: float = Field(description="Typical size of a miss either way (root mean square)")
+
+
+class PlayerLineSummary(BaseModel):
+    player_id: int
+    name: str
+    team: int = Field(description="NBA team id in his last saved game")
+    team_abbrev: str
+    games: int = Field(description="Games he played with a saved line")
+    dnp: int = Field(description="Nights he had a line but his team played without him")
+    stats: dict[str, StatMiss] = Field(description="minutes, pts, reb, ast, stl, blk, three_pm, to")
+
+
+class PlayerLines(BaseModel):
+    days: int = Field(description="Settled days read")
+    players: list[PlayerLineSummary]
+
+
 class UsageRequest(BaseModel):
     days: int = Field(default=30, ge=1, le=366, description="How many days back, today included")
 
