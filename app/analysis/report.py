@@ -423,6 +423,12 @@ def _reason_text(r: gamebox.Reason, m: gamebox.GameContext) -> str:
     if r.kind == "coach_decision":
         days = int(r.detail.get("days") or 0)
         return "Coach sat him yesterday" if days == 1 else f"Coach sat him {days} days ago"
+    if r.kind == "lopsided_games":
+        return "One-sided games lately" if r.minutes > 0 else "Close games lately"
+    if r.kind == "blowout":
+        return "This game may get one-sided"
+    if r.kind == "overtime":
+        return "Overtime in his last game"
     if r.kind == "recent_minutes":
         return "More minutes lately" if r.minutes > 0 else "Fewer minutes lately"
     if r.kind == "home":
