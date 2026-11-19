@@ -96,6 +96,9 @@ class NextGameReason(BaseModel):
         "back_to_back",
         "new_team",
         "season_end",
+        "lopsided_games",
+        "blowout",
+        "overtime",
     ]
     text: str = Field(description="What it is, in a few words: 'Against PHX', 'James out'")
     minutes: float = Field(description="Minutes it adds (+) or takes (-)")
