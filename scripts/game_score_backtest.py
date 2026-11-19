@@ -158,7 +158,7 @@ def part_lines() -> list[str]:
     for season in SEASONS:
         day_cases: dict[tuple[int, int], list] = defaultdict(list)
         for _box, c in cases(season):
-            new, _, _ = gamebox.apply(c.line, c.context, c.mates, c.gained)
+            new, _, _ = gamebox.apply(c.line, c.context, c.mates, c.gained, c.back)
             day_cases[(c.day, c.team)].append((c, new))
         for group in day_cases.values():
             lines_pts = sum(new.get(PTS, 0.0) for _, new in group)

@@ -367,6 +367,33 @@ def test_points_of_teammates_out_go_to_those_left():
     assert next(r for r in reasons if r.kind == "teammates_out").detail["points"] == 25.0
 
 
+def test_a_regular_coming_back_takes_minutes_and_shots_from_the_bench():
+    back = [Teammate("Jaylen Brown", 34.0, 22.0, 25.0, 2)]
+    plain = gamebox.apply(LINE, _ctx(), [])[0]
+    new, usual, reasons = gamebox.apply(LINE, _ctx(), [], 0.0, back)
+    moved = gamebox.BACK_SHARE * 34.0 * (1 - 30.0 / gamebox.BENCH_MINUTES)
+    assert new[MINUTES] - plain[MINUTES] == pytest.approx(moved)
+    base = 20.0 / 30.0 * new[MINUTES]
+    shots = base * gamebox.RATE_WEIGHTS[PTS]["usage_back"] * 0.22
+    assert new[PTS] - plain[PTS] == pytest.approx(20.0 / 30.0 * moved + shots)
+    reason = next(r for r in reasons if r.kind == "teammates_back")
+    assert reason.minutes == pytest.approx(moved) and reason.detail["names"] == "Jaylen Brown"
+    assert _reason_text(reason, _ctx()) == "Brown back"
+    assert usual[MINUTES] == pytest.approx(plain[MINUTES])
+    # A starter at 36 minutes or more has no bench minutes to give back.
+    star = _line(36.0, pts=27.0)
+    assert gamebox.minute_signals(36.0, _ctx(), [], back)["bench_back"] == 0.0
+    assert all(r.minutes == 0 for r in gamebox.apply(star, _ctx(), [], 0.0, back)[2] if r.kind == "teammates_back")
+
+
+def test_an_absence_already_a_game_old_gives_fewer_new_minutes():
+    fresh = gamebox.apply(LINE, _ctx(), [Teammate("Jaylen Brown", 34.0, 22.0)])[0]
+    old = gamebox.apply(LINE, _ctx(), [Teammate("Jaylen Brown", 34.0, 22.0, 0.0, 2)])[0]
+    bench = 1 - 30.0 / gamebox.BENCH_MINUTES
+    assert old[MINUTES] - fresh[MINUTES] == pytest.approx(gamebox.OLD_OUT_SHARE * 34.0 * bench)
+    assert old[MINUTES] > gamebox.apply(LINE, _ctx(), [])[0][MINUTES]
+
+
 def test_free_throws_follow_the_opponents_fouls():
     line = {**LINE, FTA: 6.0, FTM: 4.8}
     soft = gamebox.apply(line, _ctx(defense={FTA: 0.2}), [])[0]

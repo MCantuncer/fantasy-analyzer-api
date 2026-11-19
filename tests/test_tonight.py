@@ -2,8 +2,9 @@ import copy
 
 import pytest
 
+from app.analysis.gamebox import BACK_MINUTES, Form, GameContext
 from app.analysis.report import NEXT_GAME_LEVEL, Analyzer
-from app.analysis.tonight import OTHER_ROLE, SAME_ROLE, minutes_gained, role
+from app.analysis.tonight import OTHER_ROLE, SAME_ROLE, came_back, minutes_gained, role
 from app.espn.parse import MINUTES
 
 AST, REB, PTS = 3, 6, 0
@@ -51,3 +52,26 @@ def test_the_next_game_line_takes_the_minutes(league):
     minutes = 30.0 + SAME_ROLE * 32.0
     assert ng.minutes == pytest.approx(round(minutes, 1))
     assert ng.pts == pytest.approx(round(15.0 * minutes / 30.0 * NEXT_GAME_LEVEL[PTS], 1))
+
+
+def test_a_regular_with_no_tag_left_who_missed_games_is_back(league):
+    lg, _, mate = _setup(league, GUARD, status="ACTIVE")
+
+    def ctx(missed=2, minutes=30.0, sat_ago=None):
+        form = Form(rate={}, minutes=minutes, minutes_long=minutes, usage=12.0, last_day=3, team=99)
+        return GameContext(8, 2, True, False, 0.0, {}, form, missed, sat_ago=sat_ago)
+
+    mate.game_context = ctx()
+    assert came_back(mate)
+    # Not while a tag is left, without a game missed, below a regular's minutes, or without a box.
+    mate.injury_status = "DAY_TO_DAY"
+    assert not came_back(mate)
+    mate.injury_status = "ACTIVE"
+    for context in (ctx(missed=0), ctx(minutes=BACK_MINUTES - 1), None):
+        mate.game_context = context
+        assert not came_back(mate)
+    # His coach sat him through the games he missed (his last game was 5 days ago): no comeback.
+    mate.game_context = ctx(sat_ago=2)
+    assert not came_back(mate)
+    mate.game_context = ctx(sat_ago=6)
+    assert came_back(mate)

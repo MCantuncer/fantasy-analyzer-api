@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from app.analysis.gamebox import BACK_MINUTES
 from app.espn.parse import MINUTES, Player
 
 AST, REB = 3, 6
@@ -43,6 +44,19 @@ def ruled_out(p: Player) -> bool:
     return (
         p.injury_status == "OUT" and p.per_game.get(MINUTES, 0.0) >= REGULAR_MINUTES and p.recent_minutes[0] is not None
     )
+
+
+def came_back(p: Player) -> bool:
+    """A regular with no injury tag left who missed his team's last game or more: back for his next
+    game, as far as ESPN knows. His teammates' minutes and shots lately were partly his
+    (gamebox BACK_SHARE, usage_back). A player his coach sat through those games isn't coming back
+    from anything."""
+    m = p.game_context
+    if m is None or m.form is None or not p.fully_healthy:
+        return False
+    if m.games_missed < 1 or m.form.minutes_long < BACK_MINUTES:
+        return False
+    return m.sat_ago is None or m.sat_ago >= m.day - m.form.last_day
 
 
 def minutes_gained(p: Player, teammates: Iterable[Player]) -> float:
