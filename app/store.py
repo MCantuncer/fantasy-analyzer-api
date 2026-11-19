@@ -73,6 +73,15 @@ create table if not exists news_items (
     seen_at timestamptz not null default now()
 );
 create index if not exists news_items_published on news_items (published_at);
+-- Outlet items that name a player, with their emotion tags (app/news/emotion.py). Never trimmed:
+-- a later test needs months of them.
+create table if not exists news_log (
+    id text primary key,
+    published_at timestamptz not null,
+    body jsonb not null,
+    seen_at timestamptz not null default now()
+);
+create index if not exists news_log_published on news_log (published_at);
 create table if not exists news_state (
     key text primary key,
     body jsonb not null,
@@ -124,6 +133,8 @@ class Store(Protocol):
     def save_recap(self, league_id: int, season: int, period: int, body: dict) -> None: ...
     def save_news_items(self, items: list[dict]) -> None: ...
     def news_items(self, since: str) -> list[dict]: ...
+    def save_news_log(self, rows: list[dict]) -> None: ...
+    def news_log(self, since: str, limit: int, tagged: bool = False) -> list[dict]: ...
     def get_news_state(self, key: str) -> dict | None: ...
     def save_news_state(self, key: str, body: dict) -> None: ...
     def get_report(self, key: str) -> dict | None: ...
@@ -142,6 +153,7 @@ class MemoryStore:
         self.pregame: dict[tuple[int, int], dict] = {}
         self.recaps: dict[tuple[int, int, int], dict] = {}
         self.news: dict[str, dict] = {}
+        self.log: dict[str, dict] = {}
         self.news_state: dict[str, dict] = {}
         self.reports: dict[str, dict] = {}
         self.samples: dict[tuple[int, str, int], dict] = {}
@@ -188,6 +200,15 @@ class MemoryStore:
 
     def news_items(self, since: str) -> list[dict]:
         return [i for i in self.news.values() if i["published"] >= since]
+
+    def save_news_log(self, rows: list[dict]) -> None:
+        for row in rows:
+            self.log.setdefault(row["id"], row)  # first seen wins, like news_items
+
+    def news_log(self, since: str, limit: int, tagged: bool = False) -> list[dict]:
+        """Logged items published since then, newest first; ``tagged``: only those with an emotion tag."""
+        rows = [r for r in self.log.values() if r["published"] >= since and (r["tags"] or not tagged)]
+        return sorted(rows, key=lambda r: r["published"], reverse=True)[:limit]
 
     def get_news_state(self, key: str) -> dict | None:
         return self.news_state.get(key)
@@ -317,6 +338,22 @@ class PostgresStore:
     def news_items(self, since: str) -> list[dict]:
         with self._connect() as conn:
             rows = conn.execute("select body from news_items where published_at >= %s", (since,)).fetchall()
+        return [r[0] for r in rows]
+
+    def save_news_log(self, rows: list[dict]) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.executemany(
+                "insert into news_log (id, published_at, body) values (%s, %s, %s) on conflict (id) do nothing",
+                [(r["id"], r["published"], json.dumps(r)) for r in rows],
+            )
+
+    def news_log(self, since: str, limit: int, tagged: bool = False) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select body from news_log where published_at >= %s "
+                "and (not %s or jsonb_array_length(body->'tags') > 0) order by published_at desc limit %s",
+                (since, tagged, limit),
+            ).fetchall()
         return [r[0] for r in rows]
 
     def get_news_state(self, key: str) -> dict | None:

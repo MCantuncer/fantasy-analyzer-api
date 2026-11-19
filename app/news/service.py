@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from app.espn.client import EspnClient, EspnError
-from app.news import facts, sources
+from app.news import emotion, facts, sources
 from app.news.extract import NameIndex, tag
 from app.news.verify import FACT_SOURCE, Item, Story, build_stories
 from app.store import Store
@@ -48,6 +48,20 @@ def item_to_dict(item: Item) -> dict:
 
 def item_from_dict(d: dict) -> Item:
     return Item(**{**d, "published": parse_iso(d["published"])})
+
+
+def log_row(item: Item) -> dict:
+    """An item as the news log keeps it: its text, who it is about and its emotion tags (emotion.py)."""
+    return {
+        "id": item.id,
+        "source_id": item.source_id,
+        "published": iso(item.published),
+        "title": item.title,
+        "summary": item.summary,
+        "kind": item.kind,
+        "player_ids": item.player_ids,
+        "tags": emotion.tags(item.title, item.summary),
+    }
 
 
 def states_to_dict(states: dict[int, facts.PlayerState]) -> dict:
@@ -178,6 +192,14 @@ class NewsService:
 
             if new_items:
                 await asyncio.to_thread(self.store.save_news_items, [item_to_dict(i) for i in new_items])
+            # Kept for good, for a later test of news text: what outlets wrote about a named player.
+            # Tips (Reddit) are fans talking, and ESPN's status changes are already in the game logs.
+            logged = [log_row(i) for i in new_items if i.player_ids and i.title and i.source_kind == "outlet"]
+            if logged:
+                try:
+                    await asyncio.to_thread(self.store.save_news_log, logged)
+                except Exception:  # the log is for a later test: the news itself must still come through
+                    log.warning("news log not saved", exc_info=True)
             await asyncio.to_thread(self.store.save_news_state, "health", health)
             await asyncio.to_thread(self.store.save_news_state, "meta", {"refreshed_at": iso(now), "season": season})
 
