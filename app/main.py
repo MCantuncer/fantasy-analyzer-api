@@ -22,8 +22,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app import benched, linelog, playchance, pregame, schemas
 from app import errors as error_reports
-from app import linelog, playchance, pregame, schemas
 from app.accounts import (
     PASSWORD_MIN,
     PASSWORD_OFF_NOTICE,
@@ -569,7 +569,11 @@ def create_app(
                 if team:
                     rows += gamebox.parse_rows(await peek_gamelogs(season, team, past=False), season)
             schedule = gamebox.parse_schedule(raw)
-            box = await run_in_threadpool(gamebox.build, season, rows, prior, schedule, last, score_start)
+            # Who sat by coach's decision lately, from the nights the box watch has read (app/benched.py).
+            latest = max((r.day for r in rows), default=0)
+            nights = await run_in_threadpool(app.state.store.sat_out, season, latest - benched.KEEP_DAYS)
+            sat = benched.coach_days(nights)
+            box = await run_in_threadpool(gamebox.build, season, rows, prior, schedule, last, score_start, sat)
             app.state.game_boxes.set(season, box)
             app.state.last_boxes[season] = box
             logging.getLogger(__name__).info("league box for %s: %d player games", season, len(rows))
@@ -1501,6 +1505,33 @@ def create_app(
             except Exception:
                 logging.getLogger(__name__).warning("line log watch failed", exc_info=True)
 
+    async def sat_sweep() -> list[int]:
+        """One look for finished nights whose box scores haven't been read for who sat out and why
+        (app/benched.py): the nights it saved. A night ESPN can't give in full is tried again next time."""
+        now = app.state.now()
+        season = current_season(now)
+        raw = await pro_schedule(season)
+        if raw is None:
+            return []
+        sched = parse_schedule(raw)
+        done = sorted(d for d in sched.games if settled(sched, d, now))[-benched.LOOKBACK_NIGHTS :]
+        if not done:
+            return []
+        saved = await run_in_threadpool(app.state.store.sat_out, season, done[0])
+        wrote = []
+        for day in done:
+            if day in saved:
+                continue
+            night = await benched.fetch_night([g.id for g in sched.games[day]], app.state.clock_transport)
+            if night is None:
+                continue
+            body = {str(pid): reason for pid, reason in night.items()}
+            await run_in_threadpool(app.state.store.save_sat_out, season, day, body)
+            wrote.append(day)
+        return wrote
+
+    app.state.sat_sweep = sat_sweep
+
     async def box_sweep() -> bool:
         """One look by the box watch: builds the season's league box when it has expired, or when the
         last finished night isn't in it yet. True when it built one."""
@@ -1527,6 +1558,10 @@ def create_app(
     async def watch_box() -> None:
         await asyncio.sleep(BOX_WATCH_FIRST)
         while True:
+            try:
+                await sat_sweep()  # first, so a box built for a new night has that night's benchings
+            except Exception:
+                logging.getLogger(__name__).warning("sat-out nights not read", exc_info=True)
             try:
                 await box_sweep()
             except Exception:

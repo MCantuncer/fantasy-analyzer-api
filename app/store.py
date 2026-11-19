@@ -60,6 +60,14 @@ create table if not exists player_lines (
     saved_at timestamptz not null default now(),
     primary key (season, day)
 );
+-- Who did not play each night and ESPN's reason (app/benched.py), per NBA day. Final once saved.
+create table if not exists sat_out (
+    season int not null,
+    day int not null,
+    body jsonb not null,
+    saved_at timestamptz not null default now(),
+    primary key (season, day)
+);
 create table if not exists nba_days (
     season int not null,
     day int not null,
@@ -142,6 +150,8 @@ class Store(Protocol):
     def get_player_lines(self, season: int, day: int) -> dict | None: ...
     def save_player_lines(self, season: int, day: int, body: dict, settled: bool) -> None: ...
     def player_lines(self, season: int, settled: bool) -> list[tuple[int, dict]]: ...
+    def sat_out(self, season: int, since: int) -> dict[int, dict]: ...
+    def save_sat_out(self, season: int, day: int, body: dict) -> None: ...
     def get_recap(self, league_id: int, season: int, period: int) -> dict | None: ...
     def save_recap(self, league_id: int, season: int, period: int, body: dict) -> None: ...
     def save_news_items(self, items: list[dict]) -> None: ...
@@ -165,6 +175,7 @@ class MemoryStore:
         self.days: dict[tuple[int, int], dict] = {}
         self.pregame: dict[tuple[int, int], dict] = {}
         self.lines: dict[tuple[int, int], tuple[bool, dict]] = {}
+        self.sat: dict[tuple[int, int], dict] = {}
         self.recaps: dict[tuple[int, int, int], dict] = {}
         self.news: dict[str, dict] = {}
         self.log: dict[str, dict] = {}
@@ -211,6 +222,13 @@ class MemoryStore:
 
     def player_lines(self, season: int, settled: bool) -> list[tuple[int, dict]]:
         return sorted((d, b) for (s, d), (done, b) in self.lines.items() if s == season and done == settled)
+
+    def sat_out(self, season: int, since: int) -> dict[int, dict]:
+        """day -> who did not play and why, for the saved nights of a season from day ``since`` on."""
+        return {d: body for (s, d), body in self.sat.items() if s == season and d >= since}
+
+    def save_sat_out(self, season: int, day: int, body: dict) -> None:
+        self.sat[(season, day)] = body
 
     def get_recap(self, league_id: int, season: int, period: int) -> dict | None:
         return self.recaps.get((league_id, season, period))
@@ -354,6 +372,18 @@ class PostgresStore:
                 "select day, body from player_lines where season=%s and settled=%s order by day", (season, settled)
             ).fetchall()
         return [(day, body) for day, body in rows]
+
+    def sat_out(self, season: int, since: int) -> dict[int, dict]:
+        with self._connect() as conn:
+            rows = conn.execute("select day, body from sat_out where season=%s and day>=%s", (season, since)).fetchall()
+        return {day: body for day, body in rows}
+
+    def save_sat_out(self, season: int, day: int, body: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "insert into sat_out (season, day, body) values (%s, %s, %s) on conflict (season, day) do nothing",
+                (season, day, json.dumps(body)),
+            )
 
     def get_recap(self, league_id: int, season: int, period: int) -> dict | None:
         with self._connect() as conn:

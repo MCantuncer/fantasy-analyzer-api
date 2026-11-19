@@ -23,7 +23,8 @@ Printed per category: the mean miss of each line, and per season the % less squa
 new line against today's line. --save keeps every case's lines, to compare two versions of gamebox.
 
 Uses the caches of scripts/durability_backtest.py (.cache/season_pools, .cache/gamelogs) and keeps
-the NBA schedules in .cache/schedules.
+the NBA schedules in .cache/schedules and who sat by coach's decision in .cache/benched (built once
+from sportsdataverse's ESPN box scores, which takes pyarrow: ``uv run --with pyarrow python -m ...``).
 """
 
 from __future__ import annotations
@@ -52,6 +53,12 @@ from scripts.projection_backtest import projections
 
 SEASONS = (2022, 2023, 2024, 2025, 2026)
 SCHEDULES = Path(".cache/schedules")
+BENCHED = Path(".cache/benched")
+BOX_SCORES = (
+    "https://github.com/sportsdataverse/sportsdataverse-data/releases/download/"
+    "espn_nba_player_boxscores/player_box_{season}.parquet"
+)
+COACH_DECISION = "COACH'S DECISION"
 URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/fba/seasons/{season}"
 PTS, BLK, STL, AST, REB, TO, FGM, FGA, FTM, FTA, TPM = 0, 1, 2, 3, 6, 11, 13, 14, 15, 16, 17
 STATS = (MINUTES, PTS, REB, AST, STL, BLK, TPM, TO, FGM, FGA, FTM, FTA)
@@ -67,6 +74,31 @@ def schedule(season: int) -> dict:
         resp.raise_for_status()
         path.write_text(resp.text)
     return json.loads(path.read_text())
+
+
+def sat_days(season: int, games: dict[int, dict]) -> dict[int, list[int]]:
+    """player -> the days he sat a game by coach's decision that season. The live app reads these from
+    ESPN's box scores night by night (app/benched.py); past seasons come from sportsdataverse's copy of
+    the same box scores (one parquet a season, read with pyarrow: ``uv run --with pyarrow ...``)."""
+    path = BENCHED / f"{season}.json"
+    if not path.exists():
+        import pyarrow.parquet as pq  # only to build the cache
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw = BENCHED / f"player_box_{season}.parquet"
+        if not raw.exists():
+            resp = httpx.get(BOX_SCORES.format(season=season), timeout=180, follow_redirects=True)
+            resp.raise_for_status()
+            raw.write_bytes(resp.content)
+        day_of = {str(gid): day for gl in games.values() for gid, (day, *_) in gl.items()}
+        out: dict[int, set[int]] = defaultdict(set)
+        cols = ["game_id", "athlete_id", "did_not_play", "reason"]
+        for r in pq.read_table(raw, columns=cols).to_pylist():
+            day = day_of.get(str(r["game_id"]))
+            if r["did_not_play"] and r["athlete_id"] and day and COACH_DECISION in str(r["reason"]).upper():
+                out[int(r["athlete_id"])].add(day)
+        path.write_text(json.dumps({pid: sorted(days) for pid, days in out.items()}))
+    return {int(pid): days for pid, days in json.loads(path.read_text()).items()}
 
 
 def cats(line: dict[int, float]) -> list[float]:
@@ -111,6 +143,7 @@ def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
     last_season = gamebox.carry(past)
     score_start = gamescore.season_end(gamescore.team_games(past))
     sched = gamebox.parse_schedule(schedule(season))
+    sat = sat_days(season, g)
     sides: dict[str, dict[int, list]] = defaultdict(lambda: defaultdict(list))
     for pid, gl in g.items():
         for gid, (_d, team, line) in gl.items():
@@ -143,7 +176,7 @@ def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
             for k in keys:
                 total[k] += x.get(k, 0.0)
     for day in sorted(todo):
-        box = gamebox.build(season, [r for r in rows if r.day < day], prior, sched, last_season, score_start)
+        box = gamebox.build(season, [r for r in rows if r.day < day], prior, sched, last_season, score_start, sat)
         for pid, gid, team, line, x, so_far in todo[day]:
             opp = next((t for t in sides[gid] if t != team), None)
             ctx = gamebox.context(box, pid, team, day)
