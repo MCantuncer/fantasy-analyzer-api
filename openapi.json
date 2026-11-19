@@ -6139,6 +6139,17 @@
             "type": "array",
             "title": "Lines",
             "description": "Everyone who played, most minutes first"
+          },
+          "call": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GameCall"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Our call for the score; None before the box is built"
           }
         },
         "type": "object",
@@ -6151,6 +6162,33 @@
           "lines"
         ],
         "title": "Game"
+      },
+      "GameCall": {
+        "properties": {
+          "away": {
+            "type": "integer",
+            "title": "Away",
+            "description": "Points we expect the away team to score"
+          },
+          "home": {
+            "type": "integer",
+            "title": "Home",
+            "description": "Points we expect the home team to score; never equal to away"
+          },
+          "chance": {
+            "type": "number",
+            "title": "Chance",
+            "description": "How sure the call is of its winner, 0.5-1 (calibrated on five seasons)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "away",
+          "home",
+          "chance"
+        ],
+        "title": "GameCall",
+        "description": "Our call for a game (analysis/gamescore.py), from the games before its day: fixed at tip-off."
       },
       "GameLine": {
         "properties": {
@@ -7277,6 +7315,17 @@
             "type": "array",
             "title": "Week Games",
             "description": "Days of this Monday-to-Sunday week (see DayLineup.week) his NBA team plays"
+          },
+          "play": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayChance"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "His chance to play that day's game, for an injury tag and a game not yet started"
           }
         },
         "type": "object",
@@ -9252,6 +9301,87 @@
         ],
         "title": "PitchNeed",
         "description": "A category the deal helps them in, as the pitch names it."
+      },
+      "PlayChance": {
+        "properties": {
+          "chance": {
+            "type": "number",
+            "title": "Chance",
+            "description": "0 to 1: share of past players in his spot who played"
+          },
+          "tag": {
+            "type": "string",
+            "title": "Tag",
+            "description": "The NBA report's tag: \"Probable\", \"Questionable\", \"Doubtful\", \"Available\", \"Out\", or \"Day-to-day\" when ESPN has no word yet on which"
+          },
+          "basis": {
+            "type": "string",
+            "title": "Basis",
+            "description": "What the number comes from, in words"
+          },
+          "news": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "News",
+            "description": "ESPN's latest one-line injury note"
+          },
+          "news_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "News At",
+            "description": "When ESPN dated that note, UTC ISO 8601"
+          },
+          "return_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Date",
+            "description": "ESPN's expected return date, YYYY-MM-DD"
+          },
+          "upgraded": {
+            "type": "boolean",
+            "title": "Upgraded",
+            "description": "Listed out by ESPN, but the latest news has him in play",
+            "default": false
+          },
+          "missed_in_a_row": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missed In A Row",
+            "description": "Team games he has missed in a row, when out"
+          }
+        },
+        "type": "object",
+        "required": [
+          "chance",
+          "tag",
+          "basis"
+        ],
+        "title": "PlayChance",
+        "description": "How likely a player with an injury tag is to play his game that day (app/playchance.py)."
       },
       "PlayerBadge": {
         "properties": {

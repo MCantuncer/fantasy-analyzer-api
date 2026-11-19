@@ -1082,6 +1082,22 @@ class NextGame(BaseModel):
     home: bool
 
 
+class PlayChance(BaseModel):
+    """How likely a player with an injury tag is to play his game that day (app/playchance.py)."""
+
+    chance: float = Field(description="0 to 1: share of past players in his spot who played")
+    tag: str = Field(
+        description='The NBA report\'s tag: "Probable", "Questionable", "Doubtful", "Available", "Out", '
+        'or "Day-to-day" when ESPN has no word yet on which'
+    )
+    basis: str = Field(description="What the number comes from, in words")
+    news: str | None = Field(default=None, description="ESPN's latest one-line injury note")
+    news_at: str | None = Field(default=None, description="When ESPN dated that note, UTC ISO 8601")
+    return_date: str | None = Field(default=None, description="ESPN's expected return date, YYYY-MM-DD")
+    upgraded: bool = Field(default=False, description="Listed out by ESPN, but the latest news has him in play")
+    missed_in_a_row: int | None = Field(default=None, description="Team games he has missed in a row, when out")
+
+
 class LineupSpot(BaseModel):
     player_id: int
     name: str
@@ -1100,6 +1116,10 @@ class LineupSpot(BaseModel):
     next_game: NextGame | None = Field(default=None, description="His NBA team's first game after this day")
     week_games: list[int] = Field(
         default_factory=list, description="Days of this Monday-to-Sunday week (see DayLineup.week) his NBA team plays"
+    )
+    play: PlayChance | None = Field(
+        default=None,
+        description="His chance to play that day's game, for an injury tag and a game not yet started",
     )
 
 
