@@ -408,6 +408,10 @@ def _reason_text(r: gamebox.Reason, m: gamebox.GameContext) -> str:
         return "Started his last game" if r.detail.get("started") else "Moved to the bench"
     if r.kind == "heavy_minutes":
         return "Big minutes ease off"
+    if r.kind == "new_team":
+        return "First game for his new team"
+    if r.kind == "season_end":
+        return "Last games of the season"
     if r.kind == "recent_minutes":
         return "More minutes lately" if r.minutes > 0 else "Fewer minutes lately"
     if r.kind == "home":

@@ -91,6 +91,42 @@ def test_context_finds_the_next_game():
     assert gamebox.context(box, 11, 1, 6) is None
 
 
+def test_context_knows_a_new_team_and_the_games_left():
+    box = gamebox.build(2027, _rows(), PRIOR, SCHEDULE)
+    # Day 5 is team 1's last game. Player 11 has played for it all along; 21 only for team 2.
+    stayed = gamebox.context(box, 11, 1, 5)
+    assert (stayed.new_team, stayed.games_left) == (False, 1)
+    assert gamebox.context(box, 11, 1, 3).games_left == 3
+    moved = gamebox.context(box, 21, 1, 5)
+    assert moved.new_team and moved.form is None
+    # A player with no games this season isn't new to anyone.
+    assert not gamebox.context(box, 99, 1, 5).new_team
+
+
+def test_a_first_game_for_a_new_team_plays_fewer_minutes():
+    new, usual, reasons = gamebox.apply(LINE, _ctx(new_team=True), [])
+    assert new[MINUTES] == pytest.approx(30.0 + gamebox.MINUTES_LEVEL + gamebox.NEW_TEAM_MINUTES)
+    moved = next(r for r in reasons if r.kind == "new_team")
+    assert moved.minutes == pytest.approx(gamebox.NEW_TEAM_MINUTES)
+    assert moved.stats[PTS] == pytest.approx(20.0 / 30.0 * gamebox.NEW_TEAM_MINUTES)
+    assert usual[MINUTES] == pytest.approx(30.0 + gamebox.MINUTES_LEVEL)
+
+
+def test_core_players_rest_in_the_last_games_of_the_season():
+    core = _line(34.0, pts=24.0)
+    new, _, reasons = gamebox.apply(core, _ctx(games_left=gamebox.SEASON_END_GAMES), [])
+    heavy = gamebox.HEAVY_LEVEL * max(0.0, 34.0 - gamebox.HEAVY_MINUTES)
+    assert new[MINUTES] == pytest.approx(34.0 + gamebox.MINUTES_LEVEL + heavy + gamebox.SEASON_END_MINUTES)
+    assert next(r for r in reasons if r.kind == "season_end").minutes == pytest.approx(gamebox.SEASON_END_MINUTES)
+    # Not earlier in the season, not for a bench player, and not when the games left aren't known.
+    for line, ctx in (
+        (core, _ctx(games_left=gamebox.SEASON_END_GAMES + 1)),
+        (_line(gamebox.CORE_MINUTES - 1, pts=10.0), _ctx(games_left=1)),
+        (core, _ctx()),
+    ):
+        assert all(r.kind != "season_end" for r in gamebox.apply(line, ctx, [])[2])
+
+
 def _ctx(**kw) -> GameContext:
     base = dict(day=5, opponent=2, home=False, back_to_back=False, margin=0.0, defense={}, form=None, games_missed=0)
     return GameContext(**{**base, **kw})
@@ -203,6 +239,8 @@ def test_reason_texts():
     assert text("form") == "His recent form"
     assert text("starter_switch", started=1) == "Started his last game"
     assert text("starter_switch", started=0) == "Moved to the bench"
+    assert text("new_team") == "First game for his new team"
+    assert text("season_end") == "Last games of the season"
     assert text("back_from_absence", games=0, game_back=2) == "Second game back"
     assert text("back_from_absence", games=3, game_back=1) == "First game back after 3 missed"
     assert text("teammates_out", names="Jaylen Brown", points=24.6) == "Teammates out: 25 points a game to share"
