@@ -91,6 +91,27 @@ def test_context_finds_the_next_game():
     assert gamebox.context(box, 11, 1, 6) is None
 
 
+def test_context_knows_how_long_ago_his_coach_sat_him():
+    sat = {11: [2, 4, 5], 12: [9]}  # day 5 is the game day itself, day 9 is still to come
+    box = gamebox.build(2027, _rows(), PRIOR, SCHEDULE, sat=sat)
+    assert gamebox.context(box, 11, 1, 5).sat_ago == 1
+    assert gamebox.context(box, 12, 1, 5).sat_ago is None
+    assert gamebox.context(gamebox.build(2027, _rows(), PRIOR, SCHEDULE), 11, 1, 5).sat_ago is None
+
+
+def test_a_player_his_coach_just_sat_plays_fewer_minutes():
+    new, usual, reasons = gamebox.apply(LINE, _ctx(sat_ago=gamebox.COACH_SAT_DAYS), [])
+    assert new[MINUTES] == pytest.approx(30.0 + gamebox.MINUTES_LEVEL + gamebox.COACH_SAT_MINUTES)
+    sat = next(r for r in reasons if r.kind == "coach_decision")
+    assert sat.minutes == pytest.approx(gamebox.COACH_SAT_MINUTES) and sat.detail["days"] == gamebox.COACH_SAT_DAYS
+    assert sat.stats[PTS] == pytest.approx(20.0 / 30.0 * gamebox.COACH_SAT_MINUTES)
+    assert usual[MINUTES] == pytest.approx(30.0 + gamebox.MINUTES_LEVEL)
+    # Not once it is over COACH_SAT_DAYS old, and not for a line too short to lose from.
+    short = _line(gamebox.COACH_SAT_LINE - 1, pts=4.0)
+    for line, ctx in ((LINE, _ctx(sat_ago=gamebox.COACH_SAT_DAYS + 1)), (short, _ctx(sat_ago=1)), (LINE, _ctx())):
+        assert all(r.kind != "coach_decision" for r in gamebox.apply(line, ctx, [])[2])
+
+
 def _ctx(**kw) -> GameContext:
     base = dict(day=5, opponent=2, home=False, back_to_back=False, margin=0.0, defense={}, form=None, games_missed=0)
     return GameContext(**{**base, **kw})
@@ -203,6 +224,8 @@ def test_reason_texts():
     assert text("form") == "His recent form"
     assert text("starter_switch", started=1) == "Started his last game"
     assert text("starter_switch", started=0) == "Moved to the bench"
+    assert text("coach_decision", days=1) == "Coach sat him yesterday"
+    assert text("coach_decision", days=3) == "Coach sat him 3 days ago"
     assert text("back_from_absence", games=0, game_back=2) == "Second game back"
     assert text("back_from_absence", games=3, game_back=1) == "First game back after 3 missed"
     assert text("teammates_out", names="Jaylen Brown", points=24.6) == "Teammates out: 25 points a game to share"
