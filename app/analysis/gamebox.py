@@ -301,15 +301,26 @@ class Box:
     score_start: gamescore.SeasonEnd | None = field(default=None, repr=False)
     _day_scores: dict[int, gamescore.Scores] = field(default_factory=dict, repr=False, compare=False)
 
-    def call(self, day: int, away: int, home: int) -> gamescore.Call:
-        """Our call for a game on ``day`` from the games before it: the same before tip-off and after."""
+    def day_scores(self, day: int) -> gamescore.Scores:
+        """Every team's scoring from the games before ``day``: what calls on that day stand on."""
         s = self._day_scores.get(day)
         if s is None:
             s = gamescore.build([g for g in self.team_games if g.day < day], self.score_start)
             self._day_scores[day] = s
-        a = gamescore.expected(s, away, home, False, self.back_to_back(away, day))
-        h = gamescore.expected(s, home, away, True, self.back_to_back(home, day))
-        return gamescore.call(a, h)
+        return s
+
+    def call(self, day: int, away: int, home: int) -> gamescore.Call:
+        """Our call for a game on ``day`` from the games before it: the same before tip-off and after."""
+        a, h = self.call_parts(day, away, home)
+        return gamescore.call(sum(a.values()), sum(h.values()))
+
+    def call_parts(self, day: int, away: int, home: int) -> tuple[dict[str, float], dict[str, float]]:
+        """Each side's expected points in a game on ``day``, piece by piece (gamescore.parts)."""
+        s = self.day_scores(day)
+        return (
+            gamescore.parts(s, away, home, False, self.back_to_back(away, day)),
+            gamescore.parts(s, home, away, True, self.back_to_back(home, day)),
+        )
 
     def latest_day(self) -> int:
         """The last day with a game in the box: 0 for a box with no games yet."""

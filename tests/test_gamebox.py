@@ -313,6 +313,8 @@ def test_reason_texts():
     assert _reason_text(gamebox.Reason("lopsided_games", minutes=0.8), _ctx()) == "One-sided games lately"
     assert _reason_text(gamebox.Reason("lopsided_games", minutes=-0.4), _ctx()) == "Close games lately"
     assert text("blowout") == "This game may get one-sided"
+    # No margin in words (it isn't Our call's), and no betting words.
+    assert text("favored") == "His team should win" and text("underdog") == "His team should trail"
     assert text("overtime") == "Overtime in his last game"
     assert text("back_from_absence", games=0, game_back=2) == "Second game back"
     assert text("back_from_absence", games=3, game_back=1) == "First game back after 3 missed"

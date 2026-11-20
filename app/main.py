@@ -41,7 +41,7 @@ from app.accounts import (
     team_of,
     verify_google,
 )
-from app.analysis import absence, gamebox, gamescore, teammates
+from app.analysis import absence, gamebox, gamescore, preview, teammates
 from app.analysis.checks import REASON_CHECKS, IdeaChecker, StaleIdea, focus_order
 from app.analysis.checks import TITLES as CHECK_TITLES
 from app.analysis.daily import trade_of_the_day
@@ -96,7 +96,16 @@ from app.saved import (
     saved_row,
     touches,
 )
-from app.scores import Schedule, build_day, has_starters, needs_stats, parse_schedule, settled, week_fixtures
+from app.scores import (
+    Schedule,
+    build_day,
+    game_status,
+    has_starters,
+    needs_stats,
+    parse_schedule,
+    settled,
+    week_fixtures,
+)
 from app.social import (
     CHALLENGE_SECONDS,
     Challenge,
@@ -150,6 +159,7 @@ PAST_GAMELOG_TTL = 7 * 24 * 3600.0
 # The league box behind next-game lines (analysis/gamebox.py): all 30 teams' game logs, read again
 # a few times a day so last night's games count by the morning.
 GAME_BOX_TTL = 4 * 3600.0
+PREGAME_TTL = 300.0  # a pre-game box: its lines follow the league cache (LEAGUE_TTL) closely enough
 # The box watch keeps that box built even when nobody loads a league, so our calls on Scores are there
 # when the page opens: a few seconds after a start, then every few minutes it builds the box again
 # once it has expired, or once a finished night is missing from it (at most once a GAME_BOX_RETRY).
@@ -323,6 +333,7 @@ def create_app(
     app.state.espn = espn or EspnClient()
     app.state.leagues = TTLCache(LEAGUE_TTL)
     app.state.deep_free_agents = TTLCache(LEAGUE_TTL, max_items=2048)
+    app.state.pregame_boxes = TTLCache(PREGAME_TTL, max_items=128)  # league, season, creds, game -> PregameBox
     # League loads under way, so a second request for the same league waits for the first.
     app.state.league_loads: dict[tuple, asyncio.Future] = {}
     app.state.reports = TTLCache(LEAGUE_TTL)
@@ -2791,6 +2802,150 @@ def create_app(
             roster = team.roster if team else []
         week = week_days(sched, now, roster, {})
         return score_page(body.league_id, season, sched, data, owners, week, now, complete=complete)
+
+    @app.post(
+        "/api/scores/pregame",
+        response_model=schemas.PregameBox,
+        responses={
+            401: {"model": schemas.ErrorBody},
+            404: {"model": schemas.ErrorBody},
+            409: {"model": schemas.ErrorBody},
+        },
+    )
+    async def score_pregame(
+        body: schemas.PregameRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.PregameBox:
+        """A game before tip-off: Our call piece by piece (what the margin adds up from), every player
+        expected to play with his line for this game and its reasons (the player card's line, plus the
+        rest of each rotation read for this box), who is out, and how the lines stand against the call.
+        Kept a few minutes; lines follow the league's cache (injury tags within about 10 minutes)."""
+        await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        sched = await score_calendar(season)
+        days = [body.day] if body.day in sched.games else sorted(sched.games)
+        game = next((g for d in days for g in sched.games.get(d, []) if g.id == body.game_id), None)
+        if game is None:
+            raise HTTPException(404, detail={"code": "no_game", "message": "No such game this season."})
+        box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
+        if box is None or box.scores is None:
+            start_game_box(season)
+            raise HTTPException(
+                409, detail={"code": "not_ready", "message": "Our call is still being worked out. Try again soon."}
+            )
+        key = (body.league_id, season, credentials_key(creds), game.id)
+        cached = app.state.pregame_boxes.get(key)
+        if cached is not None:
+            return cached
+        league = await load_league(body.league_id, season, creds, with_fa=True)
+        pool = [*(p for t in league.teams for p in t.roster), *league.free_agents]
+        owners = {p.id: t.id for t in league.teams for p in t.roster}
+        known = {p.id for p in pool}
+        wanted = [pid for team in (game.away, game.home) for pid in preview.rotation(box, team, game.day, known)]
+        deep: list[Player] = []
+        if wanted:
+            try:
+                deep = await deep_players(league, wanted, creds)
+            except EspnError:  # the league's own players still make a box
+                deep = []
+        model = CategoryModel(league)
+
+        def side(team: int, call: int, parts: dict[str, float]) -> schemas.PregameSide:
+            lines = preview.side_lines(
+                model,
+                box,
+                game.day,
+                team,
+                [p for p in pool if p.pro_team_id == team],
+                [p for p in deep if p.pro_team_id == team],
+            )
+            x = gamescore.signals(box.day_scores(game.day), team, game.home if team == game.away else game.away)
+            s = box.day_scores(game.day)
+            a = s.team(team)
+            b = s.team(game.home if team == game.away else game.away)
+            tl = lines.team_line
+            raw = sum(parts.values())
+            return schemas.PregameSide(
+                pro_team_id=team,
+                abbrev=sched.teams.get(team, ("", ""))[0] or PRO_TEAM_ABBREV.get(team, ""),
+                name=sched.teams.get(team, ("", ""))[1],
+                call=call,
+                call_raw=round(raw, 2),
+                parts=schemas.PregameCallPart(
+                    **{k: round(v, 2) for k, v in parts.items()},
+                    possessions=round(a["poss"] / a["w"] * (b["poss"] / b["w"]) / s.rate("poss"), 1),
+                    offense=round(a["pf"] / a["poss"], 3),
+                    defense_allowed=round(b["pa"] / b["poss"], 3),
+                    league=round(s.rate("pf") / s.rate("poss"), 3),
+                    points_a_game=round(x["average"], 1),
+                ),
+                players=[
+                    schemas.PregamePlayer(
+                        player_id=p.id,
+                        name=p.name,
+                        injury_status=p.injury_status,
+                        owner_team_id=owners.get(p.id),
+                        in_pool=p.id in known,
+                        line=ln,
+                    )
+                    for p, ln in lines.playing
+                ],
+                out=[
+                    schemas.PregameOut(
+                        player_id=p.id, name=p.name, injury_status=p.injury_status, owner_team_id=owners.get(p.id)
+                    )
+                    for p in lines.out
+                ],
+                team_line=schemas.PregameTeamLine(**vars(tl))
+                if tl is not None
+                else schemas.PregameTeamLine(shown=0, rest=0, total=0, call=round(raw, 1), gap=0),
+            )
+
+        def build() -> schemas.PregameBox:
+            away_parts, home_parts = box.call_parts(game.day, game.away, game.home)
+            c = box.call(game.day, game.away, game.home)
+            mg = preview.margin(away_parts, home_parts, c.away, c.home)
+            return schemas.PregameBox(
+                league_id=body.league_id,
+                season=season,
+                day=game.day,
+                game_id=game.id,
+                start=iso(game.start),
+                status=game_status(game, app.state.now()),
+                chance=round(c.chance, 3),
+                pick=mg.pick,
+                margin=mg.points,
+                margin_raw=mg.raw,
+                terms=[schemas.PregameTerm(kind=t.kind, points=t.points, raw=t.raw) for t in mg.terms],
+                away=side(game.away, c.away, away_parts),
+                home=side(game.home, c.home, home_parts),
+            )
+
+        out = await run_in_threadpool(build)
+        app.state.pregame_boxes.set(key, out)
+        return out
+
+    async def deep_players(league: League, ids: list[int], creds: EspnCredentials | None) -> list[Player]:
+        """Players past the league's own list (rosters and the free agents a load reads), read from ESPN in
+        one call and kept as deep_free_agent keeps them."""
+
+        def key(pid: int) -> tuple:
+            return (league.id, league.season, credentials_key(creds), pid)
+
+        found = {pid: p for pid in ids if (p := app.state.deep_free_agents.get(key(pid))) is not None}
+        missing = [pid for pid in ids if pid not in found]
+        if missing:
+            proven = proven_players(await past_games(league.season))
+            for entry in await app.state.espn.players(league.season, league.id, missing, creds):
+                pid = int((entry.get("player") or entry).get("id") or 0)
+                if pid in missing and pid not in found:
+                    p = parse_player(entry, league.season, proven=pid in proven)
+                    app.state.deep_free_agents.set(key(pid), p)
+                    found[pid] = p
+        return [found[pid] for pid in ids if pid in found]
 
     @app.post("/api/scores/sits", response_model=schemas.WeekSits, responses={401: {"model": schemas.ErrorBody}})
     async def score_sits(
