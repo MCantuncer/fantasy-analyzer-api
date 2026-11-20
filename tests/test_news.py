@@ -531,6 +531,69 @@ def test_a_story_about_two_players_keeps_both():
     assert set(story.player_ids) == {LAVINE, DUNN}
 
 
+WATSON, SMITH = 4576087, 4397189
+
+
+def _collision(first_post_hours_ago: float) -> list[Item]:
+    """Live 2026-11-20: a Reddit post about a collision named Peyton Watson and Jalen Smith, and
+    Smith's illness news three days later showed on Watson's card under Watson's own sources."""
+    index = NameIndex({WATSON: "Peyton Watson", SMITH: "Jalen Smith"})
+
+    def post(source, title, hours_ago, summary=""):
+        t = tag(title, summary, index)
+        return Item(
+            id=f"{source}:{title}",
+            source_id=source,
+            title=title,
+            url=f"https://example.com/{source}",
+            published=NOW - timedelta(hours=hours_ago),
+            summary=summary,
+            kind=t.kind,
+            player_ids=t.player_ids,
+            severity=t.severity,
+            body_part=t.body_part,
+        )
+
+    collision = post(
+        "reddit",
+        "[Injury] Peyton Watson and Jalen Smith with a scary collision in mid-air, Watson went to the locker room",
+        first_post_hours_ago,
+    )
+    assert collision.player_ids == [WATSON, SMITH] and collision.kind == "injury"
+    return [
+        collision,
+        post("rotoworld", "Peyton Watson (back) questionable Wednesday", 30),
+        post("rotowire", "Peyton Watson: Questionable Friday", 20),
+        post("rotowire", "Jalen Smith: Now questionable Friday", 6),
+        post("rotowire", "Jalen Smith: Out sick Friday", 0.7),
+        post(
+            "rotoworld",
+            "Jalen Smith (illness) ruled out vs. Washington",
+            0.5,
+            "Jalen Smith (illness) has been ruled out against the Wizards on Friday.",
+        ),
+    ]
+
+
+@pytest.mark.parametrize("first_post_hours_ago", [26, 31])
+def test_a_post_naming_two_players_does_not_merge_their_own_injury_news(first_post_hours_ago):
+    named = {
+        WATSON: facts.PlayerState(WATSON, "Peyton Watson", 5, "DAY_TO_DAY"),
+        SMITH: facts.PlayerState(SMITH, "Jalen Smith", 4, "OUT"),
+    }
+    stories = build_stories(_collision(first_post_hours_ago), named, {4: "CHI", 5: "CLE"}, NOW)
+    watson = [s for s in stories if WATSON in s.player_ids]
+    smith = [s for s in stories if SMITH in s.player_ids]
+    assert watson and smith
+    for story in watson:
+        assert "Smith" not in story.headline and "Smith" not in story.summary
+        assert not any(i.title.startswith("Jalen Smith") for i in story.items)
+    [illness] = [s for s in smith if "illness" in s.headline]
+    assert illness.player_ids == [SMITH]
+    assert illness.headline == "Jalen Smith (illness) ruled out vs. Washington"
+    assert {i.source_id for i in illness.items} == {"rotowire", "rotoworld"}
+
+
 def test_a_readers_refresh_checks_sources_now_but_at_most_every_2_minutes(recorded, fake_espn):
     app = news_client(recorded, fake_espn, {})
     clock = {"now": datetime(2026, 10, 26, 12, 0, tzinfo=UTC)}
