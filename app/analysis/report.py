@@ -439,8 +439,8 @@ def _reason_text(r: gamebox.Reason, m: gamebox.GameContext) -> str:
     if r.kind == "away":
         return "Road game"
     if r.kind in ("favored", "underdog"):
-        word = "Favored" if r.kind == "favored" else "Underdog"
-        return f"{word} by {abs(m.margin):.0f}"
+        # No margin in words: it is the box's rough one (records and home court), not Our call's.
+        return "His team should win" if r.kind == "favored" else "His team should trail"
     return "Second night of a back-to-back"
 
 

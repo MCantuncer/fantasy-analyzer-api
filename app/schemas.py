@@ -1252,6 +1252,93 @@ class ScoreDay(BaseModel):
     )
 
 
+class PregameRequest(LeagueRequest):
+    game_id: int = Field(gt=0, description="The game's id, as /api/scores lists it")
+    day: int | None = Field(default=None, ge=1, le=250, description="Its day, when known (saves a search)")
+
+
+class PregameTerm(BaseModel):
+    kind: Literal["matchup", "home_court", "three_point_luck", "back_to_back"] = Field(
+        description="matchup: pace, offense and defense; home_court; three_point_luck: three-point shooting "
+        "on both ends that shouldn't last; back_to_back"
+    )
+    points: int = Field(description="Points of the called margin, from the picked side; the terms add up to it")
+    raw: float
+
+
+class PregameCallPart(BaseModel):
+    """One side's expected points, piece by piece (analysis/gamescore.py): they add up to ``call_raw``."""
+
+    ratings: float = Field(description="Possessions x its points a trip x the opponent's allowed / the league's")
+    level: float
+    home: float = Field(description="+ at home, - on the road")
+    opp_three_luck: float = Field(description="The opponent's three-point defense luck that shouldn't last")
+    own_three_luck: float = Field(description="Its own three-point shooting luck that shouldn't last")
+    back_to_back: float
+    possessions: float = Field(description="Trips each this game: its pace x the opponent's / the league's")
+    offense: float = Field(description="Its points a trip so far (recent games count most)")
+    defense_allowed: float = Field(description="Points a trip the opponent allows")
+    league: float = Field(description="The league's points a trip")
+    points_a_game: float = Field(description="Its points a game so far (recent games count most)")
+
+
+class PregamePlayer(BaseModel):
+    player_id: int
+    name: str
+    injury_status: str
+    owner_team_id: int | None = Field(default=None, description="His fantasy team in this league; None: free agent")
+    in_pool: bool = Field(
+        description="The league's own list (rosters and the free agents it reads). False: a rotation player "
+        "read for this box only"
+    )
+    line: NextGameLine
+
+
+class PregameOut(BaseModel):
+    player_id: int
+    name: str
+    injury_status: str
+    owner_team_id: int | None = None
+
+
+class PregameTeamLine(BaseModel):
+    """How the players' lines stand against the team's call (report.team_sum_gap's view)."""
+
+    shown: float = Field(description="The listed players' points lines, added up")
+    rest: float = Field(description="The rest of the team: its points a game less the listed players' season points")
+    total: float
+    call: float = Field(description="The team's expected points before rounding")
+    gap: float = Field(description="total - call: + the lines run over Our call, - under it")
+
+
+class PregameSide(BaseModel):
+    pro_team_id: int
+    abbrev: str
+    name: str
+    call: int
+    call_raw: float
+    parts: PregameCallPart
+    players: list[PregamePlayer] = Field(description="Everyone expected to play, most minutes first")
+    out: list[PregameOut] = Field(description="Ruled out tonight")
+    team_line: PregameTeamLine
+
+
+class PregameBox(BaseModel):
+    league_id: int
+    season: int
+    day: int
+    game_id: int
+    start: str = Field(description="Tip-off, UTC ISO 8601")
+    status: Literal["scheduled", "live", "final"]
+    chance: float = Field(description="How sure Our call is of its winner, 0.5-1")
+    pick: Literal["away", "home"]
+    margin: int = Field(description="The called margin in whole points, from the picked side")
+    margin_raw: float
+    terms: list[PregameTerm] = Field(description="What the margin adds up from, in whole points")
+    away: PregameSide
+    home: PregameSide
+
+
 class NewsRequest(BaseModel):
     league_id: int | None = Field(default=None, gt=0, description="Tag each player with his fantasy team here")
     season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")

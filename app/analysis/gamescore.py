@@ -210,18 +210,25 @@ def signals(s: Scores, team: int, opponent: int) -> dict[str, float]:
     }
 
 
-def expected(s: Scores, team: int, opponent: int, home: bool | None, back_to_back: bool) -> float:
-    """Points ``team`` should score against ``opponent``. ``home`` None: unknown (neutral)."""
+def parts(s: Scores, team: int, opponent: int, home: bool | None, back_to_back: bool) -> dict[str, float]:
+    """The points ``team`` should score against ``opponent``, piece by piece (they add up to
+    ``expected``): the ratings (pace, its offense and the opponent's defense), the level, home court,
+    the two three-point luck terms and a back-to-back. ``home`` None: unknown (neutral)."""
     x = signals(s, team, opponent)
     side = 0.0 if home is None else (1.0 if home else -1.0)
-    return (
-        x["ratings"]
-        + LEVEL
-        + HOME * side
-        + OPP_THREE_LUCK * x["opp_three_luck"]
-        + OWN_THREE_LUCK * x["own_three_luck"]
-        + (BACK_TO_BACK if back_to_back else 0.0)
-    )
+    return {
+        "ratings": x["ratings"],
+        "level": LEVEL,
+        "home": HOME * side,
+        "opp_three_luck": OPP_THREE_LUCK * x["opp_three_luck"],
+        "own_three_luck": OWN_THREE_LUCK * x["own_three_luck"],
+        "back_to_back": BACK_TO_BACK if back_to_back else 0.0,
+    }
+
+
+def expected(s: Scores, team: int, opponent: int, home: bool | None, back_to_back: bool) -> float:
+    """Points ``team`` should score against ``opponent``. ``home`` None: unknown (neutral)."""
+    return sum(parts(s, team, opponent, home, back_to_back).values())
 
 
 def win_chance(margin: float) -> float:
