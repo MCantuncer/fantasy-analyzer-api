@@ -2164,6 +2164,15 @@ class ComparePlayer(CompareRow):
     )
 
 
+class CompareOdd(BaseModel):
+    """One of the book's prices for a game market (app/bookcompare.py _odds_of)."""
+
+    side: Literal["pick", "other", "over", "under"] = Field(
+        description="winner, margin: our pick's side or the other team's; total, team_pts: over or under the line"
+    )
+    odd: float = Field(description="The book's decimal odds")
+
+
 class CompareMarket(CompareRow):
     market: Literal["winner", "margin", "total", "team_pts"] = Field(
         description="winner: chances for our pick; margin: points by our pick; total; team_pts: one side's points"
@@ -2171,6 +2180,9 @@ class CompareMarket(CompareRow):
     team: str = Field(description="Our pick (winner, margin) or the side (team_pts); empty for total")
     book_team: str = Field(default="", description="winner only: iddaa's favourite")
     won: str = Field(default="", description="winner only: who won, once final")
+    odds: list[CompareOdd] = Field(
+        default_factory=list, description="The book's prices for this market at the last look; offered sides only"
+    )
 
 
 class CompareGame(BaseModel):

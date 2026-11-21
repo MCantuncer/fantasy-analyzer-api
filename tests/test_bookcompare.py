@@ -217,3 +217,22 @@ def test_anyone_signed_in_reads_the_record(recorded):
     got = signed_in(app, team_id=None).post("/api/book-compare/record", json={"season": 2027}).json()
     assert got["season"] == 2027 and got["nights"] == 1 and got["series"][0]["day"] == 33
     assert {"picks", "calibration", "ours_score", "book_score"} <= set(got)
+
+
+def test_each_game_market_carries_the_book_s_prices_from_our_pick_s_side():
+    rec = book_record()
+    saved = rec["games"]["401"]
+    [g] = bookcompare.compare_day(rec, our_lines(), None, {})["games"]
+    m = {(x["market"], x.get("pick")): x for x in g["markets"]}
+    # our call [108, 121] picks PHI, the home team: its prices come first as "pick"
+    home, away = saved["win"]
+    want = [(s, o) for s, o in (("pick", home), ("other", away)) if o > iddaa.MIN_ODD]
+    assert [(o["side"], o["odd"]) for o in m[("winner", PHI)]["odds"]] == want  # closed or near-certain: left out
+    assert bookcompare._odds_of([1.2, 2.9], ("home", "away"), offset=0) == [{"side": "other", "odd": 2.9}]
+    _, home_odd, away_odd = saved["margin"]
+    assert m[("margin", PHI)]["odds"] == [{"side": "pick", "odd": home_odd}, {"side": "other", "odd": away_odd}]
+    _, under, over = saved["total"]
+    assert m[("total", None)]["odds"] == [{"side": "under", "odd": under}, {"side": "over", "odd": over}]
+    team = [x for x in g["markets"] if x["market"] == "team_pts"]
+    assert len(team) == 2 and all({o["side"] for o in x["odds"]} <= {"under", "over"} for x in team)
+    assert bookcompare._odds_of(None, ("under", "over"), offset=1) == []

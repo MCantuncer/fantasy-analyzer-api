@@ -162,6 +162,7 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
         if ours_call:
             away_o, home_o, sure = ours_call
             pick_home = home_o > away_o
+            pick_other = ("home", "away") if pick_home else ("away", "home")
             ours_home_chance = sure if pick_home else 1 - sure
             won_home = None if a_pts is None else h_pts > a_pts
             markets.append(
@@ -184,6 +185,7 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                     "closer": None
                     if won_home is None or chance_home is None
                     else _winner_closer(ours_home_chance, chance_home, won_home),
+                    "odds": _odds_of(g.get("win"), pick_other, offset=0),
                 }
             )
             # Margin, from our pick's side: + he wins by that much.
@@ -195,6 +197,7 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                     "market": "margin",
                     "pick": g["home"] if pick_home else g["away"],
                     **judge(float((home_o - away_o) * sign), book_margin, actual_margin, BANDS["margin"]),
+                    "odds": _odds_of(g.get("margin"), pick_other, offset=1),
                 }
             )
             markets.append(
@@ -206,6 +209,7 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                         None if a_pts is None else float(a_pts + h_pts),
                         BANDS["total"],
                     ),
+                    "odds": _odds_of(g.get("total"), ("under", "over"), offset=1),
                 }
             )
             for side, ours_pts, book_pts, got_pts in (
@@ -219,6 +223,7 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                         **judge(
                             float(ours_pts), book_pts, None if got_pts is None else float(got_pts), BANDS["team_pts"]
                         ),
+                        "odds": _odds_of(g.get(f"{side}_pts"), ("under", "over"), offset=1),
                     }
                 )
         out_games.append(
@@ -236,6 +241,21 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
             }
         )
     return {"games": out_games, "tally": tally(out_games)}
+
+
+def _odds_of(saved: list | None, sides: tuple[str, str], offset: int) -> list[dict]:
+    """The book's two prices for a game market, as saved (app/iddaa.py): win is [home, away];
+    margin [line, home, away]; totals [line, under, over]. sides names them in the row's own frame
+    ("pick"/"other" from our pick's side, or "under"/"over"); prices iddaa doesn't offer are left out."""
+    if not saved:
+        return []
+    if sides[0] in ("home", "away"):  # winner and margin: our pick first
+        prices = {"home": saved[offset], "away": saved[offset + 1]}
+        named = (("pick", prices[sides[0]]), ("other", prices[sides[1]]))
+    else:
+        named = ((sides[0], saved[offset]), (sides[1], saved[offset + 1]))
+    # Only prices over MIN_ODD (Can 2026-11-21: at or under it the book is closing a near-certainty).
+    return [{"side": side, "odd": float(odd)} for side, odd in named if odd and odd > iddaa.MIN_ODD]
 
 
 def ladder_rungs(

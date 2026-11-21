@@ -392,6 +392,274 @@
         }
       }
     },
+    "/api/admin/book-lines": {
+      "post": {
+        "summary": "Admin Book Lines",
+        "description": "Admins only: iddaa's lines for one NBA day as saved before each tip-off (app/iddaa.py),\nread into plain lines, and how the last look at iddaa went. Comparison only.",
+        "operationId": "admin_book_lines_api_admin_book_lines_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookLinesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookLines"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/book-compare": {
+      "post": {
+        "summary": "Admin Book Compare",
+        "description": "Admins: the comparison below, with how the last read of the sportsbook went.",
+        "operationId": "admin_book_compare_api_admin_book_compare_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookLinesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookCompare"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/book-compare": {
+      "post": {
+        "summary": "User Book Compare",
+        "description": "Anyone signed in (the Our Estimates page): the comparison below. A failed read of the sportsbook\nshows as failed, without the error text, which stays with the admins.",
+        "operationId": "user_book_compare_api_book_compare_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookLinesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookCompare"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/book-compare/record": {
+      "post": {
+        "summary": "Book Record",
+        "description": "Anyone signed in (Our Estimates): the latest saved nights as one record of the player rungs:\nthe value picks by our chance with their result at the book's odds, and how well each side's\nchances matched what happened (app/bookcompare.py record). Comparison only.",
+        "operationId": "book_record_api_book_compare_record_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookRecordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/errors/resolve": {
       "post": {
         "summary": "Resolve Error",
@@ -5375,6 +5643,515 @@
         ],
         "title": "Beneficiary"
       },
+      "BookCompare": {
+        "properties": {
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "days": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Days",
+            "description": "Days with saved iddaa lines"
+          },
+          "nights": {
+            "items": {
+              "$ref": "#/components/schemas/ScoreDayRef"
+            },
+            "type": "array",
+            "title": "Nights",
+            "description": "The same days with their US date and how many games"
+          },
+          "bands": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Bands",
+            "description": "How near the result a number must land to count as right"
+          },
+          "look": {
+            "$ref": "#/components/schemas/BookLook"
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/CompareGame"
+            },
+            "type": "array",
+            "title": "Games"
+          },
+          "tally": {
+            "items": {
+              "$ref": "#/components/schemas/CompareTally"
+            },
+            "type": "array",
+            "title": "Tally"
+          }
+        },
+        "type": "object",
+        "required": [
+          "season",
+          "day",
+          "date",
+          "days",
+          "nights",
+          "bands",
+          "look",
+          "games",
+          "tally"
+        ],
+        "title": "BookCompare"
+      },
+      "BookGame": {
+        "properties": {
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id",
+            "description": "ESPN game id"
+          },
+          "away": {
+            "type": "string",
+            "title": "Away"
+          },
+          "home": {
+            "type": "string",
+            "title": "Home"
+          },
+          "tip": {
+            "type": "string",
+            "title": "Tip"
+          },
+          "checked": {
+            "type": "string",
+            "title": "Checked",
+            "description": "iddaa's last look before tip-off"
+          },
+          "home_chance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Home Chance",
+            "description": "iddaa's chance the home team wins, margin taken out"
+          },
+          "margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin",
+            "description": "The home team's handicap: -5.5 = home by 6 or more"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "home_pts": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Home Pts"
+          },
+          "away_pts": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Away Pts"
+          },
+          "ours": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GameCall"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Our call for the game at the same look"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/BookPlayer"
+            },
+            "type": "array",
+            "title": "Players"
+          }
+        },
+        "type": "object",
+        "required": [
+          "game_id",
+          "away",
+          "home",
+          "tip",
+          "checked",
+          "home_chance",
+          "margin",
+          "total",
+          "home_pts",
+          "away_pts",
+          "players"
+        ],
+        "title": "BookGame"
+      },
+      "BookLines": {
+        "properties": {
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day"
+          },
+          "days": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Days",
+            "description": "Days with saved iddaa lines"
+          },
+          "look": {
+            "$ref": "#/components/schemas/BookLook"
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/BookGame"
+            },
+            "type": "array",
+            "title": "Games"
+          }
+        },
+        "type": "object",
+        "required": [
+          "season",
+          "day",
+          "days",
+          "look",
+          "games"
+        ],
+        "title": "BookLines"
+      },
+      "BookLinesRequest": {
+        "properties": {
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season (the year it ends); the current one when unset"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day",
+            "description": "NBA day (scoring period); the latest saved when unset"
+          }
+        },
+        "type": "object",
+        "title": "BookLinesRequest"
+      },
+      "BookLook": {
+        "properties": {
+          "checked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked",
+            "description": "The last time the watch read iddaa"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ok",
+            "description": "Whether that read worked; None before the first"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games",
+            "description": "NBA games iddaa listed then"
+          },
+          "matched": {
+            "type": "integer",
+            "title": "Matched",
+            "description": "Of those, how many matched an ESPN game"
+          }
+        },
+        "type": "object",
+        "required": [
+          "checked",
+          "ok",
+          "error",
+          "games",
+          "matched"
+        ],
+        "title": "BookLook"
+      },
+      "BookPlayer": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "As iddaa spells it"
+          },
+          "pts": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pts",
+            "description": "iddaa's line: the number he goes past half the time"
+          },
+          "reb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reb"
+          },
+          "ast": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ast"
+          },
+          "stl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stl"
+          },
+          "blk": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blk"
+          },
+          "three_pm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Three Pm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "BookPlayer"
+      },
+      "BookRecord": {
+        "properties": {
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "nights": {
+            "type": "integer",
+            "title": "Nights",
+            "description": "Saved nights read"
+          },
+          "rungs": {
+            "type": "integer",
+            "title": "Rungs",
+            "description": "Settled rungs with both chances"
+          },
+          "ours_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours Score",
+            "description": "Brier score of our rung chances (lower is better)"
+          },
+          "book_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book Score",
+            "description": "Brier score of the book's rung chances, margin taken out"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/RecordPicks"
+            },
+            "type": "array",
+            "title": "Picks"
+          },
+          "calibration": {
+            "items": {
+              "$ref": "#/components/schemas/RecordBucket"
+            },
+            "type": "array",
+            "title": "Calibration"
+          }
+        },
+        "type": "object",
+        "required": [
+          "season",
+          "nights",
+          "rungs",
+          "ours_score",
+          "book_score",
+          "picks",
+          "calibration"
+        ],
+        "title": "BookRecord"
+      },
+      "BookRecordRequest": {
+        "properties": {
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season (the year it ends); the current one when unset"
+          },
+          "nights": {
+            "type": "integer",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Nights",
+            "description": "How many of the latest saved nights",
+            "default": 30
+          }
+        },
+        "type": "object",
+        "title": "BookRecordRequest"
+      },
       "CategoryDetail": {
         "properties": {
           "category": {
@@ -5641,6 +6418,689 @@
         ],
         "title": "ClientError",
         "description": "A crash or unhandled error in the website, sent so it shows up in the error reports."
+      },
+      "CompareGame": {
+        "properties": {
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id"
+          },
+          "away": {
+            "type": "string",
+            "title": "Away"
+          },
+          "home": {
+            "type": "string",
+            "title": "Home"
+          },
+          "tip": {
+            "type": "string",
+            "title": "Tip"
+          },
+          "checked": {
+            "type": "string",
+            "title": "Checked",
+            "description": "The last look before tip-off"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "live",
+              "final"
+            ],
+            "title": "Status"
+          },
+          "away_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Away Score"
+          },
+          "home_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Home Score"
+          },
+          "markets": {
+            "items": {
+              "$ref": "#/components/schemas/CompareMarket"
+            },
+            "type": "array",
+            "title": "Markets"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/ComparePlayer"
+            },
+            "type": "array",
+            "title": "Players"
+          }
+        },
+        "type": "object",
+        "required": [
+          "game_id",
+          "away",
+          "home",
+          "tip",
+          "checked",
+          "status",
+          "away_score",
+          "home_score",
+          "markets",
+          "players"
+        ],
+        "title": "CompareGame"
+      },
+      "CompareMarket": {
+        "properties": {
+          "ours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours",
+            "description": "Our number, as it stood before tip-off"
+          },
+          "book": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book",
+            "description": "iddaa's line, margin taken out"
+          },
+          "actual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual",
+            "description": "What happened; None until the game is final"
+          },
+          "gap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gap",
+            "description": "Ours less iddaa's: + when we expect more"
+          },
+          "ours_hit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours Hit"
+          },
+          "book_hit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book Hit"
+          },
+          "closer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ours",
+                  "book",
+                  "tie"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closer",
+            "description": "Whose number was nearer the result"
+          },
+          "market": {
+            "type": "string",
+            "enum": [
+              "winner",
+              "margin",
+              "total",
+              "team_pts"
+            ],
+            "title": "Market",
+            "description": "winner: chances for our pick; margin: points by our pick; total; team_pts: one side's points"
+          },
+          "team": {
+            "type": "string",
+            "title": "Team",
+            "description": "Our pick (winner, margin) or the side (team_pts); empty for total"
+          },
+          "book_team": {
+            "type": "string",
+            "title": "Book Team",
+            "description": "winner only: iddaa's favourite",
+            "default": ""
+          },
+          "won": {
+            "type": "string",
+            "title": "Won",
+            "description": "winner only: who won, once final",
+            "default": ""
+          },
+          "odds": {
+            "items": {
+              "$ref": "#/components/schemas/CompareOdd"
+            },
+            "type": "array",
+            "title": "Odds",
+            "description": "The book's prices for this market at the last look; offered sides only"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ours",
+          "book",
+          "actual",
+          "gap",
+          "ours_hit",
+          "book_hit",
+          "closer",
+          "market",
+          "team"
+        ],
+        "title": "CompareMarket"
+      },
+      "CompareOdd": {
+        "properties": {
+          "side": {
+            "type": "string",
+            "enum": [
+              "pick",
+              "other",
+              "over",
+              "under"
+            ],
+            "title": "Side",
+            "description": "winner, margin: our pick's side or the other team's; total, team_pts: over or under the line"
+          },
+          "odd": {
+            "type": "number",
+            "title": "Odd",
+            "description": "The book's decimal odds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "side",
+          "odd"
+        ],
+        "title": "CompareOdd",
+        "description": "One of the book's prices for a game market (app/bookcompare.py _odds_of)."
+      },
+      "ComparePlayer": {
+        "properties": {
+          "ours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours",
+            "description": "Our number, as it stood before tip-off"
+          },
+          "book": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book",
+            "description": "iddaa's line, margin taken out"
+          },
+          "actual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual",
+            "description": "What happened; None until the game is final"
+          },
+          "gap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gap",
+            "description": "Ours less iddaa's: + when we expect more"
+          },
+          "ours_hit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours Hit"
+          },
+          "book_hit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book Hit"
+          },
+          "closer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ours",
+                  "book",
+                  "tie"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closer",
+            "description": "Whose number was nearer the result"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "player_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Id",
+            "description": "ESPN id; None when iddaa's name matched nobody"
+          },
+          "team": {
+            "type": "string",
+            "title": "Team",
+            "description": "NBA team abbreviation; empty when unknown"
+          },
+          "stat": {
+            "type": "string",
+            "enum": [
+              "three_pm",
+              "reb",
+              "ast",
+              "stl",
+              "blk",
+              "pts"
+            ],
+            "title": "Stat"
+          },
+          "played": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Played",
+            "description": "False when his team played without him; None before the result"
+          },
+          "ladder": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": "array",
+            "title": "Ladder",
+            "description": "iddaa's \"n+\" rungs: n and the chance he gets there, margin taken out"
+          },
+          "rungs": {
+            "items": {
+              "$ref": "#/components/schemas/CompareRung"
+            },
+            "type": "array",
+            "title": "Rungs",
+            "description": "The same rungs with odds, our chance and value"
+          },
+          "best_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Value",
+            "description": "The highest value among the rungs (+: worth a look)"
+          },
+          "rung_closer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ours",
+                  "book",
+                  "tie"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rung Closer",
+            "description": "Whose chances read the result better over the rungs (Brier score)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ours",
+          "book",
+          "actual",
+          "gap",
+          "ours_hit",
+          "book_hit",
+          "closer",
+          "name",
+          "player_id",
+          "team",
+          "stat",
+          "played"
+        ],
+        "title": "ComparePlayer"
+      },
+      "CompareRung": {
+        "properties": {
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "odd": {
+            "type": "number",
+            "title": "Odd",
+            "description": "The book's decimal odds"
+          },
+          "book": {
+            "type": "number",
+            "title": "Book",
+            "description": "The book's chance, its game margin taken out"
+          },
+          "ours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours",
+            "description": "Our chance from our line (five replayed seasons); None without a line"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value",
+            "description": "Average return of one unit at these odds if our chance is right: ours x odd - 1"
+          },
+          "hit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hit",
+            "description": "He got there; None until the result, or when he didn't play"
+          }
+        },
+        "type": "object",
+        "required": [
+          "n",
+          "odd",
+          "book",
+          "ours",
+          "value",
+          "hit"
+        ],
+        "title": "CompareRung",
+        "description": "One of the book's \"n+\" rungs with both chances (app/bookcompare.py ladder_rungs)."
+      },
+      "CompareTally": {
+        "properties": {
+          "stat": {
+            "type": "string",
+            "title": "Stat",
+            "description": "three_pm, reb, ast, stl, blk, pts, winner, margin, total, team_pts"
+          },
+          "lines": {
+            "type": "integer",
+            "title": "Lines"
+          },
+          "compared": {
+            "type": "integer",
+            "title": "Compared",
+            "description": "Rows with both numbers"
+          },
+          "median_gap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Gap"
+          },
+          "ours_above": {
+            "type": "integer",
+            "title": "Ours Above"
+          },
+          "judged": {
+            "type": "integer",
+            "title": "Judged",
+            "description": "Rows with a result"
+          },
+          "ours_hits": {
+            "type": "integer",
+            "title": "Ours Hits"
+          },
+          "book_hits": {
+            "type": "integer",
+            "title": "Book Hits"
+          },
+          "ours_closer": {
+            "type": "integer",
+            "title": "Ours Closer"
+          },
+          "book_closer": {
+            "type": "integer",
+            "title": "Book Closer"
+          },
+          "level": {
+            "type": "integer",
+            "title": "Level",
+            "description": "Results both missed by the same (within 0.1)"
+          },
+          "ours_miss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours Miss",
+            "description": "Average distance of ours from the result"
+          },
+          "book_miss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book Miss",
+            "description": "Average distance of iddaa's from the result"
+          },
+          "rungs": {
+            "type": "integer",
+            "title": "Rungs",
+            "description": "Settled player rungs",
+            "default": 0
+          },
+          "ours_rung_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours Rung Score",
+            "description": "Brier score of our rung chances (lower is better)"
+          },
+          "book_rung_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book Rung Score",
+            "description": "Brier score of the book's rung chances"
+          },
+          "ours_rung_closer": {
+            "type": "integer",
+            "title": "Ours Rung Closer",
+            "description": "Player rows where our rung chances read the result better",
+            "default": 0
+          },
+          "book_rung_closer": {
+            "type": "integer",
+            "title": "Book Rung Closer",
+            "description": "Player rows where the book's rung chances did",
+            "default": 0
+          },
+          "value_picks": {
+            "type": "integer",
+            "title": "Value Picks",
+            "description": "Settled rungs with value over 0 by our chance",
+            "default": 0
+          },
+          "value_hits": {
+            "type": "integer",
+            "title": "Value Hits",
+            "description": "Of those, how many he reached",
+            "default": 0
+          },
+          "value_return": {
+            "type": "number",
+            "title": "Value Return",
+            "description": "One unit on each value pick at the book's odds: net units",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "stat",
+          "lines",
+          "compared",
+          "median_gap",
+          "ours_above",
+          "judged",
+          "ours_hits",
+          "book_hits",
+          "ours_closer",
+          "book_closer",
+          "level",
+          "ours_miss",
+          "book_miss"
+        ],
+        "title": "CompareTally"
       },
       "CrowdedDay": {
         "properties": {
@@ -12011,6 +13471,106 @@
           "period"
         ],
         "title": "RecapWeekRef"
+      },
+      "RecordBucket": {
+        "properties": {
+          "side": {
+            "type": "string",
+            "enum": [
+              "ours",
+              "book"
+            ],
+            "title": "Side"
+          },
+          "chance_from": {
+            "type": "number",
+            "title": "Chance From"
+          },
+          "chance_to": {
+            "type": "number",
+            "title": "Chance To"
+          },
+          "rungs": {
+            "type": "integer",
+            "title": "Rungs"
+          },
+          "said": {
+            "type": "number",
+            "title": "Said",
+            "description": "The side's average chance in this bucket"
+          },
+          "happened": {
+            "type": "number",
+            "title": "Happened",
+            "description": "How often he reached the rung"
+          }
+        },
+        "type": "object",
+        "required": [
+          "side",
+          "chance_from",
+          "chance_to",
+          "rungs",
+          "said",
+          "happened"
+        ],
+        "title": "RecordBucket"
+      },
+      "RecordPicks": {
+        "properties": {
+          "stat": {
+            "type": "string",
+            "title": "Stat",
+            "description": "three_pm, reb, ast, stl, blk, pts or all"
+          },
+          "odds_from": {
+            "type": "number",
+            "title": "Odds From"
+          },
+          "odds_to": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Odds To",
+            "description": "None: and up"
+          },
+          "picks": {
+            "type": "integer",
+            "title": "Picks",
+            "description": "Settled rungs with value over 0 by our chance"
+          },
+          "hits": {
+            "type": "integer",
+            "title": "Hits",
+            "description": "Of those, how many he reached"
+          },
+          "said": {
+            "type": "number",
+            "title": "Said",
+            "description": "Our average chance on those picks"
+          },
+          "net": {
+            "type": "number",
+            "title": "Net",
+            "description": "One unit on each at the book's odds: net units (+ = they paid)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stat",
+          "odds_from",
+          "odds_to",
+          "picks",
+          "hits",
+          "said",
+          "net"
+        ],
+        "title": "RecordPicks"
       },
       "RepliesPage": {
         "properties": {
