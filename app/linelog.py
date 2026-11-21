@@ -49,7 +49,7 @@ STATS: tuple[tuple[str, int], ...] = (
 )
 # The stats the read-back summarises (makes and attempts stay saved for FG% and FT% later).
 SUMMARY = ("minutes", "pts", "reb", "ast", "stl", "blk", "three_pm", "to")
-AHEAD = timedelta(hours=2)  # days with a game starting this soon are looked at
+AHEAD = timedelta(hours=18)  # days with a game starting this soon are looked at: the whole night, like the iddaa log
 
 
 def days_to_watch(schedule: Schedule, now: datetime) -> list[int]:

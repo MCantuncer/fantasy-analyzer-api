@@ -41,7 +41,8 @@ def line(pts: float, minutes: float = 30.0) -> NextGameLine:
 
 def test_days_with_a_game_tipping_off_soon_are_looked_at():
     sched = schedule()
-    assert linelog.days_to_watch(sched, T0 - timedelta(hours=5)) == []
+    assert linelog.days_to_watch(sched, T0 - timedelta(hours=19)) == []
+    assert linelog.days_to_watch(sched, T0 - timedelta(hours=12)) == [30]  # the whole night, from the morning
     assert linelog.days_to_watch(sched, T0 - timedelta(hours=1)) == [30]
     assert linelog.days_to_watch(sched, T0 + timedelta(hours=1)) == [30]  # CHI-CLE still to go
     assert linelog.days_to_watch(sched, T0 + timedelta(hours=3)) == []
