@@ -2075,6 +2075,80 @@ class BookLines(BaseModel):
     games: list[BookGame]
 
 
+class CompareRow(BaseModel):
+    """One number of ours beside iddaa's and the result. ✓ (``*_hit``) when the result lands within
+    the stat's band of that number (app/bookcompare.py BANDS), judged the same for both sides."""
+
+    ours: float | None = Field(description="Our number, as it stood before tip-off")
+    book: float | None = Field(description="iddaa's line, margin taken out")
+    actual: float | None = Field(description="What happened; None until the game is final")
+    gap: float | None = Field(description="Ours less iddaa's: + when we expect more")
+    ours_hit: bool | None
+    book_hit: bool | None
+    closer: Literal["ours", "book", "tie"] | None = Field(description="Whose number was nearer the result")
+
+
+class ComparePlayer(CompareRow):
+    name: str
+    player_id: int | None = Field(description="ESPN id; None when iddaa's name matched nobody")
+    team: str = Field(description="NBA team abbreviation; empty when unknown")
+    stat: Literal["three_pm", "reb", "ast", "stl", "blk", "pts"]
+    played: bool | None = Field(description="False when his team played without him; None before the result")
+    ladder: list[tuple[int, float]] = Field(
+        default_factory=list, description='iddaa\'s "n+" rungs: n and the chance he gets there, margin taken out'
+    )
+
+
+class CompareMarket(CompareRow):
+    market: Literal["winner", "margin", "total", "team_pts"] = Field(
+        description="winner: chances for our pick; margin: points by our pick; total; team_pts: one side's points"
+    )
+    team: str = Field(description="Our pick (winner, margin) or the side (team_pts); empty for total")
+    book_team: str = Field(default="", description="winner only: iddaa's favourite")
+    won: str = Field(default="", description="winner only: who won, once final")
+
+
+class CompareGame(BaseModel):
+    game_id: int
+    away: str
+    home: str
+    tip: str
+    checked: str = Field(description="The last look before tip-off")
+    status: Literal["scheduled", "live", "final"]
+    away_score: int | None
+    home_score: int | None
+    markets: list[CompareMarket]
+    players: list[ComparePlayer]
+
+
+class CompareTally(BaseModel):
+    stat: str = Field(description="three_pm, reb, ast, stl, blk, pts, winner, margin, total, team_pts")
+    lines: int
+    compared: int = Field(description="Rows with both numbers")
+    median_gap: float | None
+    ours_above: int
+    judged: int = Field(description="Rows with a result")
+    ours_hits: int
+    book_hits: int
+    ours_closer: int
+    book_closer: int
+    level: int = Field(description="Results both missed by the same (within 0.1)")
+    ours_miss: float | None = Field(description="Average distance of ours from the result")
+    book_miss: float | None = Field(description="Average distance of iddaa's from the result")
+
+
+class BookCompare(BaseModel):
+    season: int
+    day: int | None
+    date: str | None
+    days: list[int] = Field(description="Days with saved iddaa lines")
+    nights: list[ScoreDayRef] = Field(description="The same days with their US date and how many games")
+    bands: dict[str, float] = Field(description="How near the result a number must land to count as right")
+    look: BookLook
+    games: list[CompareGame]
+    tally: list[CompareTally]
+
+
 class UsageRequest(BaseModel):
     days: int = Field(default=30, ge=1, le=366, description="How many days back, today included")
 

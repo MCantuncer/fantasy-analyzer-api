@@ -1,0 +1,282 @@
+"""iddaa's lines beside ours and what happened, for the admin comparison page.
+
+Can 2026-11-21: "We're not trying to match the sportsbook, we're trying to match the actual score."
+So a number is judged against the result, never by which side of iddaa's line the result fell:
+- a number is right (✓) when the result lands within BANDS of it (points within 5, rebounds or
+  assists within 2...), and iddaa's number is judged by the same band;
+- "closer" says whose number was nearer the result (or a tie);
+- the gap is ours less iddaa's: + when we expect more. The page lists the biggest + gaps first.
+COMPARISON ONLY: nothing here feeds the model.
+
+Inputs, all saved before tip-off: iddaa's record for the day (app/iddaa.py, with our call at the
+same look), the line log's record (app/linelog.py: our player lines), and the day's games (Scores'
+day body: final scores and everyone's line once played).
+"""
+
+from __future__ import annotations
+
+import re
+import statistics
+from collections.abc import Iterable
+
+from app import iddaa, linelog
+
+# How near the result a number must land to count as right.
+BANDS = {
+    "pts": 5.0,
+    "reb": 2.0,
+    "ast": 2.0,
+    "stl": 1.0,
+    "blk": 1.0,
+    "three_pm": 1.0,
+    "team_pts": 8.0,
+    "total": 12.0,
+    "margin": 8.0,
+}
+PLAYER_STATS = ("three_pm", "reb", "ast", "stl", "blk", "pts")  # the site's stat order
+# The day body's names for the player stats.
+DAY_STAT = {"pts": "pts", "reb": "reb", "ast": "ast", "stl": "stl", "blk": "blk", "three_pm": "tpm"}
+OURS_AT = {name: i for i, (name, _) in enumerate(linelog.STATS)}
+LEVEL = 0.1  # misses this close read as level
+SUFFIX = re.compile(r"( (jr|sr|ii|iii|iv|v))+$")
+
+
+def name_key(name: str) -> str:
+    """A name for matching iddaa's spelling to ESPN's: folded, suffixes off, initials run together
+    ("V.J. Edgecombe" and "VJ Edgecombe" both read "vj edgecombe")."""
+    words = SUFFIX.sub("", iddaa.fold(name)).split()
+    out: list[str] = []
+    for w in words:
+        if len(words) > 2 and len(w) == 1 and len(out) == 1 and len(out[0]) <= 2:
+            out[0] += w
+        else:
+            out.append(w)
+    return " ".join(out)
+
+
+def match_names(book_names: Iterable[str], espn: dict[int, str]) -> dict[str, int]:
+    """iddaa name -> ESPN player id, among the players of one game (espn: id -> name). First the
+    whole name; failing that, a unique same last name with the same first initial."""
+    keys: dict[str, list[int]] = {}
+    for pid, name in espn.items():
+        keys.setdefault(name_key(name), []).append(pid)
+    out = {}
+    for name in book_names:
+        key = name_key(name)
+        hit = keys.get(key)
+        if hit and len(hit) == 1:
+            out[name] = hit[0]
+            continue
+        words = key.split()
+        if len(words) < 2:
+            continue
+        near = [
+            pid
+            for k, pids in keys.items()
+            for pid in pids
+            if k.split() and k.split()[-1] == words[-1] and k[0] == words[0][0]
+        ]
+        if len(near) == 1:
+            out[name] = near[0]
+    return out
+
+
+def judge(ours: float | None, book: float | None, actual: float | None, band: float) -> dict:
+    """One number pair against the result: the gap, each side's ✓ (None until there is a result,
+    or when that side has no number) and who was closer."""
+    gap = round(ours - book, 1) if ours is not None and book is not None else None
+    out = {"ours": ours, "book": book, "actual": actual, "gap": gap, "ours_hit": None, "book_hit": None}
+    out["closer"] = None
+    if actual is None:
+        return out
+    if ours is not None:
+        out["ours_hit"] = abs(actual - ours) <= band
+    if book is not None:
+        out["book_hit"] = abs(actual - book) <= band
+    if ours is not None and book is not None:
+        a, b = abs(actual - ours), abs(actual - book)
+        out["closer"] = "tie" if abs(a - b) <= LEVEL else ("ours" if a < b else "book")
+    return out
+
+
+def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: dict[int, str]) -> dict:
+    """The day's comparison: per game its match rows and player rows, and per stat a tally.
+
+    book: iddaa's record (app/iddaa.py); lines: the line log's record; day: Scores' day body (None
+    before the games); names: ESPN player id -> name, for players not yet in a box score."""
+    games_played = {g["id"]: g for g in (day or {}).get("games", [])}
+    ours_lines = (lines or {}).get("lines", {})
+    out_games = []
+    for gid, g in sorted(((book or {}).get("games") or {}).items(), key=lambda kv: (kv[1]["tip"], kv[0])):
+        read = iddaa.readout(g)
+        margin = iddaa.overround(g)
+        played = games_played.get(int(gid)) or {}
+        final = played.get("status") == "final"
+        a_pts = (played.get("away") or {}).get("score") if final else None
+        h_pts = (played.get("home") or {}).get("score") if final else None
+        teams = {g["away"], g["home"]}
+
+        # Players: everyone of these two teams we know a name for.
+        box = {ln["player_id"]: ln for ln in played.get("lines", [])} if final else {}
+        known = {pid: ln["name"] for pid, ln in box.items()}
+        for pid, (team, *_) in ours_lines.items():
+            if team in teams and int(pid) not in known:
+                known[int(pid)] = names.get(int(pid), "")
+        known = {pid: n for pid, n in known.items() if n}
+        ids = match_names(read["players"], known)
+        players = []
+        for name, stats in read["players"].items():
+            pid = ids.get(name)
+            mine = ours_lines.get(str(pid)) if pid is not None else None
+            got = box.get(pid) if pid is not None else None
+            for stat in PLAYER_STATS:
+                if stat not in stats:
+                    continue
+                ours = mine[1 + OURS_AT[stat]] if mine else None
+                if final and pid is not None:
+                    actual = float(got[DAY_STAT[stat]]) if got else None  # no line: he didn't play
+                else:
+                    actual = None
+                players.append(
+                    {
+                        "name": known.get(pid, name) if pid else name,
+                        "player_id": pid,
+                        "team": (mine[0] if mine else (got or {}).get("pro_team_id")),
+                        "stat": stat,
+                        "played": None if not final or pid is None else got is not None,
+                        **judge(ours, stats[stat], actual, BANDS[stat]),
+                        "ladder": [
+                            [n, round(min(1.0, 1 / (odd * margin)), 3)]
+                            for n, odd in (g.get("players") or {}).get(name, {}).get(stat, [])
+                        ],
+                    }
+                )
+
+        # The game: winner, margin, total, team points.
+        markets = []
+        ours_call = g.get("ours")
+        chance_home = read["home_chance"]
+        if ours_call:
+            away_o, home_o, sure = ours_call
+            pick_home = home_o > away_o
+            ours_home_chance = sure if pick_home else 1 - sure
+            won_home = None if a_pts is None else h_pts > a_pts
+            markets.append(
+                {
+                    "market": "winner",
+                    "pick": g["home"] if pick_home else g["away"],
+                    "book_pick": None if chance_home is None else (g["home"] if chance_home >= 0.5 else g["away"]),
+                    "ours": round(sure, 3),
+                    "book": None
+                    if chance_home is None
+                    else round(chance_home if pick_home else 1 - chance_home, 3),  # iddaa's chance for our pick
+                    "gap": None
+                    if chance_home is None
+                    else round((ours_home_chance - chance_home) * (1 if pick_home else -1), 3),
+                    "actual": None,
+                    "won": None if won_home is None else (g["home"] if won_home else g["away"]),
+                    "ours_hit": None if won_home is None else won_home == pick_home,
+                    "book_hit": None if won_home is None or chance_home is None else won_home == (chance_home >= 0.5),
+                    # Nearer: whoever gave the team that won the higher chance (level within 1 point).
+                    "closer": None
+                    if won_home is None or chance_home is None
+                    else _winner_closer(ours_home_chance, chance_home, won_home),
+                }
+            )
+            # Margin, from our pick's side: + he wins by that much.
+            sign = 1 if pick_home else -1
+            book_margin = None if read["margin"] is None else -read["margin"] * sign
+            actual_margin = None if a_pts is None else (h_pts - a_pts) * sign
+            markets.append(
+                {
+                    "market": "margin",
+                    "pick": g["home"] if pick_home else g["away"],
+                    **judge(float((home_o - away_o) * sign), book_margin, actual_margin, BANDS["margin"]),
+                }
+            )
+            markets.append(
+                {
+                    "market": "total",
+                    **judge(
+                        float(away_o + home_o),
+                        read["total"],
+                        None if a_pts is None else float(a_pts + h_pts),
+                        BANDS["total"],
+                    ),
+                }
+            )
+            for side, ours_pts, book_pts, got_pts in (
+                ("away", away_o, read["away_pts"], a_pts),
+                ("home", home_o, read["home_pts"], h_pts),
+            ):
+                markets.append(
+                    {
+                        "market": "team_pts",
+                        "pick": g[side],
+                        **judge(
+                            float(ours_pts), book_pts, None if got_pts is None else float(got_pts), BANDS["team_pts"]
+                        ),
+                    }
+                )
+        out_games.append(
+            {
+                "game_id": int(gid),
+                "away": g["away"],
+                "home": g["home"],
+                "tip": g["tip"],
+                "checked": g["checked"],
+                "status": played.get("status", "scheduled"),
+                "away_score": a_pts,
+                "home_score": h_pts,
+                "markets": markets,
+                "players": players,
+            }
+        )
+    return {"games": out_games, "tally": tally(out_games)}
+
+
+def _winner_closer(ours_home: float, book_home: float, won_home: bool) -> str:
+    ours, book = (ours_home, book_home) if won_home else (1 - ours_home, 1 - book_home)
+    return "tie" if abs(ours - book) <= 0.01 else ("ours" if ours > book else "book")
+
+
+def _mean_miss(rows: list[dict], side: str) -> float | None:
+    misses = [abs(r["actual"] - r[side]) for r in rows if r.get("actual") is not None and r.get(side) is not None]
+    return round(sum(misses) / len(misses), 2) if misses else None
+
+
+def tally(games: list[dict]) -> list[dict]:
+    """Per stat and market: how many rows, the median gap, how many have ours above iddaa, and once
+    results are in, how many each side got right and who was closer how often."""
+    rows: dict[str, list[dict]] = {}
+    for g in games:
+        for p in g["players"]:
+            rows.setdefault(p["stat"], []).append(p)
+        for m in g["markets"]:
+            rows.setdefault(m["market"], []).append(m)
+    order = [*PLAYER_STATS, "winner", "margin", "total", "team_pts"]
+    out = []
+    for key in order:
+        rs = rows.get(key)
+        if not rs:
+            continue
+        gaps = [r["gap"] for r in rs if r["gap"] is not None]
+        judged = [r for r in rs if r["ours_hit"] is not None or r["book_hit"] is not None]
+        out.append(
+            {
+                "stat": key,
+                "lines": len(rs),
+                "compared": len(gaps),
+                "median_gap": round(statistics.median(gaps), 2) if gaps else None,
+                "ours_above": sum(1 for x in gaps if x > 0),
+                "judged": len(judged),
+                "ours_hits": sum(1 for r in judged if r["ours_hit"]),
+                "book_hits": sum(1 for r in judged if r["book_hit"]),
+                "ours_closer": sum(1 for r in judged if r["closer"] == "ours"),
+                "book_closer": sum(1 for r in judged if r["closer"] == "book"),
+                "level": sum(1 for r in judged if r["closer"] == "tie"),
+                "ours_miss": _mean_miss(judged, "ours"),
+                "book_miss": _mean_miss(judged, "book"),
+            }
+        )
+    return out
