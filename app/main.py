@@ -22,7 +22,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import benched, linelog, playchance, pregame, schemas
+from app import benched, iddaa, linelog, playchance, pregame, schemas
 from app import errors as error_reports
 from app.accounts import (
     PASSWORD_MIN,
@@ -212,6 +212,9 @@ PREGAME_WATCH_SECONDS = float(os.getenv("PREGAME_WATCH_SECONDS", "600"))
 # public league (LINE_LOG_LEAGUE_ID, else the sample league), kept as it stood at tip-off; the box
 # build fills in results once the night settles. 0 turns it off.
 LINE_LOG_SECONDS = float(os.getenv("LINE_LOG_SECONDS", "900"))
+# The iddaa log (app/iddaa.py): in the hours before tip-off, iddaa's NBA lines, each game kept as it
+# stood at tip-off, for the admin comparison with ours. Comparison only. 0 turns it off.
+BOOK_LOG_SECONDS = float(os.getenv("BOOK_LOG_SECONDS", "900"))
 LINE_RESULTS_WAIT = 3  # days a settled night waits for its game rows before it is closed without them
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
 NOT_LINKED = {"code": "not_linked", "message": "Verify your team in this league first."}
@@ -413,6 +416,8 @@ def create_app(
     app.state.sample_reads = TTLCache(300, max_items=128)
     app.state.sample_analyse = lambda lg, team_id: Analyzer(lg, team_id, now=app.state.now()).report()
     app.state.line_log_league_id = env_int("LINE_LOG_LEAGUE_ID")
+    app.state.book_log = {"checked": None, "ok": None, "error": None, "games": 0, "matched": 0}
+    app.state.iddaa_transport = None  # tests answer for iddaa
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
     app.add_middleware(
@@ -885,6 +890,42 @@ def create_app(
                 )
                 for r in rows
             ],
+        )
+
+    @app.post("/api/admin/book-lines", response_model=schemas.BookLines, responses={403: {"model": schemas.ErrorBody}})
+    async def admin_book_lines(
+        body: schemas.BookLinesRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.BookLines:
+        """Admins only: iddaa's lines for one NBA day as saved before each tip-off (app/iddaa.py),
+        read into plain lines, and how the last look at iddaa went. Comparison only."""
+        await admin_user(authorization)
+        season = body.season or current_season(app.state.now())
+        days = await run_in_threadpool(app.state.store.book_line_days, season)
+        day = body.day or (days[-1] if days else None)
+        record = await run_in_threadpool(app.state.store.get_book_lines, season, day) if day else None
+        games = []
+        for gid, g in sorted(((record or {}).get("games") or {}).items(), key=lambda kv: (kv[1]["tip"], kv[0])):
+            read = iddaa.readout(g)
+            games.append(
+                schemas.BookGame(
+                    game_id=int(gid),
+                    away=PRO_TEAM_ABBREV.get(g["away"], ""),
+                    home=PRO_TEAM_ABBREV.get(g["home"], ""),
+                    tip=g["tip"],
+                    checked=g["checked"],
+                    home_chance=read["home_chance"],
+                    margin=read["margin"],
+                    total=read["total"],
+                    home_pts=read["home_pts"],
+                    away_pts=read["away_pts"],
+                    ours=schemas.GameCall(away=g["ours"][0], home=g["ours"][1], chance=g["ours"][2])
+                    if g.get("ours")
+                    else None,
+                    players=[schemas.BookPlayer(name=n, **v) for n, v in sorted(read["players"].items())],
+                )
+            )
+        return schemas.BookLines(
+            season=season, day=day, days=days, look=schemas.BookLook(**app.state.book_log), games=games
         )
 
     @app.post("/api/admin/errors/resolve", responses={403: {"model": schemas.ErrorBody}})
@@ -1519,6 +1560,52 @@ def create_app(
             except Exception:
                 logging.getLogger(__name__).warning("line log watch failed", exc_info=True)
 
+    async def book_log_sweep() -> list[int]:
+        """One look at iddaa: the days it wrote (none when no game tips off soon). Each game looked at
+        also keeps our call as it stood then (["ours"]: away, home, chance), so both sides are frozen
+        at the same moment. What happened is kept in app.state.book_log for the admin read, so a host
+        iddaa refuses shows up there."""
+        now = app.state.now()
+        season = current_season(now)
+        raw = await pro_schedule(season)
+        if raw is None:
+            return []
+        sched = parse_schedule(raw)
+        if not any(now < g.start <= now + iddaa.AHEAD for games in sched.games.values() for g in games):
+            return []
+        status = app.state.book_log
+        status["checked"] = now.isoformat(timespec="seconds")
+        try:
+            looks = await iddaa.fetch(app.state.iddaa_transport)
+        except Exception as exc:  # refused, down or changed: say so and try again next time
+            status.update(ok=False, error=f"{type(exc).__name__}: {exc}"[:300])
+            raise
+        games = {i: g for i, (e, _) in enumerate(looks) if (g := iddaa.match_game(e, sched)) is not None}
+        records = {}
+        for day in {g.day for g in games.values()}:
+            records[day] = await run_in_threadpool(app.state.store.get_book_lines, season, day)
+        changed = iddaa.update(records, sched, looks, now)
+        box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
+        for day, record in changed.items():
+            for g in record["games"].values():
+                if g["checked"] == status["checked"] and box is not None:  # our call beside iddaa's, same look
+                    c = box.call(day, g["away"], g["home"])
+                    g["ours"] = [c.away, c.home, round(c.chance, 3)]
+            await run_in_threadpool(app.state.store.save_book_lines, season, day, record)
+        status.update(ok=True, error=None, games=len(looks), matched=len(games))
+        return sorted(changed)
+
+    app.state.book_log_sweep = book_log_sweep
+
+    async def watch_book_log() -> None:
+        await asyncio.sleep(min(30.0, BOOK_LOG_SECONDS))  # a first look soon after a deploy: is iddaa reachable?
+        while True:
+            try:
+                await book_log_sweep()
+            except Exception:
+                logging.getLogger(__name__).warning("iddaa log watch failed", exc_info=True)
+            await asyncio.sleep(BOOK_LOG_SECONDS)
+
     async def sat_sweep() -> list[int]:
         """One look for finished nights whose box scores haven't been read for who sat out and why
         (app/benched.py): the nights it saved. A night ESPN can't give in full is tried again next time."""
@@ -1597,11 +1684,12 @@ def create_app(
         pregame_watch = asyncio.create_task(watch_pregame()) if PREGAME_WATCH_SECONDS > 0 else None
         box_watch = asyncio.create_task(watch_box()) if BOX_WATCH_SECONDS > 0 else None
         line_watch = asyncio.create_task(watch_line_log()) if LINE_LOG_SECONDS > 0 else None
+        book_watch = asyncio.create_task(watch_book_log()) if BOOK_LOG_SECONDS > 0 else None
         usage_flush = asyncio.create_task(flush_usage_every_minute())
         try:
             yield
         finally:
-            for task in (watch, news_watch, pregame_watch, box_watch, line_watch):
+            for task in (watch, news_watch, pregame_watch, box_watch, line_watch, book_watch):
                 if task is not None:
                     task.cancel()
             usage_flush.cancel()
