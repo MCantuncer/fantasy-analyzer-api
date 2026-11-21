@@ -1259,8 +1259,8 @@ class PregameRequest(LeagueRequest):
 
 class PregameTerm(BaseModel):
     kind: Literal["matchup", "home_court", "three_point_luck", "back_to_back"] = Field(
-        description="matchup: pace, offense and defense; home_court; three_point_luck: three-point shooting "
-        "on both ends that shouldn't last; back_to_back"
+        description="matchup: pace, offense and defense, and who plays tonight; home_court; three_point_luck: "
+        "three-point shooting on both ends that shouldn't last; back_to_back"
     )
     points: int = Field(description="Points of the called margin, from the picked side; the terms add up to it")
     raw: float
@@ -1275,6 +1275,13 @@ class PregameCallPart(BaseModel):
     opp_three_luck: float = Field(description="The opponent's three-point defense luck that shouldn't last")
     own_three_luck: float = Field(description="Its own three-point shooting luck that shouldn't last")
     back_to_back: float
+    lineup: float = Field(
+        default=0.0, description="Tonight's lineup's talent against the call (analysis/lineupcall.py)"
+    )
+    absences: float = Field(
+        default=0.0,
+        description="Regulars missing tonight (-) or playing more than usual (+) against how often they play",
+    )
     possessions: float = Field(description="Trips each this game: its pace x the opponent's / the league's")
     offense: float = Field(description="Its points a trip so far (recent games count most)")
     defense_allowed: float = Field(description="Points a trip the opponent allows")

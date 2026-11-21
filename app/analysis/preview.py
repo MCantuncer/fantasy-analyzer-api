@@ -28,7 +28,7 @@ from app.schemas import NextGameLine
 
 # The margin's pieces, in the order the box lists them: gamescore.parts' keys each one sums.
 MARGIN_TERMS: dict[str, tuple[str, ...]] = {
-    "matchup": ("ratings",),
+    "matchup": ("ratings", "lineup", "absences"),
     "home_court": ("home",),
     "three_point_luck": ("opp_three_luck", "own_three_luck"),
     "back_to_back": ("back_to_back",),
@@ -58,7 +58,7 @@ def margin(away: dict[str, float], home: dict[str, float], away_call: int, home_
     margin (``home_call`` - ``away_call``, whole points, never tied)."""
     pick = "home" if home_call > away_call else "away"
     sign = 1.0 if pick == "home" else -1.0
-    raw = {k: sign * sum(home[p] - away[p] for p in keys) for k, keys in MARGIN_TERMS.items()}
+    raw = {k: sign * sum(home.get(p, 0.0) - away.get(p, 0.0) for p in keys) for k, keys in MARGIN_TERMS.items()}
     target = abs(home_call - away_call)
     rounded = largest_remainder(list(raw.values()), target)
     total = sign * (sum(home.values()) - sum(away.values()))

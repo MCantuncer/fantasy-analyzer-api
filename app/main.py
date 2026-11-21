@@ -2682,19 +2682,30 @@ def create_app(
             for d, gs in week_fixtures(sched, now)
         ]
 
-    def game_calls(season: int, data: dict) -> dict[int, schemas.GameCall]:
-        """Our call for each game of the day, from the season's league box (gamebox.Box.call), or the
-        last one built while the box watch builds it again. None until a box has been built."""
+    async def ruled_out(season: int, day: int) -> set[int]:
+        """Players ESPN tagged OUT for ``day``'s games, as the tags stood before each tip-off
+        (app/pregame.py): who plays tonight in Our call. Empty when nothing was saved for the day."""
+        try:
+            record = await run_in_threadpool(app.state.store.get_pregame, season, day)
+        except Exception:  # the call stands without lineup news
+            logging.getLogger(__name__).warning("pregame tags unreadable for %s day %s", season, day, exc_info=True)
+            return set()
+        return pregame.ruled_out(record)
+
+    def game_calls(season: int, data: dict, out: set[int]) -> dict[int, schemas.GameCall]:
+        """Our call for each game of the day, from the season's league box (gamebox.Box.call) and who
+        is ruled out (``out``), or the last box built while the box watch builds it again. None until a
+        box has been built."""
         box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
         if box is None:
             return {}
-        out = {}
+        out_calls = {}
         for g in data["games"]:
             away, home = g["away"]["pro_team_id"], g["home"]["pro_team_id"]
             if away and home:
-                c = box.call(data["day"], away, home)
-                out[g["id"]] = schemas.GameCall(away=c.away, home=c.home, chance=round(c.chance, 3))
-        return out
+                c = box.call(data["day"], away, home, out)
+                out_calls[g["id"]] = schemas.GameCall(away=c.away, home=c.home, chance=round(c.chance, 3))
+        return out_calls
 
     def score_page(
         league_id: int,
@@ -2705,8 +2716,9 @@ def create_app(
         week: list[schemas.FixtureDay],
         now: datetime,
         complete: bool,
+        out: set[int],
     ) -> schemas.ScoreDay:
-        calls = game_calls(season, data)
+        calls = game_calls(season, data, out)
         games = [
             schemas.Game(
                 **{
@@ -2755,7 +2767,8 @@ def create_app(
         team = lg.team(body.team_id) if body.team_id else None
         sits = await week_sits(body.league_id, season, creds, team.id) if team and body.with_sits else {}
         week = week_days(sched, now, team.roster if team else [], sits)
-        return score_page(body.league_id, season, sched, data, owners, week, now, complete=True)
+        out = await ruled_out(season, day)
+        return score_page(body.league_id, season, sched, data, owners, week, now, complete=True, out=out)
 
     @app.post("/api/scores/games", response_model=schemas.ScoreDay, responses={401: {"model": schemas.ErrorBody}})
     async def score_games(
@@ -2801,7 +2814,8 @@ def create_app(
             team = lg.team(body.team_id) if body.team_id else None
             roster = team.roster if team else []
         week = week_days(sched, now, roster, {})
-        return score_page(body.league_id, season, sched, data, owners, week, now, complete=complete)
+        out = await ruled_out(season, day)
+        return score_page(body.league_id, season, sched, data, owners, week, now, complete=complete, out=out)
 
     @app.post(
         "/api/scores/pregame",
@@ -2904,9 +2918,11 @@ def create_app(
                 else schemas.PregameTeamLine(shown=0, rest=0, total=0, call=round(raw, 1), gap=0),
             )
 
+        ruled = await ruled_out(season, game.day)
+
         def build() -> schemas.PregameBox:
-            away_parts, home_parts = box.call_parts(game.day, game.away, game.home)
-            c = box.call(game.day, game.away, game.home)
+            away_parts, home_parts = box.call_parts(game.day, game.away, game.home, ruled)
+            c = box.call(game.day, game.away, game.home, ruled)
             mg = preview.margin(away_parts, home_parts, c.away, c.home)
             return schemas.PregameBox(
                 league_id=body.league_id,

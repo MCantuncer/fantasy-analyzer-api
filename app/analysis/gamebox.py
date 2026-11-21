@@ -42,7 +42,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from app.analysis import gamescore
+from app.analysis import gamescore, lineupcall
 
 PTS, BLK, STL, AST, REB, TO, FGM, FGA, FTM, FTA, TPM = 0, 1, 2, 3, 6, 11, 13, 14, 15, 16, 17
 MINUTES, GS, GP = 40, 41, 42  # GS: started the game
@@ -299,7 +299,9 @@ class Box:
     scores: gamescore.Scores | None = None  # every team's scoring so far, for its expected score
     team_games: list[gamescore.TeamGame] = field(default_factory=list, repr=False)  # for calls on past days
     score_start: gamescore.SeasonEnd | None = field(default=None, repr=False)
+    lineups: lineupcall.Lineups | None = field(default=None, repr=False)  # who played, for who plays tonight
     _day_scores: dict[int, gamescore.Scores] = field(default_factory=dict, repr=False, compare=False)
+    _gaps: dict[int, float | None] = field(default_factory=dict, repr=False, compare=False)
 
     def day_scores(self, day: int) -> gamescore.Scores:
         """Every team's scoring from the games before ``day``: what calls on that day stand on."""
@@ -309,18 +311,49 @@ class Box:
             self._day_scores[day] = s
         return s
 
-    def call(self, day: int, away: int, home: int) -> gamescore.Call:
-        """Our call for a game on ``day`` from the games before it: the same before tip-off and after."""
-        a, h = self.call_parts(day, away, home)
+    def call(self, day: int, away: int, home: int, out: set[int] | None = None) -> gamescore.Call:
+        """Our call for a game on ``day`` from the games before it and who is ruled out (``out``: ESPN's
+        OUT tags as they stood before tip-off), so the same before tip-off and after."""
+        a, h = self.call_parts(day, away, home, out)
         return gamescore.call(sum(a.values()), sum(h.values()))
 
-    def call_parts(self, day: int, away: int, home: int) -> tuple[dict[str, float], dict[str, float]]:
-        """Each side's expected points in a game on ``day``, piece by piece (gamescore.parts)."""
+    def call_parts(
+        self, day: int, away: int, home: int, out: set[int] | None = None
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        """Each side's expected points in a game on ``day``, piece by piece (gamescore.parts), with who
+        plays tonight (lineupcall.py): the lineup's talent and the regulars missing."""
         s = self.day_scores(day)
-        return (
-            gamescore.parts(s, away, home, False, self.back_to_back(away, day)),
-            gamescore.parts(s, home, away, True, self.back_to_back(home, day)),
-        )
+        a = gamescore.parts(s, away, home, False, self.back_to_back(away, day))
+        h = gamescore.parts(s, home, away, True, self.back_to_back(home, day))
+        if self.lineups is not None:
+            a |= self.lineup_parts(day, away, sum(a.values()), out or set())
+            h |= self.lineup_parts(day, home, sum(h.values()), out or set())
+        return a, h
+
+    def lineup_parts(self, day: int, team: int, raw: float, out: set[int]) -> dict[str, float]:
+        """The two pieces of who plays tonight for ``team`` (``raw``: its call without them)."""
+        lu = self.lineups
+        assert lu is not None
+        gap = self.usual_gap(day)
+        talent = lu.talent(team, day, [p for p in lu.rotation(team, day) if p not in out])
+        lineup = lineupcall.TALENT * (talent - raw - gap) if talent is not None and gap is not None else 0.0
+        absences = lineupcall.ABSENT * lu.absent(team, day, out, gamescore.HALF_LIFE)
+        return {"lineup": lineup, "absences": absences}
+
+    def usual_gap(self, day: int) -> float | None:
+        """The season's usual gap between a lineup's talent and the call, from the games before ``day``."""
+        if day not in self._gaps:
+            lu = self.lineups
+            if lu is None:
+                return None
+
+            def raw(d: int, team: int, opponent: int) -> float:
+                g = next((x for x in self.schedule.get(team, []) if x.day == d), None)
+                home = None if g is None else g.home
+                return gamescore.expected(self.day_scores(d), team, opponent, home, self.back_to_back(team, d))
+
+            self._gaps[day] = lineupcall.usual_gap(lu, self.team_games, day, raw)
+        return self._gaps[day]
 
     def latest_day(self) -> int:
         """The last day with a game in the box: 0 for a box with no games yet."""
@@ -549,6 +582,7 @@ def build(
         team_games=games,
         score_start=score_start,
         sat=sat or {},
+        lineups=lineupcall.build(rows, prior, PTS, MINUTES),
     )
 
 

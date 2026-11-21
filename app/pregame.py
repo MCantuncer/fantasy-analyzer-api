@@ -42,3 +42,9 @@ def update(record: dict | None, schedule: Schedule, day: int, states: dict[int, 
         if s.pro_team_id in waiting:
             out["players"][str(s.id)] = {"team": s.pro_team_id, "status": s.status}
     return out
+
+
+def ruled_out(record: dict | None) -> set[int]:
+    """Players whose last saved tag before their game is OUT (Our call's who plays tonight)."""
+    players = (record or {}).get("players", {})
+    return {int(pid) for pid, v in players.items() if v.get("status") == "OUT"}
