@@ -392,6 +392,73 @@
         }
       }
     },
+    "/api/admin/book-lines": {
+      "post": {
+        "summary": "Admin Book Lines",
+        "description": "Admins only: iddaa's lines for one NBA day as saved before each tip-off (app/iddaa.py),\nread into plain lines, and how the last look at iddaa went. Comparison only.",
+        "operationId": "admin_book_lines_api_admin_book_lines_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookLinesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookLines"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/errors/resolve": {
       "post": {
         "summary": "Resolve Error",
@@ -3354,6 +3421,125 @@
         }
       }
     },
+    "/api/scores/pregame": {
+      "post": {
+        "summary": "Score Pregame",
+        "description": "A game before tip-off: Our call piece by piece (what the margin adds up from), every player\nexpected to play with his line for this game and its reasons (the player card's line, plus the\nrest of each rotation read for this box), who is out, and how the lines stand against the call.\nKept a few minutes; lines follow the league's cache (injury tags within about 10 minutes).",
+        "operationId": "score_pregame_api_scores_pregame_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PregameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PregameBox"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/scores/sits": {
       "post": {
         "summary": "Score Sits",
@@ -5255,6 +5441,327 @@
           "confidence"
         ],
         "title": "Beneficiary"
+      },
+      "BookGame": {
+        "properties": {
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id",
+            "description": "ESPN game id"
+          },
+          "away": {
+            "type": "string",
+            "title": "Away"
+          },
+          "home": {
+            "type": "string",
+            "title": "Home"
+          },
+          "tip": {
+            "type": "string",
+            "title": "Tip"
+          },
+          "checked": {
+            "type": "string",
+            "title": "Checked",
+            "description": "iddaa's last look before tip-off"
+          },
+          "home_chance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Home Chance",
+            "description": "iddaa's chance the home team wins, margin taken out"
+          },
+          "margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin",
+            "description": "The home team's handicap: -5.5 = home by 6 or more"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "home_pts": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Home Pts"
+          },
+          "away_pts": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Away Pts"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/BookPlayer"
+            },
+            "type": "array",
+            "title": "Players"
+          }
+        },
+        "type": "object",
+        "required": [
+          "game_id",
+          "away",
+          "home",
+          "tip",
+          "checked",
+          "home_chance",
+          "margin",
+          "total",
+          "home_pts",
+          "away_pts",
+          "players"
+        ],
+        "title": "BookGame"
+      },
+      "BookLines": {
+        "properties": {
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day"
+          },
+          "days": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Days",
+            "description": "Days with saved iddaa lines"
+          },
+          "look": {
+            "$ref": "#/components/schemas/BookLook"
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/BookGame"
+            },
+            "type": "array",
+            "title": "Games"
+          }
+        },
+        "type": "object",
+        "required": [
+          "season",
+          "day",
+          "days",
+          "look",
+          "games"
+        ],
+        "title": "BookLines"
+      },
+      "BookLinesRequest": {
+        "properties": {
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season (the year it ends); the current one when unset"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day",
+            "description": "NBA day (scoring period); the latest saved when unset"
+          }
+        },
+        "type": "object",
+        "title": "BookLinesRequest"
+      },
+      "BookLook": {
+        "properties": {
+          "checked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked",
+            "description": "The last time the watch read iddaa"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ok",
+            "description": "Whether that read worked; None before the first"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games",
+            "description": "NBA games iddaa listed then"
+          },
+          "matched": {
+            "type": "integer",
+            "title": "Matched",
+            "description": "Of those, how many matched an ESPN game"
+          }
+        },
+        "type": "object",
+        "required": [
+          "checked",
+          "ok",
+          "error",
+          "games",
+          "matched"
+        ],
+        "title": "BookLook"
+      },
+      "BookPlayer": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "As iddaa spells it"
+          },
+          "pts": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pts",
+            "description": "iddaa's line: the number he goes past half the time"
+          },
+          "reb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reb"
+          },
+          "ast": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ast"
+          },
+          "stl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stl"
+          },
+          "blk": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blk"
+          },
+          "three_pm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Three Pm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "BookPlayer"
       },
       "CategoryDetail": {
         "properties": {
@@ -8665,6 +9172,7 @@
               "opponent",
               "form",
               "teammates_out",
+              "teammates_back",
               "back_from_absence",
               "heavy_minutes",
               "recent_minutes",
@@ -8676,7 +9184,10 @@
               "underdog",
               "back_to_back",
               "new_team",
-              "season_end"
+              "season_end",
+              "lopsided_games",
+              "blowout",
+              "overtime"
             ],
             "title": "Kind"
           },
@@ -10601,6 +11112,420 @@
           "body"
         ],
         "title": "PostRequest"
+      },
+      "PregameBox": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "title": "League Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "Tip-off, UTC ISO 8601"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "live",
+              "final"
+            ],
+            "title": "Status"
+          },
+          "chance": {
+            "type": "number",
+            "title": "Chance",
+            "description": "How sure Our call is of its winner, 0.5-1"
+          },
+          "pick": {
+            "type": "string",
+            "enum": [
+              "away",
+              "home"
+            ],
+            "title": "Pick"
+          },
+          "margin": {
+            "type": "integer",
+            "title": "Margin",
+            "description": "The called margin in whole points, from the picked side"
+          },
+          "margin_raw": {
+            "type": "number",
+            "title": "Margin Raw"
+          },
+          "terms": {
+            "items": {
+              "$ref": "#/components/schemas/PregameTerm"
+            },
+            "type": "array",
+            "title": "Terms",
+            "description": "What the margin adds up from, in whole points"
+          },
+          "away": {
+            "$ref": "#/components/schemas/PregameSide"
+          },
+          "home": {
+            "$ref": "#/components/schemas/PregameSide"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "season",
+          "day",
+          "game_id",
+          "start",
+          "status",
+          "chance",
+          "pick",
+          "margin",
+          "margin_raw",
+          "terms",
+          "away",
+          "home"
+        ],
+        "title": "PregameBox"
+      },
+      "PregameCallPart": {
+        "properties": {
+          "ratings": {
+            "type": "number",
+            "title": "Ratings",
+            "description": "Possessions x its points a trip x the opponent's allowed / the league's"
+          },
+          "level": {
+            "type": "number",
+            "title": "Level"
+          },
+          "home": {
+            "type": "number",
+            "title": "Home",
+            "description": "+ at home, - on the road"
+          },
+          "opp_three_luck": {
+            "type": "number",
+            "title": "Opp Three Luck",
+            "description": "The opponent's three-point defense luck that shouldn't last"
+          },
+          "own_three_luck": {
+            "type": "number",
+            "title": "Own Three Luck",
+            "description": "Its own three-point shooting luck that shouldn't last"
+          },
+          "back_to_back": {
+            "type": "number",
+            "title": "Back To Back"
+          },
+          "possessions": {
+            "type": "number",
+            "title": "Possessions",
+            "description": "Trips each this game: its pace x the opponent's / the league's"
+          },
+          "offense": {
+            "type": "number",
+            "title": "Offense",
+            "description": "Its points a trip so far (recent games count most)"
+          },
+          "defense_allowed": {
+            "type": "number",
+            "title": "Defense Allowed",
+            "description": "Points a trip the opponent allows"
+          },
+          "league": {
+            "type": "number",
+            "title": "League",
+            "description": "The league's points a trip"
+          },
+          "points_a_game": {
+            "type": "number",
+            "title": "Points A Game",
+            "description": "Its points a game so far (recent games count most)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ratings",
+          "level",
+          "home",
+          "opp_three_luck",
+          "own_three_luck",
+          "back_to_back",
+          "possessions",
+          "offense",
+          "defense_allowed",
+          "league",
+          "points_a_game"
+        ],
+        "title": "PregameCallPart",
+        "description": "One side's expected points, piece by piece (analysis/gamescore.py): they add up to ``call_raw``."
+      },
+      "PregameOut": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "injury_status": {
+            "type": "string",
+            "title": "Injury Status"
+          },
+          "owner_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "injury_status"
+        ],
+        "title": "PregameOut"
+      },
+      "PregamePlayer": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "injury_status": {
+            "type": "string",
+            "title": "Injury Status"
+          },
+          "owner_team_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team Id",
+            "description": "His fantasy team in this league; None: free agent"
+          },
+          "in_pool": {
+            "type": "boolean",
+            "title": "In Pool",
+            "description": "The league's own list (rosters and the free agents it reads). False: a rotation player read for this box only"
+          },
+          "line": {
+            "$ref": "#/components/schemas/NextGameLine"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "injury_status",
+          "in_pool",
+          "line"
+        ],
+        "title": "PregamePlayer"
+      },
+      "PregameRequest": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "League Id"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "game_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Game Id",
+            "description": "The game's id, as /api/scores lists it"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 250.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day",
+            "description": "Its day, when known (saves a search)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "game_id"
+        ],
+        "title": "PregameRequest"
+      },
+      "PregameSide": {
+        "properties": {
+          "pro_team_id": {
+            "type": "integer",
+            "title": "Pro Team Id"
+          },
+          "abbrev": {
+            "type": "string",
+            "title": "Abbrev"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "call": {
+            "type": "integer",
+            "title": "Call"
+          },
+          "call_raw": {
+            "type": "number",
+            "title": "Call Raw"
+          },
+          "parts": {
+            "$ref": "#/components/schemas/PregameCallPart"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/PregamePlayer"
+            },
+            "type": "array",
+            "title": "Players",
+            "description": "Everyone expected to play, most minutes first"
+          },
+          "out": {
+            "items": {
+              "$ref": "#/components/schemas/PregameOut"
+            },
+            "type": "array",
+            "title": "Out",
+            "description": "Ruled out tonight"
+          },
+          "team_line": {
+            "$ref": "#/components/schemas/PregameTeamLine"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pro_team_id",
+          "abbrev",
+          "name",
+          "call",
+          "call_raw",
+          "parts",
+          "players",
+          "out",
+          "team_line"
+        ],
+        "title": "PregameSide"
+      },
+      "PregameTeamLine": {
+        "properties": {
+          "shown": {
+            "type": "number",
+            "title": "Shown",
+            "description": "The listed players' points lines, added up"
+          },
+          "rest": {
+            "type": "number",
+            "title": "Rest",
+            "description": "The rest of the team: its points a game less the listed players' season points"
+          },
+          "total": {
+            "type": "number",
+            "title": "Total"
+          },
+          "call": {
+            "type": "number",
+            "title": "Call",
+            "description": "The team's expected points before rounding"
+          },
+          "gap": {
+            "type": "number",
+            "title": "Gap",
+            "description": "total - call: + the lines run over Our call, - under it"
+          }
+        },
+        "type": "object",
+        "required": [
+          "shown",
+          "rest",
+          "total",
+          "call",
+          "gap"
+        ],
+        "title": "PregameTeamLine",
+        "description": "How the players' lines stand against the team's call (report.team_sum_gap's view)."
+      },
+      "PregameTerm": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "matchup",
+              "home_court",
+              "three_point_luck",
+              "back_to_back"
+            ],
+            "title": "Kind",
+            "description": "matchup: pace, offense and defense; home_court; three_point_luck: three-point shooting on both ends that shouldn't last; back_to_back"
+          },
+          "points": {
+            "type": "integer",
+            "title": "Points",
+            "description": "Points of the called margin, from the picked side; the terms add up to it"
+          },
+          "raw": {
+            "type": "number",
+            "title": "Raw"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "points",
+          "raw"
+        ],
+        "title": "PregameTerm"
       },
       "ProjectedCategory": {
         "properties": {

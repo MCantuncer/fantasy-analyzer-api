@@ -2022,6 +2022,51 @@ class PlayerLines(BaseModel):
     players: list[PlayerLineSummary]
 
 
+class BookLinesRequest(BaseModel):
+    season: int | None = Field(default=None, description="ESPN season (the year it ends); the current one when unset")
+    day: int | None = Field(default=None, ge=1, description="NBA day (scoring period); the latest saved when unset")
+
+
+class BookPlayer(BaseModel):
+    name: str = Field(description="As iddaa spells it")
+    pts: float | None = Field(default=None, description="iddaa's line: the number he goes past half the time")
+    reb: float | None = None
+    ast: float | None = None
+    stl: float | None = None
+    blk: float | None = None
+    three_pm: float | None = None
+
+
+class BookGame(BaseModel):
+    game_id: int = Field(description="ESPN game id")
+    away: str
+    home: str
+    tip: str
+    checked: str = Field(description="iddaa's last look before tip-off")
+    home_chance: float | None = Field(description="iddaa's chance the home team wins, margin taken out")
+    margin: float | None = Field(description="The home team's handicap: -5.5 = home by 6 or more")
+    total: float | None
+    home_pts: float | None
+    away_pts: float | None
+    players: list[BookPlayer]
+
+
+class BookLook(BaseModel):
+    checked: str | None = Field(description="The last time the watch read iddaa")
+    ok: bool | None = Field(description="Whether that read worked; None before the first")
+    error: str | None
+    games: int = Field(description="NBA games iddaa listed then")
+    matched: int = Field(description="Of those, how many matched an ESPN game")
+
+
+class BookLines(BaseModel):
+    season: int
+    day: int | None
+    days: list[int] = Field(description="Days with saved iddaa lines")
+    look: BookLook
+    games: list[BookGame]
+
+
 class UsageRequest(BaseModel):
     days: int = Field(default=30, ge=1, le=366, description="How many days back, today included")
 
