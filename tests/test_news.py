@@ -594,6 +594,35 @@ def test_a_post_naming_two_players_does_not_merge_their_own_injury_news(first_po
     assert {i.source_id for i in illness.items} == {"rotowire", "rotoworld"}
 
 
+def test_an_article_about_two_players_injuries_keeps_each_players_news_apart():
+    # Live 2026-11-21: Alperen Sengun's card led with "Austin Reaves Out Friday With Left Heel
+    # Bruise", joined through a minutes report about both players' injuries.
+    sengun, reaves = 4871144, 4066457
+    index = NameIndex({sengun: "Alperen Sengun", reaves: "Austin Reaves"})
+    named = {
+        sengun: facts.PlayerState(sengun, "Alperen Sengun", 10, "DAY_TO_DAY"),
+        reaves: facts.PlayerState(reaves, "Austin Reaves", 13, "OUT"),
+    }
+
+    def post(source, title, hours_ago, summary=""):
+        t = tag(title, summary, index)
+        return Item(f"{source}:{title}", source, title, "https://example.com", NOW - timedelta(hours=hours_ago),
+                    summary, t.kind, t.player_ids, t.severity, t.body_part)  # fmt: skip
+
+    items = [
+        post("rotowire", "Alperen Sengun: Tagged questionable for Friday", 20),
+        post("yahoo", "NBA Minutes Report: How injuries to Austin Reaves, Alperen Sengun shake up two contenders", 18),
+        post("rotowire", "Austin Reaves: Out again Friday", 17.5),
+        post("realgm", "Austin Reaves Out Friday With Left Heel Bruise", 17, "Austin Reaves will remain out Friday."),
+    ]  # fmt: skip
+    stories = build_stories(items, named, {10: "HOU", 13: "LAL"}, NOW)
+    for story in (s for s in stories if sengun in s.player_ids):
+        assert all(sengun in i.player_ids for i in story.items), "Reaves's own updates are his story"
+        assert "Heel" not in story.headline
+    [heel] = [s for s in stories if "Heel" in s.headline]
+    assert heel.player_ids == [reaves]
+
+
 def test_a_readers_refresh_checks_sources_now_but_at_most_every_2_minutes(recorded, fake_espn):
     app = news_client(recorded, fake_espn, {})
     clock = {"now": datetime(2026, 10, 26, 12, 0, tzinfo=UTC)}
