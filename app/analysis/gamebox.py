@@ -657,6 +657,7 @@ class Teammate:
     points: float = 0.0  # a game, lately
     missed: int = 0  # his team's games he already missed before this one
     made: dict[int, float] = field(default_factory=dict)  # his rebounds, assists and blocks (FREED) a game, lately
+    chance: float = 1.0  # back with a day-to-day tag: counts by his chance to play, in minutes only
 
 
 @dataclass(frozen=True)
@@ -811,7 +812,7 @@ def minute_signals(
     bench = max(0.0, 1 - minutes / BENCH_MINUTES)
     sig["bench_out"] = sum(t.minutes for t in out) * bench
     sig["bench_old"] = sum(t.minutes for t in out if t.missed) * bench
-    sig["bench_back"] = sum(t.minutes for t in back) * bench
+    sig["bench_back"] = sum(t.minutes * t.chance for t in back) * bench
     sig["heavy"] = max(0.0, minutes - HEAVY_MINUTES)
     sig["new_team"] = float(m.new_team)
     last_games = m.games_left is not None and m.games_left <= SEASON_END_GAMES
@@ -841,7 +842,7 @@ def rate_signal(
 ) -> float:
     """One per-minute signal of RATE_WEIGHTS for a stat whose line makes ``rate`` a minute."""
     if name == "usage_back":
-        return sum(t.usage for t in back) / 100
+        return sum(t.usage for t in back if t.chance >= 1) / 100
     if name == "form":
         return _form(m.form, stat, rate)
     if name == "form_fast":

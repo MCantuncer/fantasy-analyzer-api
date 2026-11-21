@@ -18,7 +18,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from app.analysis.gamebox import BACK_MINUTES
-from app.espn.parse import MINUTES, Player
+from app.espn.parse import IR_SLOT, MINUTES, Player
+from app.playchance import DAY_TO_DAY, play_chance
 
 AST, REB = 3, 6
 GUARD_ASSISTS = 4.5  # assists per 36 that make a guard
@@ -51,8 +52,28 @@ def came_back(p: Player) -> bool:
     game, as far as ESPN knows. His teammates' minutes and shots lately were partly his
     (gamebox BACK_SHARE, usage_back). A player his coach sat through those games isn't coming back
     from anything."""
+    return p.fully_healthy and _returning(p)
+
+
+# A regular back from an absence with a day-to-day tag left (NBA: probable or questionable) counts as
+# back by his chance to play, read TAGGED_BACK_HOURS before tip-off (app/playchance.py), in his
+# teammates' minutes only: on 2021-22 to 2025-26 NBA injury reports, counting such returners lowered
+# teammates' squared miss in minutes in every season; their points and assists didn't move the same way.
+TAGGED_BACK_HOURS = 3.0
+
+
+def came_back_tagged(p: Player) -> float:
+    """His chance to play, for a regular back from an absence who still has a day-to-day tag; 0 otherwise."""
+    if p.injury_status != "DAY_TO_DAY" or p.lineup_slot == IR_SLOT or not _returning(p):
+        return 0.0
     m = p.game_context
-    if m is None or m.form is None or not p.fully_healthy:
+    assert m is not None and m.form is not None
+    return play_chance(DAY_TO_DAY, TAGGED_BACK_HOURS, m.form.minutes_long)
+
+
+def _returning(p: Player) -> bool:
+    m = p.game_context
+    if m is None or m.form is None:
         return False
     if m.games_missed < 1 or m.form.minutes_long < BACK_MINUTES:
         return False

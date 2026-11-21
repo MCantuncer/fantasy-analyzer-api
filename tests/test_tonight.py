@@ -4,8 +4,17 @@ import pytest
 
 from app.analysis.gamebox import BACK_MINUTES, Form, GameContext
 from app.analysis.report import NEXT_GAME_LEVEL, Analyzer
-from app.analysis.tonight import OTHER_ROLE, SAME_ROLE, came_back, minutes_gained, role
+from app.analysis.tonight import (
+    OTHER_ROLE,
+    SAME_ROLE,
+    TAGGED_BACK_HOURS,
+    came_back,
+    came_back_tagged,
+    minutes_gained,
+    role,
+)
 from app.espn.parse import MINUTES
+from app.playchance import DAY_TO_DAY, play_chance
 
 AST, REB, PTS = 3, 6, 0
 GUARD = {MINUTES: 30.0, PTS: 15.0, AST: 6.0, REB: 3.0}
@@ -75,3 +84,16 @@ def test_a_regular_with_no_tag_left_who_missed_games_is_back(league):
     assert not came_back(mate)
     mate.game_context = ctx(sat_ago=6)
     assert came_back(mate)
+
+
+def test_a_returning_regular_with_a_day_to_day_tag_counts_by_his_chance(league):
+    _, _, mate = _setup(league, GUARD, status="DAY_TO_DAY")
+    form = Form(rate={}, minutes=30.0, minutes_long=30.0, usage=12.0, last_day=3, team=99)
+    mate.game_context = GameContext(8, 2, True, False, 0.0, {}, form, 2)
+    assert not came_back(mate)
+    assert came_back_tagged(mate) == pytest.approx(play_chance(DAY_TO_DAY, TAGGED_BACK_HOURS, 30.0))
+    # No tag left: a full comeback instead. Out, or not back from anything: neither.
+    for status, missed in (("ACTIVE", 2), ("OUT", 2), ("DAY_TO_DAY", 0)):
+        mate.injury_status = status
+        mate.game_context = GameContext(8, 2, True, False, 0.0, {}, form, missed)
+        assert came_back_tagged(mate) == 0.0
