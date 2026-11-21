@@ -132,6 +132,16 @@ def _app(recorded):
     return app, store, parse_schedule(pro_schedule)
 
 
+def test_the_watch_waits_for_the_league_box_instead_of_saving_empty_lines(recorded):
+    app, store, sched = _app(recorded)
+    app.state.line_log_league_id = LEAGUE_ID
+    app.state.game_boxes.clear()  # just after a deploy: no box yet
+    day = min(d for d, gs in sched.games.items() if gs and d >= 3)
+    app.state.now = lambda: min(g.start for g in sched.games[day]) - timedelta(hours=1)
+    assert asyncio.run(app.state.line_log_sweep()) is None  # look again soon
+    assert store.get_player_lines(2027, day) is None
+
+
 def test_the_watch_saves_the_lines_and_settling_fills_in_results(recorded):
     app, store, sched = _app(recorded)
     assert asyncio.run(app.state.line_log_sweep()) == []  # no league to read lines from

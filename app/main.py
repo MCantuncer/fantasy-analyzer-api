@@ -212,6 +212,7 @@ PREGAME_WATCH_SECONDS = float(os.getenv("PREGAME_WATCH_SECONDS", "600"))
 # public league (LINE_LOG_LEAGUE_ID, else the sample league), kept as it stood at tip-off; the box
 # build fills in results once the night settles. 0 turns it off.
 LINE_LOG_SECONDS = float(os.getenv("LINE_LOG_SECONDS", "900"))
+LINE_LOG_FIRST = 60.0  # the first look after a start, and the retry while the league box is still building
 # The iddaa log (app/iddaa.py): in the hours before tip-off, iddaa's NBA lines, each game kept as it
 # stood at tip-off, for the admin comparison with ours. Comparison only. 0 turns it off.
 BOOK_LOG_SECONDS = float(os.getenv("BOOK_LOG_SECONDS", "900"))
@@ -961,6 +962,13 @@ def create_app(
             names = {p.id: p.name for p in await player_index(season)}
         except Exception:
             names = {}
+        box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
+        if book and box is not None:
+            now = app.state.now()
+            for g in book.get("games", {}).values():
+                if not g.get("ours") and datetime.fromisoformat(g["tip"]) > now:  # no look had the box yet
+                    c = box.call(day, g["away"], g["home"])
+                    g["ours"] = [c.away, c.home, round(c.chance, 3)]
         got = await run_in_threadpool(bookcompare.compare_day, book, lines, played, names)
 
         def ab(team: int | None) -> str:
@@ -1596,8 +1604,9 @@ def create_app(
             except Exception:
                 logging.getLogger(__name__).warning("pregame watch failed", exc_info=True)
 
-    async def line_log_sweep() -> list[int]:
-        """One look by the line log: the days it wrote (none when no game tips off soon)."""
+    async def line_log_sweep() -> list[int] | None:
+        """One look by the line log: the days it wrote (none when no game tips off soon; None while
+        the league box is still building, so the watch looks again soon)."""
         league_id = app.state.line_log_league_id or app.state.sample_league_id
         if league_id is None:
             return []
@@ -1610,6 +1619,9 @@ def create_app(
         days = linelog.days_to_watch(sched, now)
         if not days:
             return []
+        if app.state.game_boxes.get(season) is None:
+            start_game_box(season)  # just after a deploy: without the box every line would be missing
+            return None
         league = await load_league(league_id, season, None, with_fa=True)
         if any(p.game_context is None for t in league.teams for p in t.roster):
             attach_game_contexts(league)  # a box built after this league was loaded
@@ -1623,12 +1635,14 @@ def create_app(
     app.state.line_log_sweep = line_log_sweep
 
     async def watch_line_log() -> None:
+        await asyncio.sleep(min(LINE_LOG_FIRST, LINE_LOG_SECONDS))  # a first look soon after a deploy
         while True:
-            await asyncio.sleep(LINE_LOG_SECONDS)
+            wrote: list[int] | None = []
             try:
-                await line_log_sweep()
+                wrote = await line_log_sweep()
             except Exception:
                 logging.getLogger(__name__).warning("line log watch failed", exc_info=True)
+            await asyncio.sleep(min(LINE_LOG_FIRST, LINE_LOG_SECONDS) if wrote is None else LINE_LOG_SECONDS)
 
     async def book_log_sweep() -> list[int]:
         """One look at iddaa: the days it wrote (none when no game tips off soon). Each game looked at
@@ -1656,6 +1670,8 @@ def create_app(
             records[day] = await run_in_threadpool(app.state.store.get_book_lines, season, day)
         changed = iddaa.update(records, sched, looks, now)
         box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
+        if box is None:
+            start_game_box(season)  # just after a deploy: our call joins at the next look
         for day, record in changed.items():
             for g in record["games"].values():
                 if g["checked"] == status["checked"] and box is not None:  # our call beside iddaa's, same look

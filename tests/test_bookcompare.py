@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from app import bookcompare, iddaa, linelog
 from app.playersearch import IndexPlayer
@@ -122,3 +122,15 @@ def test_admins_read_a_day_compared(recorded):
     assert winner["team"] == "PHI" and winner["ours"] == 0.85
     assert any(p["name"] == "Joel Embiid" and p["stat"] == "pts" and p["ours"] == 31.0 for p in g["players"])
     assert {t["stat"] for t in got["tally"]} >= {"pts", "winner", "total"}
+
+
+def test_a_game_not_yet_started_without_a_saved_call_gets_today_s(recorded):
+    app, store, _ = _app(recorded)
+    rec = book_record()
+    del rec["games"]["401"]["ours"]  # the look ran before the box was built
+    store.save_book_lines(2027, 33, rec)
+    tip = datetime.fromisoformat(rec["games"]["401"]["tip"])
+    app.state.now = lambda: tip - timedelta(hours=2)
+    got = boss(app).post("/api/admin/book-compare", json={"season": 2027}).json()
+    winner = next(m for m in got["games"][0]["markets"] if m["market"] == "winner")
+    assert winner["ours"] is not None and winner["gap"] is not None

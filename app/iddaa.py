@@ -251,6 +251,7 @@ def update(
         if game is None or not (now < game.start <= now + AHEAD):
             continue
         rec = changed.get(game.day) or {"games": dict((records.get(game.day) or {}).get("games", {}))}
+        kept = rec["games"].get(str(game.id), {}).get("ours")  # our last call stays until a new one is set
         rec["games"][str(game.id)] = {
             "event": int(event.get("i") or 0),
             "away": game.away,
@@ -258,6 +259,7 @@ def update(
             "tip": game.start.isoformat(timespec="seconds"),
             "checked": stamp,
             **parse_event(data),
+            **({"ours": kept} if kept else {}),
         }
         changed[game.day] = rec
     return changed
