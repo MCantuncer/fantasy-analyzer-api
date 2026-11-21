@@ -124,13 +124,25 @@ def _named(item: Item, names: dict[int, str]) -> set[int]:
     return {p for p in item.player_ids if (s := _surname(names.get(p, ""))) and f" {s} " in title}
 
 
+def _anchors(c: _Cluster) -> set[int]:
+    """The players whose news joins this story. A move (a trade, a signing) is about everyone it
+    names. Any other story is about the players its own items are about one at a time: a post
+    naming two players ("Watson and Smith collide") joins one player's injury story, but the other
+    player's own updates stay his own story, not this one. Until a story has such an item, all of
+    its players count."""
+    if c.family == "move":
+        return set(c.players)
+    solo = {i.player_ids[0] for i in c.items if len(i.player_ids) == 1}
+    return solo or set(c.players)
+
+
 def _joins(item: Item, family: str, c: _Cluster, names: dict[int, str]) -> bool:
     """Does the item belong to this story? Same player and kind of news within two days; a
     loosely worded item ("sits out", "suspended") about the same player within a day; or a
     headline telling the same story within a day, unless the two headlines name different
     players ("Jerome removed from injury report", "Gobert removed from injury report")."""
     gap = item.published - c.last
-    if item.player_ids and set(item.player_ids) & set(c.players):
+    if item.player_ids and set(item.player_ids) & _anchors(c):
         if c.family == family:
             return gap <= JOIN_WINDOW
         return "other" in (c.family, family) and gap <= TITLE_WINDOW
@@ -274,7 +286,12 @@ def build_stories(
             status = "didnt_happen"
 
         views = _injury_views(c, states, pid) if c.family == "health" else []
-        lead = outlets[-1] if outlets else (facts[-1] if facts else c.items[-1])
+        # The headline and summary come from an item about the story's own player, so a source
+        # that also names someone else never puts that player's news on the card.
+        pool = [i for i in c.items if pid is None or not i.player_ids or pid in i.player_ids]
+        own_outlets = [i for i in pool if i.source_kind == "outlet"]
+        own_facts = [i for i in pool if i.source_id == FACT_SOURCE]
+        lead = own_outlets[-1] if own_outlets else (own_facts[-1] if own_facts else pool[-1])
         headline = describe_fact(lead, names, teams) if lead.source_id == FACT_SOURCE else lead.title
         stories.append(
             Story(
