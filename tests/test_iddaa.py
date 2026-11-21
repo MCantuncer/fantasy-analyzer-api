@@ -88,6 +88,14 @@ def test_each_game_keeps_its_last_look_before_tip_off():
     assert iddaa.update({}, sched, [(listed(), EVENT)], TIP - timedelta(hours=19)) == {}  # too early
 
 
+def test_a_look_keeps_our_last_call_until_a_new_one_is_set():
+    sched = schedule()
+    rec = iddaa.update({}, sched, [(listed(), EVENT)], TIP - timedelta(hours=3))[33]
+    rec["games"]["401"]["ours"] = [15, 20, 0.8]
+    rec = iddaa.update({33: rec}, sched, [(listed(), EVENT)], TIP - timedelta(hours=2))[33]
+    assert rec["games"]["401"]["ours"] == [15, 20, 0.8]  # a look without the box (just after a deploy) keeps it
+
+
 def test_nesine_games_read_like_iddaa_s_own():
     game = iddaa.from_nesine(NESINE)
     assert (game["hn"], game["an"], game["d"], game["ci"]) == ("Philadelphia", "Milwaukee", EVENT["d"], iddaa.NBA)
