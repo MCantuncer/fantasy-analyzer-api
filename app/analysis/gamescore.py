@@ -23,7 +23,8 @@ Replayed day by day, its mean miss is 8.95-9.39 points a team (a team's own aver
 move 3+ points from the team's average in 39-51% of games, and those moves are the right size in
 every season (actual over called change 0.93-1.11: not an average, and not overfitted). Rest beyond
 a back-to-back, the opponent's back-to-back, players ruled out (failed 2021-22 only), recent form over
-a shorter run and free-throw luck didn't pass.
+a shorter run and free-throw luck didn't pass. Who plays tonight, by talent and by the points of
+regulars missing, did: lineupcall.py adds it on top (gamebox.Box.call_parts).
 
 report.next_game_line uses it as a check on player lines: teammates' lines should add up to it.
 """
