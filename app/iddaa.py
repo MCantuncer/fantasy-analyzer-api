@@ -46,6 +46,9 @@ WINNER = 2  # overtime included
 MAIN_MARKETS = {113: "margin", 114: "total", 619: "home_pts", 620: "away_pts"}
 STATS = {831: "pts", 832: "reb", 833: "ast", 834: "stl", 835: "blk", 836: "three_pm"}
 NOT_OFFERED = 1.0  # iddaa shows odd 1.00 for a closed outcome
+# Can 2026-11-21: a price under 1.29 is the book closing a near-certainty, not saying something. A
+# ladder rung or a winner priced under it doesn't count as the book's number.
+MIN_ODD = 1.29
 DEFAULT_MARGIN = 1.21  # iddaa's usual two-way overround, when a game has no two-way market to measure
 RUNG = re.compile(r"^(?P<name>.+?)\s+(?P<n>\d+)\+$")
 
@@ -157,8 +160,9 @@ def overround(game: dict) -> float:
 def ladder_line(rungs: list[list[float]], margin: float) -> float | None:
     """The line an "n+" ladder implies: the number he goes past half the time, margin taken out.
     Rung n reads as a chance he ends above n - 0.5; between two rungs the line is drawn straight.
-    None when the ladder doesn't cross a half (every rung above it or below it)."""
-    points = sorted((n - 0.5, min(1.0, 1 / (odd * margin))) for n, odd in rungs if odd > NOT_OFFERED)
+    None when the ladder doesn't cross a half (every rung above it or below it). Rungs priced under
+    MIN_ODD are left out, so a ladder that only crosses a half there has no line."""
+    points = sorted((n - 0.5, min(1.0, 1 / (odd * margin))) for n, odd in rungs if odd >= MIN_ODD)
     for (t0, p0), (t1, p1) in zip(points, points[1:], strict=False):
         if p0 >= 0.5 > p1:
             return round(t0 + (p0 - 0.5) / (p0 - p1) * (t1 - t0), 1)
@@ -166,15 +170,15 @@ def ladder_line(rungs: list[list[float]], margin: float) -> float | None:
 
 
 def home_chance(game: dict) -> float | None:
-    """iddaa's chance the home team wins, margin taken out. With one side closed, from the other."""
+    """iddaa's chance the home team wins, margin taken out. None when either side is closed or priced
+    under MIN_ODD: the book isn't really pricing that game's winner."""
     win = game.get("win")
     if not win:
         return None
     home, away = win
-    if home and away:
-        return round((1 / home) / (1 / home + 1 / away), 3)
-    m = overround(game)
-    return round(1 / (home * m), 3) if home else round(1 - 1 / (away * m), 3)
+    if home < MIN_ODD or away < MIN_ODD:
+        return None
+    return round((1 / home) / (1 / home + 1 / away), 3)
 
 
 def readout(game: dict) -> dict:

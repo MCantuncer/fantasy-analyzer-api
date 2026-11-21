@@ -104,7 +104,7 @@ def test_a_day_compares_players_and_the_game_against_the_result():
     assert pts["judged"] == 1 and pts["ours_hits"] == 0 and pts["ours_miss"] == 9.0
     chances = [c for _, c in embiid["pts"]["ladder"]]
     assert len(chances) >= 3 and chances == sorted(chances, reverse=True)  # iddaa's rungs, for the open row
-    assert m[("winner", PHI)]["closer"] == "ours"  # we gave PHI 85%, iddaa about 82%
+    assert m[("winner", PHI)]["book"] is None and m[("winner", PHI)]["closer"] is None  # iddaa closed PHI
 
 
 def test_admins_read_a_day_compared(recorded):
@@ -147,4 +147,4 @@ def test_a_game_not_yet_started_without_a_saved_call_gets_today_s(recorded):
     app.state.now = lambda: tip - timedelta(hours=2)
     got = boss(app).post("/api/admin/book-compare", json={"season": 2027}).json()
     winner = next(m for m in got["games"][0]["markets"] if m["market"] == "winner")
-    assert winner["ours"] is not None and winner["gap"] is not None
+    assert winner["ours"] is not None  # today's call, though the book closed the favourite

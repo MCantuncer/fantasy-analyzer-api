@@ -148,6 +148,7 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                         "ladder": [
                             [n, round(min(1.0, 1 / (odd * margin)), 3)]
                             for n, odd in (g.get("players") or {}).get(name, {}).get(stat, [])
+                            if odd >= iddaa.MIN_ODD
                         ],
                     }
                 )
