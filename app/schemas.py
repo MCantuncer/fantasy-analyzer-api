@@ -2089,6 +2089,19 @@ class CompareRow(BaseModel):
     closer: Literal["ours", "book", "tie"] | None = Field(description="Whose number was nearer the result")
 
 
+class CompareRung(BaseModel):
+    """One of the book's "n+" rungs with both chances (app/bookcompare.py ladder_rungs)."""
+
+    n: int
+    odd: float = Field(description="The book's decimal odds")
+    book: float = Field(description="The book's chance, its game margin taken out")
+    ours: float | None = Field(description="Our chance from our line (five replayed seasons); None without a line")
+    value: float | None = Field(
+        description="Average return of one unit at these odds if our chance is right: ours x odd - 1"
+    )
+    hit: bool | None = Field(description="He got there; None until the result, or when he didn't play")
+
+
 class ComparePlayer(CompareRow):
     name: str
     player_id: int | None = Field(description="ESPN id; None when iddaa's name matched nobody")
@@ -2097,6 +2110,11 @@ class ComparePlayer(CompareRow):
     played: bool | None = Field(description="False when his team played without him; None before the result")
     ladder: list[tuple[int, float]] = Field(
         default_factory=list, description='iddaa\'s "n+" rungs: n and the chance he gets there, margin taken out'
+    )
+    rungs: list[CompareRung] = Field(default_factory=list, description="The same rungs with odds, our chance and value")
+    best_value: float | None = Field(default=None, description="The highest value among the rungs (+: worth a look)")
+    rung_closer: Literal["ours", "book", "tie"] | None = Field(
+        default=None, description="Whose chances read the result better over the rungs (Brier score)"
     )
 
 
@@ -2136,6 +2154,14 @@ class CompareTally(BaseModel):
     level: int = Field(description="Results both missed by the same (within 0.1)")
     ours_miss: float | None = Field(description="Average distance of ours from the result")
     book_miss: float | None = Field(description="Average distance of iddaa's from the result")
+    rungs: int = Field(default=0, description="Settled player rungs")
+    ours_rung_score: float | None = Field(default=None, description="Brier score of our rung chances (lower is better)")
+    book_rung_score: float | None = Field(default=None, description="Brier score of the book's rung chances")
+    ours_rung_closer: int = Field(default=0, description="Player rows where our rung chances read the result better")
+    book_rung_closer: int = Field(default=0, description="Player rows where the book's rung chances did")
+    value_picks: int = Field(default=0, description="Settled rungs with value over 0 by our chance")
+    value_hits: int = Field(default=0, description="Of those, how many he reached")
+    value_return: float = Field(default=0.0, description="One unit on each value pick at the book's odds: net units")
 
 
 class BookCompare(BaseModel):

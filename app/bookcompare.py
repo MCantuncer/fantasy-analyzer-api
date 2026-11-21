@@ -20,6 +20,7 @@ import statistics
 from collections.abc import Iterable
 
 from app import iddaa, linelog
+from app.analysis import rungs as rung_chances
 
 # How near the result a number must land to count as right.
 BANDS = {
@@ -38,6 +39,7 @@ PLAYER_STATS = ("three_pm", "reb", "ast", "stl", "blk", "pts")  # the site's sta
 DAY_STAT = {"pts": "pts", "reb": "reb", "ast": "ast", "stl": "stl", "blk": "blk", "three_pm": "tpm"}
 OURS_AT = {name: i for i, (name, _) in enumerate(linelog.STATS)}
 LEVEL = 0.1  # misses this close read as level
+RUNG_LEVEL = 0.005  # rung scores this close read as level
 SUFFIX = re.compile(r"( (jr|sr|ii|iii|iv|v))+$")
 
 
@@ -137,6 +139,7 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                     actual = float(got[DAY_STAT[stat]]) if got else None  # no line: he didn't play
                 else:
                     actual = None
+                steps = ladder_rungs(stat, ours, (g.get("players") or {}).get(name, {}).get(stat, []), margin, actual)
                 players.append(
                     {
                         "name": known.get(pid, name) if pid else name,
@@ -145,11 +148,10 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                         "stat": stat,
                         "played": None if not final or pid is None else got is not None,
                         **judge(ours, stats[stat], actual, BANDS[stat]),
-                        "ladder": [
-                            [n, round(min(1.0, 1 / (odd * margin)), 3)]
-                            for n, odd in (g.get("players") or {}).get(name, {}).get(stat, [])
-                            if odd >= iddaa.MIN_ODD
-                        ],
+                        "ladder": [[r["n"], r["book"]] for r in steps],
+                        "rungs": steps,
+                        "best_value": max((r["value"] for r in steps if r["value"] is not None), default=None),
+                        "rung_closer": rung_closer(steps),
                     }
                 )
 
@@ -236,6 +238,48 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
     return {"games": out_games, "tally": tally(out_games)}
 
 
+def ladder_rungs(
+    stat: str, ours: float | None, ladder: Iterable[tuple[int, float]], margin: float, actual: float | None
+) -> list[dict]:
+    """The book's "n+" rungs (odds MIN_ODD and up) with both chances side by side.
+
+    book: the book's chance, its game margin taken out (as the ladder line is read); ours: our
+    chance from our line (analysis/rungs.py, five replayed seasons); value: what one unit returns on
+    average at the book's odds if our chance is right (+ = the price pays more than our chance says
+    it should); hit: did he get there (None until a result, or when he didn't play)."""
+    out = []
+    for n, odd in sorted(ladder):
+        if odd < iddaa.MIN_ODD:
+            continue
+        p = rung_chances.chance(stat, ours, n)
+        out.append(
+            {
+                "n": n,
+                "odd": odd,
+                "book": round(min(1.0, 1 / (odd * margin)), 3),
+                "ours": p,
+                "value": rung_chances.value(p, odd),
+                "hit": None if actual is None else actual >= n,
+            }
+        )
+    return out
+
+
+def brier(steps: list[dict], side: str) -> float | None:
+    """Mean squared miss of one side's chances over the settled rungs (0 is perfect)."""
+    got = [(r[side] - (1.0 if r["hit"] else 0.0)) ** 2 for r in steps if r["hit"] is not None and r[side] is not None]
+    return sum(got) / len(got) if got else None
+
+
+def rung_closer(steps: list[dict]) -> str | None:
+    """Whose chances read the result better, rung by rung (lower Brier score). Fairer than comparing
+    one number with the ladder's middle: the book sells overs only and sets its rungs high."""
+    a, b = brier(steps, "ours"), brier(steps, "book")
+    if a is None or b is None:
+        return None
+    return "tie" if abs(a - b) <= RUNG_LEVEL else ("ours" if a < b else "book")
+
+
 def _winner_closer(ours_home: float, book_home: float, won_home: bool) -> str:
     ours, book = (ours_home, book_home) if won_home else (1 - ours_home, 1 - book_home)
     return "tie" if abs(ours - book) <= 0.01 else ("ours" if ours > book else "book")
@@ -263,6 +307,9 @@ def tally(games: list[dict]) -> list[dict]:
             continue
         gaps = [r["gap"] for r in rs if r["gap"] is not None]
         judged = [r for r in rs if r["ours_hit"] is not None or r["book_hit"] is not None]
+        steps = [x for r in rs for x in r.get("rungs", ())]
+        picks = [x for x in steps if x["value"] is not None and x["value"] > 0 and x["hit"] is not None]
+        ours_b, book_b = brier(steps, "ours"), brier(steps, "book")
         out.append(
             {
                 "stat": key,
@@ -278,6 +325,14 @@ def tally(games: list[dict]) -> list[dict]:
                 "level": sum(1 for r in judged if r["closer"] == "tie"),
                 "ours_miss": _mean_miss(judged, "ours"),
                 "book_miss": _mean_miss(judged, "book"),
+                "rungs": sum(1 for x in steps if x["hit"] is not None),
+                "ours_rung_score": None if ours_b is None else round(ours_b, 4),
+                "book_rung_score": None if book_b is None else round(book_b, 4),
+                "ours_rung_closer": sum(1 for r in rs if r.get("rung_closer") == "ours"),
+                "book_rung_closer": sum(1 for r in rs if r.get("rung_closer") == "book"),
+                "value_picks": len(picks),
+                "value_hits": sum(1 for x in picks if x["hit"]),
+                "value_return": round(sum(x["odd"] - 1 if x["hit"] else -1.0 for x in picks), 2),
             }
         )
     return out
