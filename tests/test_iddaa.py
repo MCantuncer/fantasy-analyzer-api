@@ -11,8 +11,9 @@ from tests.conftest import signed_in
 from tests.test_linelog import _app
 from tests.test_news import boss
 
-# MIL @ PHI, 2026-11-21 18:00 UTC, as iddaa answered that morning (trimmed to a few players).
+# MIL @ PHI, 2026-11-21 18:00 UTC, as iddaa and nesine answered that morning (trimmed to a few players).
 EVENT = json.loads((Path(__file__).parent / "fixtures" / "iddaa_event_mil_phi.json").read_text())
+NESINE = json.loads((Path(__file__).parent / "fixtures" / "nesine_event_mil_phi.json").read_text())
 TIP = datetime.fromtimestamp(EVENT["d"], UTC)
 MIL, PHI, BOS, SAC = 15, 20, 2, 23
 
@@ -87,13 +88,30 @@ def test_each_game_keeps_its_last_look_before_tip_off():
     assert iddaa.update({}, sched, [(listed(), EVENT)], TIP - timedelta(hours=7)) == {}  # too early
 
 
-def iddaa_answers(events: list[dict], status: int = 200):
+def test_nesine_games_read_like_iddaa_s_own():
+    game = iddaa.from_nesine(NESINE)
+    assert (game["hn"], game["an"], game["d"], game["ci"]) == ("Philadelphia", "Milwaukee", EVENT["d"], iddaa.NBA)
+    got = iddaa.parse_event(game)
+    assert got["margin"][0] == -11.5 and got["total"][0] == 228.5  # same main lines as iddaa that morning
+    assert got["home_pts"][0] == 120.5 and got["away_pts"][0] == 108.5
+    assert got["win"][0] == 0.0 and got["win"][1] > 4  # home side closed, as on iddaa
+    assert {"Joel Embiid", "Tyrese Maxey", "Jaime Jaquez Jr."} <= set(got["players"])  # "Last, First" turned round
+    read = iddaa.readout(got)
+    assert (
+        abs(
+            read["players"]["Joel Embiid"]["pts"]
+            - iddaa.readout(iddaa.parse_event(EVENT))["players"]["Joel Embiid"]["pts"]
+        )
+        < 1.5
+    )
+
+
+def bulletin(events: list[dict], status: int = 200):
     def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Referer"] == "https://www.nesine.com/"
         if status != 200:
             return httpx.Response(status, text="Forbidden")
-        if request.url.path.endswith("/events"):
-            return httpx.Response(200, json={"isSuccess": True, "data": {"events": events}})
-        return httpx.Response(200, json={"isSuccess": True, "data": EVENT})
+        return httpx.Response(200, json={"sg": {"EA": events}})
 
     return httpx.MockTransport(handler)
 
@@ -103,17 +121,17 @@ def test_the_watch_saves_iddaa_and_admins_read_it_back(recorded):
     day = min(d for d, gs in sched.games.items() if gs and d >= 3)
     game = sched.games[day][0]
     away, home = sched.teams[game.away][1], sched.teams[game.home][1]
-    event = {"i": 9, "hn": home, "an": away, "ci": iddaa.NBA, "d": int(game.start.timestamp())}
+    event = {**NESINE, "C": 9, "HN": home, "AN": away, "ESD": int(game.start.timestamp()) * 1000}
     app.state.now = lambda: game.start - timedelta(hours=1)
 
-    app.state.iddaa_transport = iddaa_answers([], status=403)
+    app.state.iddaa_transport = bulletin([], status=403)
     try:
         asyncio.run(app.state.book_log_sweep())
     except httpx.HTTPError:
         pass
     assert app.state.book_log["ok"] is False and "403" in app.state.book_log["error"]
 
-    app.state.iddaa_transport = iddaa_answers([event, {**event, "i": 10, "ci": 1}])  # a non-NBA game is skipped
+    app.state.iddaa_transport = bulletin([event, {**event, "C": 10, "LC": 1}])  # a non-NBA game is skipped
     assert asyncio.run(app.state.book_log_sweep()) == [day]
     assert list(store.get_book_lines(2027, day)["games"]) == [str(game.id)]
     assert app.state.book_log == {
@@ -130,4 +148,4 @@ def test_the_watch_saves_iddaa_and_admins_read_it_back(recorded):
     [g] = got["games"]
     assert g["game_id"] == game.id and g["margin"] == -11.5 and g["total"] == 228.5
     assert g["ours"]["away"] != g["ours"]["home"] and 0.5 <= g["ours"]["chance"] <= 1  # our call, same look
-    assert {p["name"] for p in g["players"]} == {"Joel Embiid", "Tyrese Maxey", "Nate Ament"}
+    assert {p["name"] for p in g["players"]} == {"Joel Embiid", "Tyrese Maxey", "Jaime Jaquez Jr."}

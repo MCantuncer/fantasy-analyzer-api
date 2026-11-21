@@ -4,10 +4,11 @@ Can 2026-11-21: an admin page that compares iddaa (the Turkish sportsbook) with 
 player points, rebounds, assists and the rest, the winner, the margin and the game total, and after
 the games who landed nearer what happened. COMPARISON ONLY: nothing here feeds our model.
 
-iddaa lists a game only until it starts, so a past night can't be read back: a watch reads iddaa in
-the hours before tip-off and, for each game, keeps its last look before the game starts (as
-app/linelog.py does for our lines). What is saved is what iddaa showed, nearly raw (its odds), so the
-way a line is read from them can change later without losing a night. A day's record:
+iddaa lists a game only until it starts, so a past night can't be read back: a watch reads iddaa's
+lines in the hours before tip-off and, for each game, keeps its last look before the game starts (as
+app/linelog.py does for our lines). They are read through nesine, an iddaa dealer whose bulletin is
+one call for every game (Can's pick). What is saved is nearly raw (the odds), so the way a line is
+read from them can change later without losing a night. A day's record:
 
     {"games": {espn game id: {
         "event": iddaa id, "away": team, "home": team, "tip": iso, "checked": iso,
@@ -22,7 +23,6 @@ total's odds are under then over. Only each market's main line (its two odds clo
 
 from __future__ import annotations
 
-import asyncio
 import re
 import statistics
 import unicodedata
@@ -32,11 +32,12 @@ import httpx
 
 from app.scores import Schedule, ScheduledGame
 
-EVENTS = "https://sportsbookv2.iddaa.com/sportsbook/events"
-EVENT = "https://sportsbookv2.iddaa.com/sportsbook/event/{}"
+# nesine's full pre-match bulletin (Can 2026-11-21: "Go with nesine"). iddaa's own API
+# (sportsbookv2.iddaa.com/sportsbook/events, /event/<id>) has the same games in the shape read here.
+BULLETIN = "https://cdnbulten.nesine.com/api/bulten/getprebultenfull"
 USER_AGENT = "Mozilla/5.0 (compatible; fantasy-analyzer/1.0)"
-TIMEOUT = 10.0
-NBA = 138  # iddaa's competition id for the NBA
+TIMEOUT = 20.0  # the bulletin is about 1.6 MB
+NBA = 138  # iddaa's (and nesine's) league id for the NBA
 AHEAD = timedelta(hours=6)  # games starting this soon are read
 TIP_SLACK = timedelta(hours=3)  # an iddaa game and an ESPN game this far apart in start time can't match
 
@@ -81,12 +82,6 @@ def match_game(event: dict, schedule: Schedule) -> ScheduledGame | None:
             if team_matches(home, h) and team_matches(away, a):
                 fits.append(g)
     return fits[0] if len(fits) == 1 else None
-
-
-def nba_events(raw: dict) -> list[dict]:
-    """The NBA games in iddaa's event list (events not started yet; iddaa drops a game at tip-off)."""
-    events = ((raw or {}).get("data") or {}).get("events") or []
-    return [e for e in events if e.get("ci") == NBA]
 
 
 def _odds(market: dict) -> dict[str, float]:
@@ -196,26 +191,51 @@ def readout(game: dict) -> dict:
     }
 
 
+def from_nesine(event: dict) -> dict:
+    """A game from nesine's bulletin in iddaa's own shape (the one parse_event reads). nesine is an
+    iddaa dealer and keeps iddaa's market codes; it numbers outcomes ("1" home, "2" away; for totals
+    1 under, 2 over), names players "Last, First n+", and marks an open market MS 1."""
+    markets = []
+    for m in event.get("MA") or []:
+        st = m.get("MST")
+        if m.get("MS") != 1 or st not in (WINNER, *MAIN_MARKETS, *STATS):
+            continue
+        outcomes = []
+        for o in m.get("OCA") or []:
+            if st in STATS:
+                hit = RUNG.match(str(o.get("ON") or "").strip())
+                if not hit:
+                    continue
+                last, _, first = hit["name"].partition(",")
+                name = f"{first.strip()} {last.strip()}".strip()
+                outcomes.append({"n": f"{name} {hit['n']}+", "odd": o.get("O")})
+            else:
+                n = {1: "1", 2: "2"}.get(o.get("N"))
+                if n and st in MAIN_MARKETS and st != 113:
+                    n = {"1": "Alt", "2": "Üst"}[n]
+                if n:
+                    outcomes.append({"n": n, "odd": o.get("O")})
+        markets.append({"st": st, "sov": str(m.get("SOV")), "o": outcomes})
+    try:
+        tip = int(event.get("ESD") or 0) // 1000
+    except (TypeError, ValueError):
+        tip = 0
+    return {"i": event.get("C"), "hn": event.get("HN"), "an": event.get("AN"), "ci": NBA, "d": tip, "m": markets}
+
+
 async def fetch(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> list[tuple[dict, dict]]:
-    """iddaa's NBA games still to start: (event from the list, its full answer). Raises
-    httpx.HTTPError (or ValueError on a bad answer) when the list can't be read; a game whose own
-    answer fails is left out."""
-    async with httpx.AsyncClient(transport=transport, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT}) as http:
-        resp = await http.get(EVENTS, params={"st": 2, "type": 0, "version": 0})
+    """iddaa's NBA games still to start, read from nesine's bulletin (one call for every sport):
+    (the game, its markets), both in iddaa's shape. Raises httpx.HTTPError (or ValueError on a bad
+    answer) when the bulletin can't be read."""
+    headers = {"User-Agent": USER_AGENT, "Referer": "https://www.nesine.com/"}
+    async with httpx.AsyncClient(transport=transport, timeout=TIMEOUT, headers=headers) as http:
+        resp = await http.get(BULLETIN)
         resp.raise_for_status()
-        events = nba_events(resp.json())
-
-        async def one(event: dict) -> dict | None:
-            try:
-                r = await http.get(EVENT.format(event["i"]))
-                return (r.json() or {}).get("data") if r.status_code == 200 else None
-            except (httpx.HTTPError, ValueError, KeyError):
-                return None
-
-        full = await asyncio.gather(*(one(e) for e in events))
-    return [(e, f) for e, f in zip(events, full, strict=True) if f]
+        events = ((resp.json() or {}).get("sg") or {}).get("EA") or []
+    games = [from_nesine(e) for e in events if e.get("LC") == NBA and e.get("TYPE") == 2]
+    return [(g, g) for g in games]
 
 
 def update(
