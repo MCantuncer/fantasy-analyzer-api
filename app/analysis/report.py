@@ -6,6 +6,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from itertools import chain
@@ -40,7 +41,7 @@ from app.analysis.projection import CLOSE
 from app.analysis.sim import EACH_CATEGORY, SeasonResult, SeasonSim, simulate_season
 from app.analysis.tiers import droppable, has_market, tier
 from app.analysis.timing import MatchupTiming, Timing
-from app.analysis.tonight import MAX_MINUTES, came_back, minutes_gained, ruled_out
+from app.analysis.tonight import MAX_MINUTES, came_back, came_back_tagged, minutes_gained, ruled_out
 from app.analysis.trades import SCREEN_MIN_THEIR_GAIN, Deal, Mode, TradeFinder, acceptance_label, mix_shapes
 from app.espn.parse import PRO_TEAM_ABBREV, League, Player, Team, with_minutes
 
@@ -265,6 +266,7 @@ def _game_line(
         return line, None
     out = [_teammate(t) for t in mates if ruled_out(t)]
     back = [_teammate(t) for t in mates if came_back(t)]
+    back += [replace(_teammate(t), chance=c) for t in mates if (c := came_back_tagged(t)) > 0]
     return line, gamebox.apply(line, m, out, gained, back)
 
 

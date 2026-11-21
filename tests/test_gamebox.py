@@ -540,3 +540,13 @@ def test_a_week_line_keeps_free_throws_and_one_game_signals_to_the_first_game():
     plain = gamebox.week_line(LINE, [_ctx()])[MINUTES]
     assert one == pytest.approx(plain + gamebox.COACH_SAT_MINUTES)
     assert two == pytest.approx(plain + gamebox.COACH_SAT_MINUTES / 2)
+
+
+def test_a_tagged_teammate_back_counts_by_his_chance_in_minutes_only():
+    plain = gamebox.apply(LINE, _ctx(), [])[0]
+    full = gamebox.apply(LINE, _ctx(), [], 0.0, [Teammate("Jaylen Brown", 34.0, 22.0, 0.0, 2)])[0]
+    tagged = gamebox.apply(LINE, _ctx(), [], 0.0, [Teammate("Jaylen Brown", 34.0, 22.0, 0.0, 2, chance=0.6)])[0]
+    # Minutes move by his chance to play of what an untagged comeback moves them.
+    assert tagged[MINUTES] - plain[MINUTES] == pytest.approx(0.6 * (full[MINUTES] - plain[MINUTES]))
+    # His shots don't take points a minute: the points follow the minutes alone.
+    assert tagged[PTS] - plain[PTS] == pytest.approx(20.0 / 30.0 * (tagged[MINUTES] - plain[MINUTES]))
