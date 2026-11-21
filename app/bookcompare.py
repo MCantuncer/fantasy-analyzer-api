@@ -241,7 +241,7 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
 def ladder_rungs(
     stat: str, ours: float | None, ladder: Iterable[tuple[int, float]], margin: float, actual: float | None
 ) -> list[dict]:
-    """The book's "n+" rungs (odds MIN_ODD and up) with both chances side by side.
+    """The book's "n+" rungs (odds over MIN_ODD) with both chances side by side.
 
     book: the book's chance, its game margin taken out (as the ladder line is read); ours: our
     chance from our line (analysis/rungs.py, five replayed seasons); value: what one unit returns on
@@ -249,7 +249,7 @@ def ladder_rungs(
     it should); hit: did he get there (None until a result, or when he didn't play)."""
     out = []
     for n, odd in sorted(ladder):
-        if odd < iddaa.MIN_ODD:
+        if not iddaa.priced(odd):
             continue
         p = rung_chances.chance(stat, ours, n)
         out.append(
@@ -339,7 +339,7 @@ def tally(games: list[dict]) -> list[dict]:
 
 
 # The running record: odds bands for the value picks, chance buckets for calibration.
-ODDS_BANDS = ((1.29, 2.0), (2.0, 4.0), (4.0, 10.0), (10.0, None))
+ODDS_BANDS = ((iddaa.MIN_ODD, 2.0), (2.0, 4.0), (4.0, 10.0), (10.0, None))
 CHANCE_BUCKETS = ((0.0, 0.1), (0.1, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1.01))
 
 
