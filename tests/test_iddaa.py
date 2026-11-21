@@ -64,7 +64,7 @@ def test_a_game_reads_into_main_lines_and_player_ladders():
     assert got["win"] == [0.0, 4.71]  # iddaa closed the home side
     assert all(odd > 1.0 for rungs in got["players"]["Nate Ament"].values() for _, odd in rungs)
     read = iddaa.readout(got)
-    assert 0.8 < read["home_chance"] < 0.85  # from the away side, margin taken out
+    assert read["home_chance"] is None  # home closed (a near-certainty): the book isn't pricing the winner
     embiid, maxey = read["players"]["Joel Embiid"], read["players"]["Tyrese Maxey"]
     assert 25 < embiid["pts"] < 29 and 24 < maxey["pts"] < 27 and 2 < maxey["three_pm"] < 4
 
@@ -72,7 +72,14 @@ def test_a_game_reads_into_main_lines_and_player_ladders():
 def test_a_ladder_line_is_where_it_crosses_half_after_the_margin():
     rungs = [[10, 1.25], [12, 1.65], [14, 2.4]]  # 10+: 66%, 12+: 50%, 14+: 34% once 21% is taken out
     assert iddaa.ladder_line(rungs, 1.21) == 11.5
-    assert iddaa.ladder_line([[10, 1.25], [12, 2.5]], 1.0) == 11.0  # 80% at 9.5, 40% at 11.5: drawn straight
+    assert iddaa.ladder_line([[10, 1.3], [12, 2.5]], 1.0) == 11.0  # 77% at 9.5, 40% at 11.5: drawn straight
+    # Can: a rung under 1.29 isn't the book saying anything, so a ladder that crosses only there has no line.
+    assert iddaa.ladder_line([[10, 1.25], [12, 2.5]], 1.0) is None
+
+
+def test_a_winner_priced_under_1_29_is_not_the_book_s_pick():
+    assert iddaa.home_chance({"win": [1.6, 2.3]}) == 0.59
+    assert iddaa.home_chance({"win": [1.2, 4.5]}) is None
     assert iddaa.ladder_line([[20, 3.0], [22, 5.0]], 1.21) is None  # never reaches half
 
 
