@@ -22,7 +22,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import benched, iddaa, linelog, playchance, pregame, schemas
+from app import benched, bookcompare, iddaa, linelog, playchance, pregame, schemas
 from app import errors as error_reports
 from app.accounts import (
     PASSWORD_MIN,
@@ -926,6 +926,76 @@ def create_app(
             )
         return schemas.BookLines(
             season=season, day=day, days=days, look=schemas.BookLook(**app.state.book_log), games=games
+        )
+
+    @app.post(
+        "/api/admin/book-compare", response_model=schemas.BookCompare, responses={403: {"model": schemas.ErrorBody}}
+    )
+    async def admin_book_compare(
+        body: schemas.BookLinesRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.BookCompare:
+        """Admins only: one NBA day of iddaa's lines beside ours (player lines from the line log, our call
+        kept at iddaa's look) and, once the games are final, what happened, each side judged against the
+        result (app/bookcompare.py). Comparison only."""
+        await admin_user(authorization)
+        season = body.season or current_season(app.state.now())
+        days = await run_in_threadpool(app.state.store.book_line_days, season)
+        day = body.day or (days[-1] if days else None)
+        book = await run_in_threadpool(app.state.store.get_book_lines, season, day) if day else None
+        lines = await run_in_threadpool(app.state.store.get_player_lines, season, day) if day else None
+        played, date, nights = None, None, [schemas.ScoreDayRef(day=d, games=0) for d in days]
+        league_id = app.state.line_log_league_id or app.state.sample_league_id
+        if book and league_id:
+            try:
+                sched = await score_calendar(season)
+                date = _iso_date(sched.date_of(day))
+                nights = [
+                    schemas.ScoreDayRef(day=d, date=_iso_date(sched.date_of(d)), games=len(sched.games.get(d, [])))
+                    for d in days
+                ]
+                if any(g.start <= app.state.now() for g in sched.games.get(day, [])):
+                    played = await score_day(season, day, league_id, None, sched)
+            except Exception:  # iddaa's and our numbers still read without the results
+                logging.getLogger(__name__).warning("book compare: no results for day %s", day, exc_info=True)
+        try:
+            names = {p.id: p.name for p in await player_index(season)}
+        except Exception:
+            names = {}
+        got = await run_in_threadpool(bookcompare.compare_day, book, lines, played, names)
+
+        def ab(team: int | None) -> str:
+            return PRO_TEAM_ABBREV.get(team, "") if team else ""
+
+        games = [
+            schemas.CompareGame(
+                **{k: g[k] for k in ("game_id", "tip", "checked", "status", "away_score", "home_score")},
+                away=ab(g["away"]),
+                home=ab(g["home"]),
+                markets=[
+                    schemas.CompareMarket(
+                        **{
+                            **m,
+                            "team": ab(m.get("pick")),
+                            "book_team": ab(m.get("book_pick")),
+                            "won": ab(m.get("won")),
+                        }
+                    )
+                    for m in g["markets"]
+                ],
+                players=[schemas.ComparePlayer(**{**p, "team": ab(p["team"])}) for p in g["players"]],
+            )
+            for g in got["games"]
+        ]
+        return schemas.BookCompare(
+            season=season,
+            day=day,
+            date=date,
+            days=days,
+            nights=nights,
+            bands=bookcompare.BANDS,
+            look=schemas.BookLook(**app.state.book_log),
+            games=games,
+            tally=[schemas.CompareTally(**t) for t in got["tally"]],
         )
 
     @app.post("/api/admin/errors/resolve", responses={403: {"model": schemas.ErrorBody}})
