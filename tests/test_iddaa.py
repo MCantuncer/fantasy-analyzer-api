@@ -85,7 +85,7 @@ def test_each_game_keeps_its_last_look_before_tip_off():
     rec = iddaa.update({33: rec}, sched, [(listed(), later)], TIP - timedelta(minutes=5))[33]
     assert "total" not in rec["games"]["401"]  # the newer look replaces the old
     assert iddaa.update({33: rec}, sched, [(listed(), EVENT)], TIP + timedelta(minutes=1)) == {}  # tipped off
-    assert iddaa.update({}, sched, [(listed(), EVENT)], TIP - timedelta(hours=7)) == {}  # too early
+    assert iddaa.update({}, sched, [(listed(), EVENT)], TIP - timedelta(hours=19)) == {}  # too early
 
 
 def test_nesine_games_read_like_iddaa_s_own():

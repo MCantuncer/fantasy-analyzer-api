@@ -38,7 +38,7 @@ BULLETIN = "https://cdnbulten.nesine.com/api/bulten/getprebultenfull"
 USER_AGENT = "Mozilla/5.0 (compatible; fantasy-analyzer/1.0)"
 TIMEOUT = 20.0  # the bulletin is about 1.6 MB
 NBA = 138  # iddaa's (and nesine's) league id for the NBA
-AHEAD = timedelta(hours=6)  # games starting this soon are read
+AHEAD = timedelta(hours=18)  # games starting this soon are read: the whole night, from the first look of the day
 TIP_SLACK = timedelta(hours=3)  # an iddaa game and an ESPN game this far apart in start time can't match
 
 # iddaa market sub-types. Outcome "1" is the home team (iddaa's "hn").
