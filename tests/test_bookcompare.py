@@ -192,7 +192,14 @@ def test_the_record_adds_up_settled_rungs_over_nights():
     ours = [b for b in got["calibration"] if b["side"] == "ours"]
     assert sum(b["rungs"] for b in ours) == got["rungs"] and all(0 <= b["happened"] <= 1 for b in ours)
     assert got["ours_score"] is not None and got["book_score"] is not None
+    first, second, third = got["series"]
+    assert first == second and first["settled"] and not third["settled"] and third["picks"] == 0
+    assert first["picks"] == len(picks) and first["hits"] == sum(1 for r in picks if r["hit"])
+    assert first["net"] == round(sum(r["odd"] - 1 if r["hit"] else -1 for r in picks), 2)
+    assert first["marked"] == round(sum(r["value"] for r in picks), 2)
+    assert first["top_hit"] == max((r["odd"] for r in picks if r["hit"]), default=None)
     assert bookcompare.record([]) == {
+        "series": [],
         "nights": 0,
         "rungs": 0,
         "ours_score": None,
@@ -208,5 +215,5 @@ def test_anyone_signed_in_reads_the_record(recorded):
     store.save_player_lines(2027, 33, linelog.settle(our_lines(), []), True)
     assert TestClient(app).post("/api/book-compare/record", json={"season": 2027}).status_code == 401
     got = signed_in(app, team_id=None).post("/api/book-compare/record", json={"season": 2027}).json()
-    assert got["season"] == 2027 and got["nights"] == 1
+    assert got["season"] == 2027 and got["nights"] == 1 and got["series"][0]["day"] == 33
     assert {"picks", "calibration", "ours_score", "book_score"} <= set(got)

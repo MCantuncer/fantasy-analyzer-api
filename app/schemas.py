@@ -2059,6 +2059,17 @@ class RecordBucket(BaseModel):
     happened: float = Field(description="How often he reached the rung")
 
 
+class RecordNight(BaseModel):
+    day: int | None = Field(description="NBA day (scoring period)")
+    settled: bool = Field(description="The night has results; False before tip-off")
+    picks: int = Field(description="Settled rungs with value over 0 by our chance")
+    hits: int
+    net: float = Field(description="One unit on each at the book's odds: net units")
+    marked: float = Field(description="Sum of the picks' value: what our chances expected them to make")
+    players: int = Field(description="How many players the picks spread over")
+    top_hit: float | None = Field(description="Odds of the biggest pick that landed")
+
+
 class BookRecord(BaseModel):
     season: int
     nights: int = Field(description="Saved nights read")
@@ -2067,6 +2078,7 @@ class BookRecord(BaseModel):
     book_score: float | None = Field(description="Brier score of the book's rung chances, margin taken out")
     picks: list[RecordPicks]
     calibration: list[RecordBucket]
+    series: list[RecordNight] = Field(default_factory=list, description="One line per night, oldest first")
 
 
 class BookPlayer(BaseModel):
