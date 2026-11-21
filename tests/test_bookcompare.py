@@ -148,3 +148,30 @@ def test_a_game_not_yet_started_without_a_saved_call_gets_today_s(recorded):
     got = boss(app).post("/api/admin/book-compare", json={"season": 2027}).json()
     winner = next(m for m in got["games"][0]["markets"] if m["market"] == "winner")
     assert winner["ours"] is not None  # today's call, though the book closed the favourite
+
+
+def test_each_rung_carries_both_chances_its_value_and_the_result():
+    names = {EMBIID: "Joel Embiid", MAXEY: "Tyrese Maxey"}
+    after = bookcompare.compare_day(book_record(), our_lines(), final_day(), names)
+    [g] = after["games"]
+    embiid = {p["stat"]: p for p in g["players"] if p["name"] == "Joel Embiid"}["pts"]
+    steps = embiid["rungs"]
+    assert len(steps) >= 3 and all(r["odd"] >= iddaa.MIN_ODD for r in steps)
+    ours = [r["ours"] for r in steps]
+    assert ours == sorted(ours, reverse=True) and all(0 < p < 1 for p in ours)  # higher rung, smaller chance
+    for r in steps:
+        assert r["value"] == round(r["ours"] * r["odd"] - 1, 3)
+        assert r["hit"] == (22 >= r["n"])  # he scored 22
+    assert embiid["best_value"] == max(r["value"] for r in steps)
+    assert embiid["rung_closer"] in ("ours", "book", "tie")
+    maxey = [p for p in g["players"] if p["name"] == "Tyrese Maxey"]
+    assert all(r["hit"] is None for p in maxey for r in p["rungs"])  # he sat: nothing settles
+    ament = [p for p in g["players"] if p["name"] == "Nate Ament"]
+    assert all(r["ours"] is None and r["value"] is None for p in ament for r in p["rungs"])  # no line of ours
+
+    pts = next(t for t in after["tally"] if t["stat"] == "pts")
+    assert pts["rungs"] == len(steps)
+    assert pts["ours_rung_score"] is not None and pts["book_rung_score"] is not None
+    picks = [r for r in steps if r["value"] > 0]
+    assert pts["value_picks"] == len(picks)
+    assert pts["value_return"] == round(sum(r["odd"] - 1 if r["hit"] else -1 for r in picks), 2)
