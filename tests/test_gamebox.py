@@ -1,4 +1,5 @@
 import copy
+from dataclasses import replace
 
 import pytest
 
@@ -540,6 +541,56 @@ def test_a_week_line_keeps_free_throws_and_one_game_signals_to_the_first_game():
     plain = gamebox.week_line(LINE, [_ctx()])[MINUTES]
     assert one == pytest.approx(plain + gamebox.COACH_SAT_MINUTES)
     assert two == pytest.approx(plain + gamebox.COACH_SAT_MINUTES / 2)
+
+
+def _rotation_rows(late: float = 30.0, skip: tuple[int, ...] = ()) -> list[GameRow]:
+    """Team 1 plays teams 2 eight times. Player 11 plays 30 minutes every game; player 12 plays 20 in the
+    first five and ``late`` in the last three (none on the days in ``skip``); player 13 plays 10 (not a regular)."""
+    rows = []
+    for day in range(1, 9):
+        game = 200 + day
+        rows.append(GameRow(11, game, day, 1, _line(30, pts=15)))
+        if day not in skip:
+            rows.append(GameRow(12, game, day, 1, _line(20 if day <= 5 else late, pts=10)))
+        rows.append(GameRow(13, game, day, 1, _line(10, pts=2)))
+        rows.append(GameRow(21, game, day, 2, _line(36, pts=20)))
+    return rows
+
+
+ROTATION_SCHEDULE = {
+    1: [gamebox.Game(d, 2, d % 2 == 0) for d in range(1, 10)],
+    2: [gamebox.Game(d, 1, d % 2 == 1) for d in range(1, 10)],
+}
+
+
+def test_a_shorter_rotation_lately_adds_minutes():
+    box = gamebox.build(2027, _rotation_rows(), PRIOR, ROTATION_SCHEDULE)
+    # Player 12 played 30 in his last 3 games against 23.75 over his 8: 6.25 more lately. Player 13 is
+    # under ROTATION_REGULAR, and a player is never in his own rotation.
+    m = gamebox.context(box, 11, 1, 9)
+    assert m.rotation == ((12, pytest.approx(6.25)),)
+    line = _line(30.0, pts=15.0)
+    plain = gamebox.apply(line, replace(m, rotation=()), [])[0][MINUTES]
+    new, _, reasons = gamebox.apply(line, m, [])
+    assert new[MINUTES] - plain == pytest.approx(gamebox.ROTATION_MINUTES * 6.25)
+    rot = next(r for r in reasons if r.kind == "rotation")
+    assert rot.minutes == pytest.approx(gamebox.ROTATION_MINUTES * 6.25)
+    assert _reason_text(rot, m) == "Shorter rotation lately"
+    # Ruled out tonight: his minutes lately say nothing about tonight's rotation.
+    assert gamebox.apply(line, m, [], absent={12})[0][MINUTES] == pytest.approx(plain)
+    # A longer bench lately takes minutes.
+    longer = gamebox.context(gamebox.build(2027, _rotation_rows(late=12.0), PRIOR, ROTATION_SCHEDULE), 11, 1, 9)
+    rot = next(r for r in gamebox.apply(line, longer, [])[2] if r.kind == "rotation")
+    assert rot.minutes < 0 and _reason_text(rot, longer) == "Longer rotation lately"
+
+
+def test_the_rotation_holds_regulars_who_played_lately():
+    # Player 12 sat two of his team's last five games: not in the rotation.
+    box = gamebox.build(2027, _rotation_rows(skip=(6, 7)), PRIOR, ROTATION_SCHEDULE)
+    assert box.rotation(1, 9) == ((11, pytest.approx(0.0)),)
+    # Before his team's ROTATION_GAMES-th game, no one is.
+    early = gamebox.build(2027, [r for r in _rotation_rows() if r.day <= 4], PRIOR, ROTATION_SCHEDULE)
+    assert early.rotation(1, 5) == ()
 
 
 def test_a_tagged_teammate_back_counts_by_his_chance_in_minutes_only():

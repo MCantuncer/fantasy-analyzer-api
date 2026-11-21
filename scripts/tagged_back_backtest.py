@@ -64,8 +64,8 @@ def season_lines(season: int) -> dict[str, np.ndarray]:
                 back.append(mate)
         if not tagged:
             continue
-        out["before"].append(cats(gamebox.apply(c.line, c.context, c.mates, c.gained, back)[0]))
-        out["after"].append(cats(gamebox.apply(c.line, c.context, c.mates, c.gained, back + tagged)[0]))
+        out["before"].append(cats(gamebox.apply(c.line, c.context, c.mates, c.gained, back, c.absent)[0]))
+        out["after"].append(cats(gamebox.apply(c.line, c.context, c.mates, c.gained, back + tagged, c.absent)[0]))
         out["actual"].append(cats(c.actual))
         out["played"].append(played)
     return {k: np.array(v) for k, v in out.items()}
