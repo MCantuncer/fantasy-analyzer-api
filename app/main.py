@@ -935,10 +935,24 @@ def create_app(
     async def admin_book_compare(
         body: schemas.BookLinesRequest, authorization: str | None = Header(default=None)
     ) -> schemas.BookCompare:
-        """Admins only: one NBA day of iddaa's lines beside ours (player lines from the line log, our call
-        kept at iddaa's look) and, once the games are final, what happened, each side judged against the
-        result (app/bookcompare.py). Comparison only."""
+        """Admins: the comparison below, with how the last read of the sportsbook went."""
         await admin_user(authorization)
+        return await book_compare(body)
+
+    @app.post("/api/book-compare", response_model=schemas.BookCompare, responses={401: {"model": schemas.ErrorBody}})
+    async def user_book_compare(
+        body: schemas.BookLinesRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.BookCompare:
+        """Anyone signed in (the Our Estimates page): the comparison below. A failed read of the sportsbook
+        shows as failed, without the error text, which stays with the admins."""
+        await current_user(authorization)
+        got = await book_compare(body)
+        return got.model_copy(update={"look": got.look.model_copy(update={"error": None})})
+
+    async def book_compare(body: schemas.BookLinesRequest) -> schemas.BookCompare:
+        """One NBA day of the sportsbook's lines (iddaa, through nesine) beside ours (player lines from the
+        line log, our call kept at the book's look) and, once the games are final, what happened, each
+        side judged against the result (app/bookcompare.py). Comparison only."""
         season = body.season or current_season(app.state.now())
         days = await run_in_threadpool(app.state.store.book_line_days, season)
         day = body.day or (days[-1] if days else None)
