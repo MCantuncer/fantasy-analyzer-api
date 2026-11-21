@@ -175,3 +175,38 @@ def test_each_rung_carries_both_chances_its_value_and_the_result():
     picks = [r for r in steps if r["value"] > 0]
     assert pts["value_picks"] == len(picks)
     assert pts["value_return"] == round(sum(r["odd"] - 1 if r["hit"] else -1 for r in picks), 2)
+
+
+def test_the_record_adds_up_settled_rungs_over_nights():
+    names = {EMBIID: "Joel Embiid", MAXEY: "Tyrese Maxey"}
+    night = bookcompare.compare_day(book_record(), our_lines(), final_day(), names)
+    before = bookcompare.compare_day(book_record(), our_lines(), None, names)
+    got = bookcompare.record([night, night, before])  # an unsettled night adds nothing
+    settled = [r for g in night["games"] for p in g["players"] for r in p["rungs"] if r["hit"] is not None]
+    settled = [r for r in settled if r["ours"] is not None]
+    assert got["nights"] == 3 and got["rungs"] == 2 * len(settled)
+    picks = [r for r in settled if r["value"] > 0]
+    every = [p for p in got["picks"] if p["stat"] == "all"]
+    assert sum(p["picks"] for p in every) == 2 * len(picks)
+    assert round(sum(p["net"] for p in every), 2) == round(2 * sum(r["odd"] - 1 if r["hit"] else -1 for r in picks), 2)
+    ours = [b for b in got["calibration"] if b["side"] == "ours"]
+    assert sum(b["rungs"] for b in ours) == got["rungs"] and all(0 <= b["happened"] <= 1 for b in ours)
+    assert got["ours_score"] is not None and got["book_score"] is not None
+    assert bookcompare.record([]) == {
+        "nights": 0,
+        "rungs": 0,
+        "ours_score": None,
+        "book_score": None,
+        "picks": [],
+        "calibration": [],
+    }
+
+
+def test_anyone_signed_in_reads_the_record(recorded):
+    app, store, _ = _app(recorded)
+    store.save_book_lines(2027, 33, book_record())
+    store.save_player_lines(2027, 33, linelog.settle(our_lines(), []), True)
+    assert TestClient(app).post("/api/book-compare/record", json={"season": 2027}).status_code == 401
+    got = signed_in(app, team_id=None).post("/api/book-compare/record", json={"season": 2027}).json()
+    assert got["season"] == 2027 and got["nights"] == 1
+    assert {"picks", "calibration", "ours_score", "book_score"} <= set(got)

@@ -2035,6 +2035,40 @@ class BookLinesRequest(BaseModel):
     day: int | None = Field(default=None, ge=1, description="NBA day (scoring period); the latest saved when unset")
 
 
+class BookRecordRequest(BaseModel):
+    season: int | None = Field(default=None, description="ESPN season (the year it ends); the current one when unset")
+    nights: int = Field(default=30, ge=1, le=200, description="How many of the latest saved nights")
+
+
+class RecordPicks(BaseModel):
+    stat: str = Field(description="three_pm, reb, ast, stl, blk, pts or all")
+    odds_from: float
+    odds_to: float | None = Field(description="None: and up")
+    picks: int = Field(description="Settled rungs with value over 0 by our chance")
+    hits: int = Field(description="Of those, how many he reached")
+    said: float = Field(description="Our average chance on those picks")
+    net: float = Field(description="One unit on each at the book's odds: net units (+ = they paid)")
+
+
+class RecordBucket(BaseModel):
+    side: Literal["ours", "book"]
+    chance_from: float
+    chance_to: float
+    rungs: int
+    said: float = Field(description="The side's average chance in this bucket")
+    happened: float = Field(description="How often he reached the rung")
+
+
+class BookRecord(BaseModel):
+    season: int
+    nights: int = Field(description="Saved nights read")
+    rungs: int = Field(description="Settled rungs with both chances")
+    ours_score: float | None = Field(description="Brier score of our rung chances (lower is better)")
+    book_score: float | None = Field(description="Brier score of the book's rung chances, margin taken out")
+    picks: list[RecordPicks]
+    calibration: list[RecordBucket]
+
+
 class BookPlayer(BaseModel):
     name: str = Field(description="As iddaa spells it")
     pts: float | None = Field(default=None, description="iddaa's line: the number he goes past half the time")
