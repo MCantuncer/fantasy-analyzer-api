@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+from fastapi.testclient import TestClient
+
 from app import bookcompare, iddaa, linelog
 from app.playersearch import IndexPlayer
 from tests.conftest import signed_in
@@ -122,6 +124,18 @@ def test_admins_read_a_day_compared(recorded):
     assert winner["team"] == "PHI" and winner["ours"] == 0.85
     assert any(p["name"] == "Joel Embiid" and p["stat"] == "pts" and p["ours"] == 31.0 for p in g["players"])
     assert {t["stat"] for t in got["tally"]} >= {"pts", "winner", "total"}
+
+    # Anyone signed in reads the same comparison (the Our Estimates page); signed out, nobody.
+    assert app.state.book_log is not None
+    app.state.book_log.update(ok=False, error="HTTPStatusError: 403")
+    admin = TestClient(app, headers={"Authorization": "Bearer admin-token"}).post(
+        "/api/admin/book-compare", json={"season": 2027}
+    )
+    assert admin.json()["look"]["error"]
+    user = signed_in(app, team_id=None).post("/api/book-compare", json={"season": 2027}).json()
+    assert user["games"] == admin.json()["games"]
+    assert TestClient(app).post("/api/book-compare", json={"season": 2027}).status_code == 401
+    assert user["look"]["ok"] is False and user["look"]["error"] is None
 
 
 def test_a_game_not_yet_started_without_a_saved_call_gets_today_s(recorded):
