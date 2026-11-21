@@ -72,14 +72,15 @@ def test_a_game_reads_into_main_lines_and_player_ladders():
 def test_a_ladder_line_is_where_it_crosses_half_after_the_margin():
     rungs = [[10, 1.25], [12, 1.65], [14, 2.4]]  # 10+: 66%, 12+: 50%, 14+: 34% once 21% is taken out
     assert iddaa.ladder_line(rungs, 1.21) == 11.5
-    assert iddaa.ladder_line([[10, 1.3], [12, 2.5]], 1.0) == 11.0  # 77% at 9.5, 40% at 11.5: drawn straight
-    # Can: a rung under 1.29 isn't the book saying anything, so a ladder that crosses only there has no line.
-    assert iddaa.ladder_line([[10, 1.25], [12, 2.5]], 1.0) is None
+    assert iddaa.ladder_line([[10, 1.5], [12, 2.25]], 1.0) == 11.0  # 67% at 9.5, 44% at 11.5: drawn straight
+    # Can: a rung at or under 1.33 isn't the book saying anything, so a ladder that crosses only there has no line.
+    assert iddaa.ladder_line([[10, 1.33], [12, 2.5]], 1.0) is None
 
 
-def test_a_winner_priced_under_1_29_is_not_the_book_s_pick():
+def test_a_winner_priced_at_1_33_or_under_is_not_the_book_s_pick():
     assert iddaa.home_chance({"win": [1.6, 2.3]}) == 0.59
-    assert iddaa.home_chance({"win": [1.2, 4.5]}) is None
+    assert iddaa.home_chance({"win": [1.33, 3.4]}) is None
+    assert iddaa.home_chance({"win": [1.34, 3.4]}) is not None
     assert iddaa.ladder_line([[20, 3.0], [22, 5.0]], 1.21) is None  # never reaches half
 
 

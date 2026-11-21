@@ -156,7 +156,7 @@ def test_each_rung_carries_both_chances_its_value_and_the_result():
     [g] = after["games"]
     embiid = {p["stat"]: p for p in g["players"] if p["name"] == "Joel Embiid"}["pts"]
     steps = embiid["rungs"]
-    assert len(steps) >= 3 and all(r["odd"] >= iddaa.MIN_ODD for r in steps)
+    assert len(steps) >= 3 and all(r["odd"] > iddaa.MIN_ODD for r in steps)
     ours = [r["ours"] for r in steps]
     assert ours == sorted(ours, reverse=True) and all(0 < p < 1 for p in ours)  # higher rung, smaller chance
     for r in steps:
