@@ -89,12 +89,12 @@ def collect(seasons: tuple[int, ...]) -> dict[str, np.ndarray]:
         for box, c in cases(season):
             line, m = c.line, c.context
             lm = line.get(MINUTES, 0.0)
-            new, _, _ = gamebox.apply(line, m, c.mates, c.gained, c.back)
+            new, _, _ = gamebox.apply(line, m, c.mates, c.gained, c.back, c.absent)
             put("season", season)
             put("lm", lm)
             put("gained", c.gained)
             put("act_min", c.actual.get(MINUTES, 0.0))
-            for k, v in gamebox.minute_signals(lm, m, c.mates, c.back).items():
+            for k, v in gamebox.minute_signals(lm, m, c.mates, c.back, c.absent).items():
                 put(f"m_{k}", v)
             put("home", 0.5 if m.home else -0.5)
             for name, stat in RATE_STATS.items():
