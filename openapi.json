@@ -8799,7 +8799,8 @@
               "season_end",
               "lopsided_games",
               "blowout",
-              "overtime"
+              "overtime",
+              "rotation"
             ],
             "title": "Kind"
           },

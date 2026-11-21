@@ -17,6 +17,7 @@ assists, 1.0-1.7% for steals, 1.0-1.6% for blocks, 1.6-2.6% for threes, 1.4-2.3%
   * his minutes: lately (decayed), in his last game and over a longer run; whether he started his
     last game against how often he has started lately (a new starter plays up to about 2 more minutes,
     a benched one up to about 2 fewer); games he just missed, and his first three games back;
+    and his regular teammates' minutes lately against their usual (a coach shortening his bench);
   * the opponent's defense in each stat: what the players it faced made against what they usually
     make per minute (DEFENSE_PRIOR_GAMES of league average to start). Raw "points allowed" is half
     as good, and splitting it by guards, wings and bigs, or by his own mix of shots, added nothing;
@@ -38,7 +39,7 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 
 import numpy as np
@@ -112,6 +113,15 @@ BLOWOUT_MINUTES = -0.6  # per 10 points his team is favored (or the underdog) by
 BLOWOUT_MARGIN = 8.0
 OVERTIME_MINUTES = -0.55  # his last game went to overtime: its extra minutes aren't his role
 OVERTIME_TEAM_MINUTES = 252.0  # player minutes of a team in a game that went to overtime (240 without)
+# Rotation tightening: when his regular teammates have played more minutes in their last
+# ROTATION_RECENT games than over their last FORM_GAMES, the coach is leaning on fewer players, and
+# he plays more too (fewer: a longer bench). Regulars: ROTATION_REGULAR+ minutes a game, ROTATION_GAMES+
+# games this season, in ROTATION_PLAYED of their team's last ROTATION_WINDOW games, not ruled out.
+ROTATION_MINUTES = 0.0216  # per minute of regular teammates' recent minutes over their usual, summed
+ROTATION_RECENT = 3
+ROTATION_REGULAR = 12.0
+ROTATION_GAMES = 6
+ROTATION_WINDOW, ROTATION_PLAYED = 5, 4
 # Who was missing in his last games. His minutes lately already hold the games a teammate sat:
 BACK_SHARE = -0.058  # per minute of regulars back from an absence, x (1 - his minutes / BENCH_MINUTES)
 OLD_OUT_SHARE = -0.049  # per minute of teammates ruled out who already missed a game, x the same
@@ -134,6 +144,7 @@ MINUTE_WEIGHTS = {
     "overtime": OVERTIME_MINUTES,
     "bench_back": BACK_SHARE,
     "bench_old": OLD_OUT_SHARE,
+    "rotation": ROTATION_MINUTES,
 }
 MINUTE_KINDS = {
     "missed": "back_from_absence",
@@ -152,6 +163,7 @@ MINUTE_KINDS = {
     "overtime": "overtime",
     "bench_back": "teammates_back",
     "bench_old": "teammates_out",
+    "rotation": "rotation",
 }  # role: part of his usual line, not a reason
 
 # Per minute: his line's rate x (1 + sum of weight x signal) + level, per stat.
@@ -276,6 +288,9 @@ class Form:
     since_return: int = 0  # games played since missing RAMP_GAP+ team games in a row, while in RAMP
     decided_by: float | None = None  # points his last LOPSIDED_GAMES games were decided by, on average
     overtime: bool = False  # his last game went to overtime
+    minutes_recent: float | None = None  # a game over his last ROTATION_RECENT games
+    days: tuple[int, ...] = ()  # the days of his last ROTATION_WINDOW games
+    games: int = 0  # games played this season
 
 
 Carry = dict[float, list[float]]  # half-life -> [weight, then _DECAY_ROW], decayed to the end of a season
@@ -309,6 +324,26 @@ class Box:
     lineups: lineupcall.Lineups | None = field(default=None, repr=False)  # who played, for who plays tonight
     _day_scores: dict[int, gamescore.Scores] = field(default_factory=dict, repr=False, compare=False)
     _gaps: dict[int, float | None] = field(default_factory=dict, repr=False, compare=False)
+    _rotations: dict[tuple[int, int], tuple[tuple[int, float], ...]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+
+    def rotation(self, team: int, day: int) -> tuple[tuple[int, float], ...]:
+        """``team``'s regulars before ``day`` (ROTATION_REGULAR+ minutes, ROTATION_GAMES+ games, in
+        ROTATION_PLAYED of its last ROTATION_WINDOW games), each with his last ROTATION_RECENT games'
+        minutes over his last FORM_GAMES'."""
+        key = (team, day)
+        if key not in self._rotations:
+            last = [d for d in self.played.get(team, []) if d < day][-ROTATION_WINDOW:]
+            regs = []
+            for pid, f in self.form.items():
+                if f.team != team or f.minutes_recent is None or f.games < ROTATION_GAMES:
+                    continue
+                if f.minutes_long < ROTATION_REGULAR or sum(1 for d in f.days if d in last) < ROTATION_PLAYED:
+                    continue
+                regs.append((pid, f.minutes_recent - f.minutes_long))
+            self._rotations[key] = tuple(sorted(regs))
+        return self._rotations[key]
 
     def day_scores(self, day: int) -> gamescore.Scores:
         """Every team's scoring from the games before ``day``: what calls on that day stand on."""
@@ -527,6 +562,9 @@ def build(
             start_share=float(this[START_HALF_LIFE][col[GS]] / this[START_HALF_LIFE][0]),
             decided_by=sum(gaps) / len(gaps) if gaps else None,
             overtime=games[-1].game in overtime,
+            minutes_recent=sum(r.line[MINUTES] for r in games[-ROTATION_RECENT:]) / len(games[-ROTATION_RECENT:]),
+            days=tuple(r.day for r in games[-ROTATION_WINDOW:]),
+            games=len(games),
         )
     # Defense: what all its opponents made over what they usually make, with DEFENSE_PRIOR_GAMES
     # average team games blended in.
@@ -641,6 +679,7 @@ class GameContext:
     new_team: bool = False  # his first game for this team after playing for another one this season
     games_left: int | None = None  # his team's games left this season, this one included
     sat_ago: int | None = None  # days since he last sat a game by coach's decision (none: never, or not known)
+    rotation: tuple[tuple[int, float], ...] = ()  # his team's regulars but him: (player, recent minutes over usual)
     opp_three_luck: float = 0.0  # the opponent's 3P% allowed over the league's, shrunk (Box.three_luck)
 
 
@@ -672,6 +711,7 @@ def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
         new_team=new_team,
         games_left=sum(1 for g in box.schedule.get(team, []) if g.day >= game.day),
         sat_ago=game.day - max(sat) if sat else None,
+        rotation=tuple(x for x in box.rotation(team, game.day) if x[0] != player),
         opp_three_luck=box.three_luck.get(game.opponent, 0.0),
     )
 
@@ -745,7 +785,7 @@ class Reason:
     """One thing that moved his line: the minutes it moved and each stat (stat id -> change)."""
 
     kind: str  # opponent, form, teammates_out, back_from_absence, heavy_minutes, recent_minutes,
-    # starter_switch, new_team, season_end, coach_decision, lopsided_games, blowout, overtime,
+    # starter_switch, new_team, season_end, coach_decision, lopsided_games, blowout, overtime, rotation,
     # teammates_back, home, away, favored, underdog, back_to_back
     minutes: float = 0.0
     stats: dict[int, float] = field(default_factory=dict)
@@ -756,9 +796,14 @@ class Reason:
 
 
 def minute_signals(
-    minutes: float, m: GameContext, out: list[Teammate], back: Sequence[Teammate] = ()
+    minutes: float,
+    m: GameContext,
+    out: list[Teammate],
+    back: Sequence[Teammate] = (),
+    absent: Collection[int] = (),
 ) -> dict[str, float]:
-    """What moves his minutes (MINUTE_WEIGHTS), for a line of ``minutes``."""
+    """What moves his minutes (MINUTE_WEIGHTS), for a line of ``minutes``. ``absent``: teammates
+    who won't play (ESPN's OUT tags), left out of his team's rotation."""
     f = m.form
     sig = dict.fromkeys(MINUTE_WEIGHTS, 0.0)
     sig["missed"] = float(m.games_missed)
@@ -775,6 +820,7 @@ def minute_signals(
     sig["coach_sat"] = float(sat_lately and minutes >= COACH_SAT_LINE)
     core = minutes >= CORE_MINUTES
     sig["blowout"] = max(0.0, abs(m.margin) - BLOWOUT_MARGIN) / 10 if core else 0.0
+    sig["rotation"] = sum(change for q, change in m.rotation if q not in absent)
     if f is not None:
         if core and f.decided_by is not None:
             sig["lopsided"] = (f.decided_by - LOPSIDED_USUAL) / 10
@@ -826,13 +872,18 @@ def rate_signal(
 
 
 def apply(
-    line: dict[int, float], m: GameContext, out: list[Teammate], gained: float = 0.0, back: Sequence[Teammate] = ()
+    line: dict[int, float],
+    m: GameContext,
+    out: list[Teammate],
+    gained: float = 0.0,
+    back: Sequence[Teammate] = (),
+    absent: Collection[int] = (),
 ) -> tuple[dict[int, float], dict[int, float], list[Reason]]:
     """His line with the game in it, his usual line (the same model on a plain night: no opponent,
     form, teammates out or absence, at his usual role), and the reasons one differs from the other.
     ``line`` is today's next-game line (report.next_game_line), ``gained`` the minutes in it from
     teammates ruled out (tonight.minutes_gained), ``back`` the regulars back from an absence
-    (tonight.came_back)."""
+    (tonight.came_back), ``absent`` the teammates who won't play (OUT tags, by player id)."""
     minutes = line.get(MINUTES, 0.0)
     if minutes <= 0:
         return line, line, []
@@ -842,7 +893,7 @@ def apply(
         return reasons.setdefault(kind, Reason(kind))
 
     # Minutes
-    sig = minute_signals(minutes, m, out, back)
+    sig = minute_signals(minutes, m, out, back, absent)
     moves = {k: MINUTE_WEIGHTS[k] * x for k, x in sig.items()}
     new_minutes = min(max(minutes + MINUTES_LEVEL + sum(moves.values()), 0.0), MAX_MINUTES)
     rate = {k: line.get(k, 0.0) / minutes for k in COUNTING}

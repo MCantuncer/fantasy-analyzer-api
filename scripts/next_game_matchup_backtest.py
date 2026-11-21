@@ -126,6 +126,7 @@ class Case:
     back: list[gamebox.Teammate]  # regulars who play this game after missing their team's last one or more
     actual: dict[int, float]
     so_far: dict[int, float]
+    absent: frozenset[int] = frozenset()  # his team's regulars (gamebox.Box.rotation) who didn't play this game
 
 
 def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
@@ -208,7 +209,9 @@ def cases(season: int) -> Iterator[tuple[gamebox.Box, Case]]:
                         points = f.rate.get(PTS, 0.0) * f.minutes_long
                         returned[(gid, team)].append((q, gamebox.Teammate("", f.minutes_long, f.usage, points, missed)))
             back = [t for q, t in returned[(gid, team)] if q != pid]
-            yield box, Case(season, day, pid, team, opp, today, ctx, mates, gained, back, x, so_far)
+            went = {q for q, _ in sides[gid][team]}
+            absent = frozenset(q for q, _ in ctx.rotation if q not in went)
+            yield box, Case(season, day, pid, team, opp, today, ctx, mates, gained, back, x, so_far, absent)
 
 
 def season_cases(season: int, keys: list | None = None) -> tuple[list, list, list, list]:
@@ -216,7 +219,7 @@ def season_cases(season: int, keys: list | None = None) -> tuple[list, list, lis
     ``keys`` gets (season, day, player) of each case."""
     now, new, avg, act = [], [], [], []
     for _box, c in cases(season):
-        line_new, _, _ = gamebox.apply(c.line, c.context, c.mates, c.gained, c.back)
+        line_new, _, _ = gamebox.apply(c.line, c.context, c.mates, c.gained, c.back, c.absent)
         now.append(cats(c.line))
         new.append(cats(line_new))
         avg.append(cats(c.so_far))

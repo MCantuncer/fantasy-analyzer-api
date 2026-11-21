@@ -265,7 +265,8 @@ def _game_line(
         return line, None
     out = [_teammate(t) for t in mates if ruled_out(t)]
     back = [_teammate(t) for t in mates if came_back(t)]
-    return line, gamebox.apply(line, m, out, gained, back)
+    absent = {t.id for t in mates if not t.available}
+    return line, gamebox.apply(line, m, out, gained, back, absent)
 
 
 # Teammates' lines should add up to their team's expected score (gamescore.py). Their points lines,
@@ -428,6 +429,8 @@ def _reason_text(r: gamebox.Reason, m: gamebox.GameContext) -> str:
         return "Coach sat him yesterday" if days == 1 else f"Coach sat him {days} days ago"
     if r.kind == "lopsided_games":
         return "One-sided games lately" if r.minutes > 0 else "Close games lately"
+    if r.kind == "rotation":
+        return "Shorter rotation lately" if r.minutes > 0 else "Longer rotation lately"
     if r.kind == "blowout":
         return "This game may get one-sided"
     if r.kind == "overtime":
