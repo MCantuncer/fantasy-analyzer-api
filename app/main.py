@@ -983,7 +983,8 @@ def create_app(
                     played = await score_day(season, day, league_id, None, sched)
             except Exception:
                 logging.getLogger(__name__).warning("book record: no results for day %s", day, exc_info=True)
-        return await run_in_threadpool(bookcompare.compare_day, book, lines, played, {})
+        got = await run_in_threadpool(bookcompare.compare_day, book, lines, played, {})
+        return {**got, "day": day}
 
     async def book_compare(body: schemas.BookLinesRequest) -> schemas.BookCompare:
         """One NBA day of the sportsbook's lines (iddaa, through nesine) beside ours (player lines from the

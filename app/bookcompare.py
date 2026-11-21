@@ -349,7 +349,8 @@ def record(nights: list[dict]) -> dict:
     picks: per stat and odds band, the rungs with value over 0 by our chance, how many he reached
     and the net units of one unit on each at the book's odds (+ = they paid). calibration: per
     side, chance buckets with what was said on average and how often it happened. score: both
-    sides' Brier scores over the same rungs (lower is better)."""
+    sides' Brier scores over the same rungs (lower is better). series: one line per night
+    (night_line), oldest first, for a running balance."""
     steps = [
         (p["stat"], r)
         for night in nights
@@ -397,10 +398,35 @@ def record(nights: list[dict]) -> dict:
     rows = [r for _, r in steps]
     ours_b, book_b = brier(rows, "ours"), brier(rows, "book")
     return {
+        "series": [night_line(n) for n in nights],
         "nights": len(nights),
         "rungs": len(rows),
         "ours_score": None if ours_b is None else round(ours_b, 4),
         "book_score": None if book_b is None else round(book_b, 4),
         "picks": picks,
         "calibration": calibration,
+    }
+
+
+def night_line(night: dict) -> dict:
+    """One night of the record: its settled value picks, how many landed, net units at the book's
+    odds, what our chances marked them at (sum of value), how many players they spread over and the
+    odds of the biggest one that landed. settled: the night has results (False before tip-off)."""
+    picks = [
+        (p["name"], r)
+        for g in night["games"]
+        for p in g["players"]
+        for r in p.get("rungs", ())
+        if r["hit"] is not None and r["value"] is not None and r["value"] > 0
+    ]
+    landed = [r["odd"] for _, r in picks if r["hit"]]
+    return {
+        "day": night.get("day"),
+        "settled": any(g.get("status") == "final" for g in night["games"]),
+        "picks": len(picks),
+        "hits": len(landed),
+        "net": round(sum(r["odd"] - 1 if r["hit"] else -1.0 for _, r in picks), 2),
+        "marked": round(sum(r["value"] for _, r in picks), 2),
+        "players": len({name for name, _ in picks}),
+        "top_hit": max(landed, default=None),
     }
