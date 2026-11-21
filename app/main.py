@@ -918,6 +918,9 @@ def create_app(
                     total=read["total"],
                     home_pts=read["home_pts"],
                     away_pts=read["away_pts"],
+                    ours=schemas.GameCall(away=g["ours"][0], home=g["ours"][1], chance=g["ours"][2])
+                    if g.get("ours")
+                    else None,
                     players=[schemas.BookPlayer(name=n, **v) for n, v in sorted(read["players"].items())],
                 )
             )
@@ -1558,8 +1561,10 @@ def create_app(
                 logging.getLogger(__name__).warning("line log watch failed", exc_info=True)
 
     async def book_log_sweep() -> list[int]:
-        """One look at iddaa: the days it wrote (none when no game tips off soon). What happened is
-        kept in app.state.book_log for the admin read, so a host iddaa refuses shows up there."""
+        """One look at iddaa: the days it wrote (none when no game tips off soon). Each game looked at
+        also keeps our call as it stood then (["ours"]: away, home, chance), so both sides are frozen
+        at the same moment. What happened is kept in app.state.book_log for the admin read, so a host
+        iddaa refuses shows up there."""
         now = app.state.now()
         season = current_season(now)
         raw = await pro_schedule(season)
@@ -1580,7 +1585,12 @@ def create_app(
         for day in {g.day for g in games.values()}:
             records[day] = await run_in_threadpool(app.state.store.get_book_lines, season, day)
         changed = iddaa.update(records, sched, looks, now)
+        box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
         for day, record in changed.items():
+            for g in record["games"].values():
+                if g["checked"] == status["checked"] and box is not None:  # our call beside iddaa's, same look
+                    c = box.call(day, g["away"], g["home"])
+                    g["ours"] = [c.away, c.home, round(c.chance, 3)]
             await run_in_threadpool(app.state.store.save_book_lines, season, day, record)
         status.update(ok=True, error=None, games=len(looks), matched=len(games))
         return sorted(changed)

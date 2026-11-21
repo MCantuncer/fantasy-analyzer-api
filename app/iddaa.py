@@ -13,7 +13,8 @@ way a line is read from them can change later without losing a night. A day's re
         "event": iddaa id, "away": team, "home": team, "tip": iso, "checked": iso,
         "win": [home odd, away odd],                      0 where iddaa doesn't offer that side
         "margin" | "total" | "home_pts" | "away_pts": [line, first odd, second odd],
-        "players": {name: {stat: [[n, odd], ...]}}}}}     "Name n+" ladders, stats as STATS
+        "players": {name: {stat: [[n, odd], ...]}},       "Name n+" ladders, stats as STATS
+        "ours": [away, home, chance]}}}                   our call at the same look (app/main.py)
 
 The margin line is the home team's handicap (-5.5: home by 6 or more), its odds home then away; a
 total's odds are under then over. Only each market's main line (its two odds closest) is kept.

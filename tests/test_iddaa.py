@@ -129,4 +129,5 @@ def test_the_watch_saves_iddaa_and_admins_read_it_back(recorded):
     assert got["day"] == day and got["days"] == [day] and got["look"]["ok"] is True
     [g] = got["games"]
     assert g["game_id"] == game.id and g["margin"] == -11.5 and g["total"] == 228.5
+    assert g["ours"]["away"] != g["ours"]["home"] and 0.5 <= g["ours"]["chance"] <= 1  # our call, same look
     assert {p["name"] for p in g["players"]} == {"Joel Embiid", "Tyrese Maxey", "Nate Ament"}

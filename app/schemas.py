@@ -2048,6 +2048,7 @@ class BookGame(BaseModel):
     total: float | None
     home_pts: float | None
     away_pts: float | None
+    ours: GameCall | None = Field(default=None, description="Our call for the game at the same look")
     players: list[BookPlayer]
 
 
