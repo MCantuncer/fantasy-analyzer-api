@@ -601,3 +601,32 @@ def test_a_tagged_teammate_back_counts_by_his_chance_in_minutes_only():
     assert tagged[MINUTES] - plain[MINUTES] == pytest.approx(0.6 * (full[MINUTES] - plain[MINUTES]))
     # His shots don't take points a minute: the points follow the minutes alone.
     assert tagged[PTS] - plain[PTS] == pytest.approx(20.0 / 30.0 * (tagged[MINUTES] - plain[MINUTES]))
+
+
+def test_an_opponents_three_point_luck_fades():
+    # Team 1's opponents made 15 of 30 threes in each of three games (50%), team 2's 9 of 30 (30%):
+    # league 40%, so team 1 allowed 10 points over it, shrunk by THREE_LUCK_GAMES of average.
+    rows = []
+    for game, day in ((101, 1), (102, 3), (103, 4)):
+        for player, team, made in ((11, 1, 9.0), (21, 2, 15.0)):
+            line = _line(30, pts=3 * made)
+            line[gamebox.TPM], line[gamebox.gamescore.TPA] = made, 30.0
+            rows.append(GameRow(player, game, day, team, line))
+    box = gamebox.build(2027, rows, PRIOR, SCHEDULE)
+    shrink = 3 / (3 + gamebox.THREE_LUCK_GAMES)
+    assert box.three_luck[1] == pytest.approx(0.10 * shrink)
+    assert box.three_luck[2] == pytest.approx(-0.10 * shrink)
+    m = gamebox.context(box, 21, 2, 5)
+    assert m.opp_three_luck == pytest.approx(0.10 * shrink)
+    # A shooter facing team 1 gets fewer threes than its threes allowed alone say, in the opponent's reason.
+    line = _line(30.0, pts=15.0)
+    line[gamebox.TPM] = 3.0
+    plain = gamebox.apply(line, replace(m, opp_three_luck=0.0), [])[0][gamebox.TPM]
+    new, _, reasons = gamebox.apply(line, m, [])
+    base = 3.0 / 30.0 * new[MINUTES]
+    assert new[gamebox.TPM] - plain == pytest.approx(
+        base * gamebox.RATE_WEIGHTS[gamebox.TPM]["three_luck"] * 0.10 * shrink
+    )
+    without = gamebox.apply(line, replace(m, opp_three_luck=0.0), [])[2]
+    against = next(r for r in reasons if r.kind == "opponent").stats[gamebox.TPM]
+    assert against < next(r for r in without if r.kind == "opponent").stats[gamebox.TPM]
