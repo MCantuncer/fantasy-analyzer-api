@@ -336,3 +336,71 @@ def tally(games: list[dict]) -> list[dict]:
             }
         )
     return out
+
+
+# The running record: odds bands for the value picks, chance buckets for calibration.
+ODDS_BANDS = ((1.29, 2.0), (2.0, 4.0), (4.0, 10.0), (10.0, None))
+CHANCE_BUCKETS = ((0.0, 0.1), (0.1, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1.01))
+
+
+def record(nights: list[dict]) -> dict:
+    """Many compared nights (compare_day outputs) as one record of the settled player rungs.
+
+    picks: per stat and odds band, the rungs with value over 0 by our chance, how many he reached
+    and the net units of one unit on each at the book's odds (+ = they paid). calibration: per
+    side, chance buckets with what was said on average and how often it happened. score: both
+    sides' Brier scores over the same rungs (lower is better)."""
+    steps = [
+        (p["stat"], r)
+        for night in nights
+        for g in night["games"]
+        for p in g["players"]
+        for r in p.get("rungs", ())
+        if r["hit"] is not None and r["ours"] is not None
+    ]
+    picks = []
+    for stat in (*PLAYER_STATS, "all"):
+        for lo, hi in ODDS_BANDS:
+            got = [
+                r
+                for s, r in steps
+                if (stat == "all" or s == stat) and r["value"] > 0 and r["odd"] >= lo and (hi is None or r["odd"] < hi)
+            ]
+            if not got:
+                continue
+            picks.append(
+                {
+                    "stat": stat,
+                    "odds_from": lo,
+                    "odds_to": hi,
+                    "picks": len(got),
+                    "hits": sum(1 for r in got if r["hit"]),
+                    "said": round(sum(r["ours"] for r in got) / len(got), 3),
+                    "net": round(sum(r["odd"] - 1 if r["hit"] else -1.0 for r in got), 2),
+                }
+            )
+    calibration = []
+    for side in ("ours", "book"):
+        for lo, hi in CHANCE_BUCKETS:
+            got = [r for _, r in steps if lo <= r[side] < hi]
+            if got:
+                calibration.append(
+                    {
+                        "side": side,
+                        "chance_from": lo,
+                        "chance_to": min(hi, 1.0),
+                        "rungs": len(got),
+                        "said": round(sum(r[side] for r in got) / len(got), 3),
+                        "happened": round(sum(1 for r in got if r["hit"]) / len(got), 3),
+                    }
+                )
+    rows = [r for _, r in steps]
+    ours_b, book_b = brier(rows, "ours"), brier(rows, "book")
+    return {
+        "nights": len(nights),
+        "rungs": len(rows),
+        "ours_score": None if ours_b is None else round(ours_b, 4),
+        "book_score": None if book_b is None else round(book_b, 4),
+        "picks": picks,
+        "calibration": calibration,
+    }

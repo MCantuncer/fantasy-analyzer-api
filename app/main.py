@@ -949,6 +949,42 @@ def create_app(
         got = await book_compare(body)
         return got.model_copy(update={"look": got.look.model_copy(update={"error": None})})
 
+    @app.post(
+        "/api/book-compare/record", response_model=schemas.BookRecord, responses={401: {"model": schemas.ErrorBody}}
+    )
+    async def book_record(
+        body: schemas.BookRecordRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.BookRecord:
+        """Anyone signed in (Our Estimates): the latest saved nights as one record of the player rungs:
+        the value picks by our chance with their result at the book's odds, and how well each side's
+        chances matched what happened (app/bookcompare.py record). Comparison only."""
+        await current_user(authorization)
+        season = body.season or current_season(app.state.now())
+        days = await run_in_threadpool(app.state.store.book_line_days, season)
+        nights = []
+        for day in days[-body.nights :]:
+            got = await compare_night(season, day)
+            if got is not None:
+                nights.append(got)
+        return schemas.BookRecord(season=season, **await run_in_threadpool(bookcompare.record, nights))
+
+    async def compare_night(season: int, day: int) -> dict | None:
+        """One saved night compared (bookcompare.compare_day), with results once the games started."""
+        book = await run_in_threadpool(app.state.store.get_book_lines, season, day)
+        if not book:
+            return None
+        lines = await run_in_threadpool(app.state.store.get_player_lines, season, day)
+        played = None
+        league_id = app.state.line_log_league_id or app.state.sample_league_id
+        if league_id:
+            try:
+                sched = await score_calendar(season)
+                if any(g.start <= app.state.now() for g in sched.games.get(day, [])):
+                    played = await score_day(season, day, league_id, None, sched)
+            except Exception:
+                logging.getLogger(__name__).warning("book record: no results for day %s", day, exc_info=True)
+        return await run_in_threadpool(bookcompare.compare_day, book, lines, played, {})
+
     async def book_compare(body: schemas.BookLinesRequest) -> schemas.BookCompare:
         """One NBA day of the sportsbook's lines (iddaa, through nesine) beside ours (player lines from the
         line log, our call kept at the book's look) and, once the games are final, what happened, each
