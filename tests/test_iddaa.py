@@ -68,6 +68,15 @@ def test_a_game_reads_into_main_lines_and_player_ladders():
     assert 25 < embiid["pts"] < 29 and 24 < maxey["pts"] < 27 and 2 < maxey["three_pm"] < 4
 
 
+def test_the_whole_board_but_the_player_ladders_is_kept_raw():
+    board = iddaa.parse_event(EVENT)["board"]
+    types = [st for st, _, _ in board]
+    assert sorted(set(types)) == [2, 113, 114, 619, 620]  # no 831-836: those are the player ladders
+    assert types.count(113) == 7 and types.count(114) == 7  # alternate lines too
+    assert [2, "", [["1", 1.0], ["2", 4.71]]] in board  # a closed side stays as iddaa shows it
+    assert all(isinstance(line, str) for _, line, _ in board)
+
+
 def test_a_ladder_line_is_where_it_crosses_half_after_the_margin():
     rungs = [[10, 1.25], [12, 1.65], [14, 2.4]]  # 10+: 66%, 12+: 50%, 14+: 34% once 21% is taken out
     assert iddaa.ladder_line(rungs, 1.21) == 11.5

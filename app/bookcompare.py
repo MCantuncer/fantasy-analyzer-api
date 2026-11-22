@@ -458,7 +458,102 @@ def record(nights: list[dict]) -> dict:
         "book_score": None if book_b is None else round(book_b, 4),
         "picks": picks,
         "calibration": calibration,
+        "cut": cut(nights),
     }
+
+
+# Can 2026-11-22: "find a pattern of book takes". The book's cut by kind of bet, read off the whole
+# saved board (iddaa.parse_event "board"), and what one unit on every settled player rung returned by
+# odds band. Families by iddaa market type; a type not named here goes by its number of outcomes.
+FAMILIES = {
+    2: "two_way",  # winner (overtime included)
+    113: "two_way",  # handicap, main and alternate lines
+    114: "two_way",  # total
+    115: "two_way",  # first-half handicap
+    116: "two_way",  # first-half total
+    619: "two_way",  # home team points
+    620: "two_way",  # away team points
+    621: "three_way",  # winner with a draw
+    776: "three_way",  # 3-way handicap
+    622: "combo",  # winner and total together
+    105: "margin_bands",  # winning margin in bands
+    111: "half_full",  # half-time / full-time
+    107: "top_quarter",  # highest-scoring quarter
+    769: "total_ranges",  # total points in ranges
+}
+CUT_BANDS = ((iddaa.MIN_ODD, 1.6), (1.6, 2.2), (2.2, 3.5), (3.5, 6.0), (6.0, 12.0), (12.0, None))
+
+
+def family(market_type: int | None, outcomes: int) -> str:
+    """The kind of bet a market is: a named family, else two_way / three_way / many by its outcomes."""
+    if market_type in FAMILIES:
+        return FAMILIES[market_type]
+    return "two_way" if outcomes == 2 else "three_way" if outcomes == 3 else "many"
+
+
+def board_markets(book: dict | None) -> list[list]:
+    """Every fully priced market on a saved night's boards as [family, overround]: the sum of 1/odds
+    over its outcomes (1.21 = the book pays back 1/1.21, about 83%, of what a fairly priced market
+    would). A market with a closed outcome (odds 1.00) isn't fully priced and is left out."""
+    out = []
+    for g in ((book or {}).get("games") or {}).values():
+        if g.get("source") != RUNG_SOURCE:
+            continue
+        for st, _line, outcomes in g.get("board") or ():
+            odds = [o for _, o in outcomes]
+            if len(odds) < 2 or any(o <= iddaa.NOT_OFFERED for o in odds):
+                continue
+            out.append([family(st, len(odds)), round(sum(1 / o for o in odds), 4)])
+    return out
+
+
+def cut(nights: list[dict]) -> dict:
+    """Where the book takes its cut, over many nights. markets: per family, how many fully priced
+    markets, their median overround and what that pays back (1 / overround). bands: every settled
+    player rung (iddaa nights only) by odds band: how often he got there, what our chances said,
+    what the price implied (1/odds, margin in) and one unit on each at the book's odds."""
+    by_family: dict[str, list[float]] = {}
+    for night in nights:
+        for fam, over in night.get("markets") or ():
+            by_family.setdefault(fam, []).append(over)
+    markets = sorted(
+        (
+            {
+                "family": fam,
+                "markets": len(v),
+                "overround": round(statistics.median(v), 3),
+                "payback": round(1 / statistics.median(v), 3),
+            }
+            for fam, v in by_family.items()
+        ),
+        key=lambda m: m["overround"],
+    )
+    steps = [
+        r
+        for night in nights
+        for g in night["games"]
+        for p in g["players"]
+        for r in p.get("rungs", ())
+        if r["hit"] is not None
+    ]
+    bands = []
+    for lo, hi in CUT_BANDS:
+        got = [r for r in steps if r["odd"] > lo and (hi is None or r["odd"] <= hi)]
+        if not got:
+            continue
+        said = [r["ours"] for r in got if r["ours"] is not None]
+        bands.append(
+            {
+                "odds_from": lo,
+                "odds_to": hi,
+                "rungs": len(got),
+                "hits": sum(1 for r in got if r["hit"]),
+                "ours": round(sum(said) / len(said), 3) if said else None,
+                "implied": round(sum(1 / r["odd"] for r in got) / len(got), 3),
+                "net": round(sum(r["odd"] - 1 if r["hit"] else -1.0 for r in got), 2),
+            }
+        )
+    return {"markets": markets, "bands": bands}
 
 
 def night_line(night: dict) -> dict:

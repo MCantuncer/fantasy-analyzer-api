@@ -2070,6 +2070,31 @@ class RecordNight(BaseModel):
     top_hit: float | None = Field(description="Odds of the biggest pick that landed")
 
 
+class CutMarket(BaseModel):
+    family: str = Field(
+        description="two_way, three_way, combo (winner + total), margin_bands, half_full, top_quarter, "
+        "total_ranges or many"
+    )
+    markets: int = Field(description="Fully priced markets of this kind on the saved boards")
+    overround: float = Field(description="Median sum of 1/odds over a market's outcomes")
+    payback: float = Field(description="1 / overround: what the book pays back of a fairly priced stake")
+
+
+class CutBand(BaseModel):
+    odds_from: float = Field(description="Odds over this")
+    odds_to: float | None = Field(description="Up to and including this; None: and up")
+    rungs: int = Field(description="Settled player rungs (iddaa nights)")
+    hits: int
+    ours: float | None = Field(description="Our average chance on them")
+    implied: float = Field(description="The price's average chance, 1/odds with the margin in")
+    net: float = Field(description="One unit on every rung at the book's odds: net units")
+
+
+class BookCut(BaseModel):
+    markets: list[CutMarket] = Field(default_factory=list, description="By kind of bet, lowest cut first")
+    bands: list[CutBand] = Field(default_factory=list, description="Every settled player rung by odds band")
+
+
 class BookRecord(BaseModel):
     season: int
     nights: int = Field(description="Saved nights read")
@@ -2079,6 +2104,7 @@ class BookRecord(BaseModel):
     picks: list[RecordPicks]
     calibration: list[RecordBucket]
     series: list[RecordNight] = Field(default_factory=list, description="One line per night, oldest first")
+    cut: BookCut = Field(default_factory=BookCut, description="Where the book takes its cut (comparison only)")
 
 
 class BookPlayer(BaseModel):
