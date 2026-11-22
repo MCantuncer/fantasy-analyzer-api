@@ -140,6 +140,7 @@ All settings are optional for local development.
 | `RESEND_API_KEY` | none | Resend API key for the password reset email; Forgot password stays off until it is set |
 | `EMAIL_FROM` | `COURT <no-reply@courtfantasy.app>` | Sender of the reset email, on a domain verified in Resend |
 | `SITE_URL` | `https://courtfantasy.app` | Website the reset link opens |
+| `PLANS_ENFORCED` | off | `true` locks Pro features to Pro accounts (see [Plans](#plans)); off, every account gets every feature |
 | `ANTHROPIC_API_KEY` | none | Lets Claude Haiku read managers' notes on trade ideas so the checks start where the note points; notes are kept unread without it |
 | `LEAGUE_CACHE_SECONDS` | `600` | How long league data from ESPN is cached |
 | `DAILY_TRADE_WAIT_SECONDS` | `20` | How long a trade-of-the-day request waits before answering `pending` |
@@ -163,12 +164,13 @@ All settings are optional for local development.
 | POST | `/api/auth/reset` | `{token, password}` | `{token, me}`: sets the new password, ends every other session; 400 `bad_reset_link` once the link is used or expired |
 | POST | `/api/auth/logout` | | Ends the session |
 | POST | `/api/usage` | `{page}` | Counts a page view from the website (known page names only) |
-| POST | `/api/me` | | The account, its leagues (with the verified team, if any) and notices |
+| POST | `/api/me` | | The account, its leagues (with the verified team, if any), notices, and its plan with the Pro features it gets |
 | POST | `/api/me/notices/clear` | | Clears the notices |
 | POST | `/api/keepers` | `{league_id, team_id, season?}` | `{player_ids, saved}`: the players this account keeps on its team (`saved` is false until it has saved a list) |
 | POST | `/api/keepers/save` | `{league_id, team_id, season?, player_ids}` | Replaces the kept players and returns them |
 | POST | `/api/errors` | `{kind, name, message, stack, page, build}` | Records a website crash (no account needed; rate-limited) |
 | POST | `/api/admin/errors` | | Admins only: error reports, most recent first |
+| POST | `/api/admin/gift-pro` | `{email, days}` | Admins only: Pro for that account for `days` days; `0` ends the gift |
 | POST | `/api/admin/usage` | `{days?}` | Admins only: daily visitors, page views, server events and new accounts, plus account totals |
 | POST | `/api/admin/errors/resolve` | `{id}` | Admins only: marks a report fixed; it opens again if it happens again |
 | POST | `/api/admin/news-log` | `{days?, tagged?, limit?}` | Admins only: outlet news that names a player, kept for a later test of news text, newest first; `tagged` keeps only items with an emotion tag |
@@ -259,7 +261,12 @@ Set `SECRET_KEY` (any long random string) so challenges survive a restart, and `
 
 The feed pages through the season a week (seven scoring periods) at a time. Transactions come from ESPN's `mTransactions2` view, one call per day: past days are cached for six hours, today for a minute.
 
-### Private leagues
+### Plans
+
+COURT has two plans (`app/plans.py`). Free is the fantasy league: rosters, moves, trades, scores and news. Pro adds every estimate of an NBA game (a player's next-game line, Our call, the pre-game box, Our Estimates, the Scouting Report) and the sportsbook comparison.
+
+The split is in code: `Feature` names each Pro feature and `PLANS` lists each plan's features, so a new Pro feature is one enum member. Who has Pro is in the `subscriptions` table, one row per account: the payment provider's status and period end, plus `comp_until` when an admin gifted Pro. `entitlement()` turns that row into the plan an account is on now: Pro while the subscription is trialing, active or past due, until three days after its period ends (a card the provider still retries, or a late webhook), or while a gift lasts. Admins are always Pro. `/api/me` sends `plan` and `features`, and the site locks a spot from that list only. Until `PLANS_ENFORCED` is set, every account gets every feature.
+
 
 ESPN has no API keys for fantasy, so private leagues need the user's `espn_s2` and `SWID` cookies. Send them in the `X-ESPN-S2` and `X-ESPN-SWID` headers. The backend:
 

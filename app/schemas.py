@@ -758,6 +758,19 @@ class Notice(BaseModel):
     at: str
 
 
+PlanFeature = Literal["next_game", "game_calls", "pregame", "estimates", "sportsbook", "match_form"]
+
+
+class GiftProRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    days: int = Field(ge=0, le=366, description="Days of Pro from now; 0 ends a gift")
+
+
+class GiftProResult(BaseModel):
+    user_id: int
+    until: str | None = Field(description="When the gift ends, UTC ISO 8601; None: no gift")
+
+
 class Me(BaseModel):
     id: int
     email: str | None
@@ -767,6 +780,18 @@ class Me(BaseModel):
     admin: bool = Field(
         default=False, description="An admin account (users.user_type = 'admin'): can read error reports and usage"
     )
+    plan: Literal["free", "pro"] = Field(default="free", description="The account's plan (app/plans.py)")
+    features: list[PlanFeature] = Field(
+        default_factory=list,
+        description="Pro features the API serves this account now. Every feature while plans are not enforced; "
+        "the site locks a spot from this list only",
+    )
+    trial_ends: str | None = Field(default=None, description="End of a free trial, UTC ISO 8601")
+    renews_at: str | None = Field(default=None, description="Next charge of a renewing subscription, UTC ISO 8601")
+    ends_at: str | None = Field(
+        default=None, description="When Pro stops: cancelled at period end, or a gift's last moment; UTC ISO 8601"
+    )
+    gifted: bool = Field(default=False, description="Pro gifted by an admin rather than paid for")
 
 
 class AuthResult(BaseModel):
