@@ -6,12 +6,13 @@ the games who landed nearer what happened. COMPARISON ONLY: nothing here feeds o
 
 iddaa lists a game only until it starts, so a past night can't be read back: a watch reads iddaa's
 lines in the hours before tip-off and, for each game, keeps its last look before the game starts (as
-app/linelog.py does for our lines). They are read through nesine, an iddaa dealer whose bulletin is
-one call for every game (Can's pick). What is saved is nearly raw (the odds), so the way a line is
+app/linelog.py does for our lines). They are read from iddaa's own bulletin (Can 2026-11-22: "not
+nesine bulletin, but iddaa's bulletin should be used... Final decision. No nesine."): its list of
+games, then each NBA game's markets. What is saved is nearly raw (the odds), so the way a line is
 read from them can change later without losing a night. A day's record:
 
     {"games": {espn game id: {
-        "event": iddaa id, "away": team, "home": team, "tip": iso, "checked": iso,
+        "event": iddaa id, "source": "iddaa", "away": team, "home": team, "tip": iso, "checked": iso,
         "win": [home odd, away odd],                      0 where iddaa doesn't offer that side
         "margin" | "total" | "home_pts" | "away_pts": [line, first odd, second odd],
         "players": {name: {stat: [[n, odd], ...]}},       "Name n+" ladders, stats as STATS
@@ -23,6 +24,7 @@ total's odds are under then over. Only each market's main line (its two odds clo
 
 from __future__ import annotations
 
+import asyncio
 import re
 import statistics
 import unicodedata
@@ -32,12 +34,14 @@ import httpx
 
 from app.scores import Schedule, ScheduledGame
 
-# nesine's full pre-match bulletin (Can 2026-11-21: "Go with nesine"). iddaa's own API
-# (sportsbookv2.iddaa.com/sportsbook/events, /event/<id>) has the same games in the shape read here.
-BULLETIN = "https://cdnbulten.nesine.com/api/bulten/getprebultenfull"
+# iddaa's own bulletin: every football-to-basketball game still to start, then one game's markets.
+EVENTS = "https://sportsbookv2.iddaa.com/sportsbook/events?st=2&type=0&version=0"
+EVENT = "https://sportsbookv2.iddaa.com/sportsbook/event/{}"
+SOURCE = "iddaa"
 USER_AGENT = "Mozilla/5.0 (compatible; fantasy-analyzer/1.0)"
-TIMEOUT = 20.0  # the bulletin is about 1.6 MB
-NBA = 138  # iddaa's (and nesine's) league id for the NBA
+TIMEOUT = 20.0
+READS_AT_ONCE = 4  # one call per NBA game: a few at a time
+NBA = 138  # iddaa's league id for the NBA
 AHEAD = timedelta(hours=18)  # games starting this soon are read: the whole night, from the first look of the day
 TIP_SLACK = timedelta(hours=3)  # an iddaa game and an ESPN game this far apart in start time can't match
 
@@ -203,51 +207,34 @@ def readout(game: dict) -> dict:
     }
 
 
-def from_nesine(event: dict) -> dict:
-    """A game from nesine's bulletin in iddaa's own shape (the one parse_event reads). nesine is an
-    iddaa dealer and keeps iddaa's market codes; it numbers outcomes ("1" home, "2" away; for totals
-    1 under, 2 over), names players "Last, First n+", and marks an open market MS 1."""
-    markets = []
-    for m in event.get("MA") or []:
-        st = m.get("MST")
-        if m.get("MS") != 1 or st not in (WINNER, *MAIN_MARKETS, *STATS):
-            continue
-        outcomes = []
-        for o in m.get("OCA") or []:
-            if st in STATS:
-                hit = RUNG.match(str(o.get("ON") or "").strip())
-                if not hit:
-                    continue
-                last, _, first = hit["name"].partition(",")
-                name = f"{first.strip()} {last.strip()}".strip()
-                outcomes.append({"n": f"{name} {hit['n']}+", "odd": o.get("O")})
-            else:
-                n = {1: "1", 2: "2"}.get(o.get("N"))
-                if n and st in MAIN_MARKETS and st != 113:
-                    n = {"1": "Alt", "2": "Üst"}[n]
-                if n:
-                    outcomes.append({"n": n, "odd": o.get("O")})
-        markets.append({"st": st, "sov": str(m.get("SOV")), "o": outcomes})
-    try:
-        tip = int(event.get("ESD") or 0) // 1000
-    except (TypeError, ValueError):
-        tip = 0
-    return {"i": event.get("C"), "hn": event.get("HN"), "an": event.get("AN"), "ci": NBA, "d": tip, "m": markets}
-
-
 async def fetch(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> list[tuple[dict, dict]]:
-    """iddaa's NBA games still to start, read from nesine's bulletin (one call for every sport):
-    (the game, its markets), both in iddaa's shape. Raises httpx.HTTPError (or ValueError on a bad
-    answer) when the bulletin can't be read."""
-    headers = {"User-Agent": USER_AGENT, "Referer": "https://www.nesine.com/"}
+    """iddaa's NBA games still to start, from iddaa's own bulletin: (the game as listed, its markets).
+    Raises httpx.HTTPError (or ValueError on a bad answer) when the list can't be read; a game whose
+    markets can't be read is left for the next look."""
+    headers = {"User-Agent": USER_AGENT, "Referer": "https://www.iddaa.com/"}
     async with httpx.AsyncClient(transport=transport, timeout=TIMEOUT, headers=headers) as http:
-        resp = await http.get(BULLETIN)
+        resp = await http.get(EVENTS)
         resp.raise_for_status()
-        events = ((resp.json() or {}).get("sg") or {}).get("EA") or []
-    games = [from_nesine(e) for e in events if e.get("LC") == NBA and e.get("TYPE") == 2]
-    return [(g, g) for g in games]
+        body = resp.json() or {}
+        if body.get("isSuccess") is False:
+            raise ValueError(f"iddaa: {body.get('message') or 'no events'}")
+        listed = [e for e in (body.get("data") or {}).get("events") or [] if e.get("ci") == NBA]
+        gate = asyncio.Semaphore(READS_AT_ONCE)
+
+        async def markets(event: dict) -> dict | None:
+            async with gate:
+                try:
+                    got = await http.get(EVENT.format(event["i"]))
+                    got.raise_for_status()
+                    data = (got.json() or {}).get("data")
+                except (httpx.HTTPError, ValueError, KeyError):
+                    return None
+            return data if isinstance(data, dict) else None
+
+        read = await asyncio.gather(*(markets(e) for e in listed))
+    return [(e, d) for e, d in zip(listed, read, strict=True) if d is not None]
 
 
 def update(
@@ -266,6 +253,7 @@ def update(
         kept = rec["games"].get(str(game.id), {}).get("ours")  # our last call stays until a new one is set
         rec["games"][str(game.id)] = {
             "event": int(event.get("i") or 0),
+            "source": SOURCE,
             "away": game.away,
             "home": game.home,
             "tip": game.start.isoformat(timespec="seconds"),

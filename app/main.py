@@ -987,7 +987,7 @@ def create_app(
         return {**got, "day": day}
 
     async def book_compare(body: schemas.BookLinesRequest) -> schemas.BookCompare:
-        """One NBA day of the sportsbook's lines (iddaa, through nesine) beside ours (player lines from the
+        """One NBA day of the sportsbook's lines (iddaa's own bulletin) beside ours (player lines from the
         line log, our call kept at the book's look) and, once the games are final, what happened, each
         side judged against the result (app/bookcompare.py). Comparison only."""
         season = body.season or current_season(app.state.now())
