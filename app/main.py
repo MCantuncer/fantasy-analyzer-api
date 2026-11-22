@@ -22,7 +22,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import benched, bookcompare, iddaa, linelog, playchance, pregame, schemas
+from app import benched, bookcompare, iddaa, linelog, lostlog, playchance, pregame, schemas
 from app import errors as error_reports
 from app.accounts import (
     PASSWORD_MIN,
@@ -968,7 +968,34 @@ def create_app(
                 nights.append(got)
         return schemas.BookRecord(season=season, **await run_in_threadpool(bookcompare.record, nights))
 
-    async def compare_night(season: int, day: int) -> dict | None:
+    @app.post("/api/book-compare/lost", response_model=schemas.LostLog, responses={401: {"model": schemas.ErrorBody}})
+    async def lost_log(
+        body: schemas.LostLogRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.LostLog:
+        """Anyone signed in (Our Estimates): the bets the page took on the latest saved nights, every
+        lost one with why it lost, and the causes that keep coming back (app/lostlog.py). Built from
+        what is saved each night (iddaa's lines and our call, our player lines, the results, the OUT
+        tags at tip-off), so a night reads the same whenever it is asked. Comparison only."""
+        await current_user(authorization)
+        season = body.season or current_season(app.state.now())
+        days = await run_in_threadpool(app.state.store.book_line_days, season)
+        try:
+            sched = await score_calendar(season)
+        except Exception:  # the nights still read without their dates
+            sched = None
+        nights = []
+        for day in reversed(days[-body.nights :]):
+            got = await compare_night(season, day, explain=True)
+            if got is None:
+                continue
+            n = lostlog.night(got["games"], day, PRO_TEAM_ABBREV)
+            if n["bets"]:
+                nights.append({**n, "date": _iso_date(sched.date_of(day)) if sched else None})
+        return schemas.LostLog(
+            season=season, nights=[schemas.LostNight(**n) for n in nights], **lostlog.repeats(nights)
+        )
+
+    async def compare_night(season: int, day: int, explain: bool = False) -> dict | None:
         """One saved night compared (bookcompare.compare_day), with results once the games started."""
         book = await run_in_threadpool(app.state.store.get_book_lines, season, day)
         if not book:
@@ -984,6 +1011,10 @@ def create_app(
             except Exception:
                 logging.getLogger(__name__).warning("book record: no results for day %s", day, exc_info=True)
         got = await run_in_threadpool(bookcompare.compare_day, book, lines, played, {})
+        if explain and played is not None:  # why each settled row landed where it did (app/lostlog.py)
+            box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
+            out = await ruled_out(season, day)
+            await run_in_threadpool(lostlog.annotate, got["games"], box, day, out, lines, played, PRO_TEAM_ABBREV)
         return {**got, "day": day, "markets": bookcompare.board_markets(book)}
 
     async def book_compare(body: schemas.BookLinesRequest) -> schemas.BookCompare:
@@ -1022,6 +1053,11 @@ def create_app(
                     c = box.call(day, g["away"], g["home"], out)
                     g["ours"] = [c.away, c.home, round(c.chance, 3)]
         got = await run_in_threadpool(bookcompare.compare_day, book, lines, played, names)
+        if played is not None and day:
+            out_at_tip = await ruled_out(season, day)
+            await run_in_threadpool(
+                lostlog.annotate, got["games"], box, day, out_at_tip, lines, played, PRO_TEAM_ABBREV
+            )
 
         def ab(team: int | None) -> str:
             return PRO_TEAM_ABBREV.get(team, "") if team else ""

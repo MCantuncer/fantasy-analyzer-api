@@ -2174,6 +2174,19 @@ class CompareRung(BaseModel):
     hit: bool | None = Field(description="He got there; None until the result, or when he didn't play")
 
 
+class LossReason(BaseModel):
+    """Why a settled number landed where it did against ours (app/lostlog.py): the biggest piece of
+    the miss that points the way the miss went."""
+
+    cause: Literal["luck", "pace", "minutes", "late_news", "other"] = Field(
+        description="luck: threes, free throws, shot-making; pace; minutes; late_news: ruled out after our "
+        "call; other: twos, turnovers, boards, shots taken, a player far off his line"
+    )
+    piece: str = Field(description="three, free_throws, pace, late_news, other, minutes, shots, shooting, rate")
+    points: float = Field(description="Its size, in the row's own unit (points, rebounds...), signed like the miss")
+    text: str = Field(description='One line for the page, e.g. "NO made 8 of 35 threes (we expected 36%)"')
+
+
 class ComparePlayer(CompareRow):
     name: str
     player_id: int | None = Field(description="ESPN id; None when iddaa's name matched nobody")
@@ -2188,6 +2201,7 @@ class ComparePlayer(CompareRow):
     rung_closer: Literal["ours", "book", "tie"] | None = Field(
         default=None, description="Whose chances read the result better over the rungs (Brier score)"
     )
+    why: LossReason | None = Field(default=None, description="Once final: why the result landed where it did")
 
 
 class CompareOdd(BaseModel):
@@ -2209,6 +2223,7 @@ class CompareMarket(CompareRow):
     odds: list[CompareOdd] = Field(
         default_factory=list, description="The book's prices for this market at the last look; offered sides only"
     )
+    why: LossReason | None = Field(default=None, description="Once final: why the result landed where it did")
 
 
 class CompareEstimate(BaseModel):
@@ -2267,6 +2282,59 @@ class CompareTally(BaseModel):
     value_picks: int = Field(default=0, description="Settled rungs with value over 0 by our chance")
     value_hits: int = Field(default=0, description="Of those, how many he reached")
     value_return: float = Field(default=0.0, description="One unit on each value pick at the book's odds: net units")
+
+
+class LostLogRequest(BaseModel):
+    season: int | None = Field(default=None, description="ESPN season (the year it ends); the current one when unset")
+    nights: int = Field(default=14, ge=1, le=60, description="How many of the latest saved nights")
+
+
+class LostBet(BaseModel):
+    game: str = Field(description='"NO @ SA"')
+    group: str = Field(description="winner, margin, total, team_pts, or the player stat")
+    bet: str = Field(description='The bet as the page writes it: "Over 227.5", "MEM +5.5", "Cam Spencer 2+ threes"')
+    odd: float
+    chance: float | None = Field(description="Our chance it would win, as stated before tip-off")
+    ours: float | None
+    book: float | None
+    actual: float | None
+    cause: Literal["luck", "pace", "minutes", "late_news", "other"] | None = Field(
+        description="None when no piece explains it"
+    )
+    piece: str | None
+    points: float | None
+    text: str
+
+
+class LostNight(BaseModel):
+    day: int
+    date: str | None
+    bets: int = Field(description="Settled bets the page took (odds over 1.33)")
+    won: int
+    expected: float = Field(description="Wins our chances added up to")
+    lost: list[LostBet]
+
+
+class CauseCount(BaseModel):
+    cause: str
+    count: int
+
+
+class CauseRepeat(BaseModel):
+    cause: str
+    group: str
+    piece: str | None
+    count: int
+    share: float = Field(description="Of that kind of bet's losses over the nights read")
+    candidate: bool = Field(description="Came back often enough to go to the signal search (tested blind first)")
+
+
+class LostLog(BaseModel):
+    season: int
+    nights: list[LostNight] = Field(description="Newest first")
+    lost: int
+    causes: list[CauseCount]
+    repeats: list[CauseRepeat] = Field(description="Causes that are not luck, most frequent first")
 
 
 class BookCompare(BaseModel):
