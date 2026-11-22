@@ -101,6 +101,9 @@ def judge(ours: float | None, book: float | None, actual: float | None, band: fl
     return out
 
 
+RUNG_SOURCE = "iddaa"  # the only bulletin whose rungs count (iddaa's own, not a dealer's)
+
+
 def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: dict[int, str]) -> dict:
     """The day's comparison: per game its match rows and player rows, and per stat a tally.
 
@@ -112,6 +115,9 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
     for gid, g in sorted(((book or {}).get("games") or {}).items(), key=lambda kv: (kv[1]["tip"], kv[0])):
         read = iddaa.readout(g)
         margin = iddaa.overround(g)
+        # Can 2026-11-22: "No nesine." Only rungs read from iddaa's own bulletin are scored, so the
+        # value picks, the rung scores and the record skip nights saved from nesine (no "source").
+        scored = g.get("source") == RUNG_SOURCE
         played = games_played.get(int(gid)) or {}
         final = played.get("status") == "final"
         a_pts = (played.get("away") or {}).get("score") if final else None
@@ -149,9 +155,11 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                         "played": None if not final or pid is None else got is not None,
                         **judge(ours, stats[stat], actual, BANDS[stat]),
                         "ladder": [[r["n"], r["book"]] for r in steps],
-                        "rungs": steps,
-                        "best_value": max((r["value"] for r in steps if r["value"] is not None), default=None),
-                        "rung_closer": rung_closer(steps),
+                        "rungs": steps if scored else [],
+                        "best_value": max((r["value"] for r in steps if r["value"] is not None), default=None)
+                        if scored
+                        else None,
+                        "rung_closer": rung_closer(steps) if scored else None,
                     }
                 )
 
@@ -233,6 +241,7 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                 "home": g["home"],
                 "tip": g["tip"],
                 "checked": g["checked"],
+                "source": g.get("source"),
                 "status": played.get("status", "scheduled"),
                 "away_score": a_pts,
                 "home_score": h_pts,
