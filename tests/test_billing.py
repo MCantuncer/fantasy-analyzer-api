@@ -30,6 +30,7 @@ def sub_data(user_id=1, status="trialing", sub_id="sub_01", updated=None, cancel
         "current_billing_period": {"starts_at": "2026-11-22T21:00:00Z", "ends_at": ends.isoformat()},
         "scheduled_change": {"action": "cancel", "effective_at": ends.isoformat()} if cancel else None,
         "updated_at": (updated or datetime.now(UTC)).isoformat(),
+        "billing_cycle": {"interval": "year", "frequency": 1},
     }
 
 
@@ -122,6 +123,8 @@ def test_subscription_from_paddle():
     got = billing.subscription_from(sub_data(cancel=True), 7)
     assert (got.user_id, got.status, got.subscription_id, got.customer_id) == (7, "trialing", "sub_01", "ctm_01")
     assert got.cancel_at_period_end and got.period_end is not None and got.provider == "paddle"
+    assert got.interval == "year"
+    assert billing.subscription_from({**sub_data(), "billing_cycle": {"interval": "week"}}, 7).interval is None
     assert billing.subscription_from({"id": "sub_x", "status": "weird"}, 7).status == "expired"
     assert billing.account_of({"custom_data": {"user_id": "12"}}) == 12
     assert billing.account_of({"custom_data": None}) is None and billing.account_of({}) is None
@@ -135,7 +138,7 @@ def test_webhook_turns_pro_on_and_off(app):
     assert plan(fan) == "free"
     assert deliver(app, sub_data(uid)).status_code == 200
     got = fan.post("/api/me").json()
-    assert got["plan"] == "pro" and got["trial_ends"] is not None
+    assert got["plan"] == "pro" and got["trial_ends"] is not None and got["interval"] == "year"
     later = datetime.now(UTC) + timedelta(seconds=5)
     # A cancellation that carries no account id is matched by its subscription id.
     assert deliver(app, sub_data(None, "canceled", updated=later), "subscription.canceled", "evt_02").status_code == 200

@@ -42,6 +42,14 @@ def test_trial_and_cancelled_at_period_end():
     assert leaving.plan == PRO and leaving.ends_at == NOW + timedelta(days=10) and leaving.renews_at is None
 
 
+def test_billing_interval_and_a_failed_renewal():
+    yearly = entitlement(USER, sub("active", interval="year"), NOW)
+    assert yearly.interval == "year" and not yearly.payment_due
+    due = entitlement(USER, sub("past_due", days=-1, interval="month"), NOW)
+    assert due.plan == PRO and due.payment_due and due.interval == "month"
+    assert entitlement(USER, sub("past_due", days=-4, interval="month"), NOW).interval is None  # Free again
+
+
 def test_grace_after_the_period_then_free():
     assert entitlement(USER, sub("past_due", days=-2), NOW).plan == PRO  # the provider still retries the card
     assert entitlement(USER, sub("past_due", days=-4), NOW).plan == FREE
@@ -168,6 +176,8 @@ def test_postgres_store():
     got = store.get(user.id)
     assert (got.status, got.subscription_id, got.period_end, got.cancel_at_period_end) == ("active", "sub_1", NOW, True)
     assert got.comp_until == NOW  # a webhook write leaves the gift alone
+    assert store.save(Subscription(user.id, "active", "paddle", "ctm_1", "sub_1", NOW, False, NOW, interval="year"))
+    assert store.get(user.id).interval == "year"
     assert not store.save(Subscription(user.id, "past_due", "paddle", "ctm_1", "sub_1", NOW, False, NOW - timedelta(1)))
     assert store.by_subscription("sub_1").status == "active" and store.by_subscription("sub_9") is None
     plans.PostgresSubscriptionStore(os.environ["TEST_DATABASE_URL"])  # the table is made once; a restart is fine

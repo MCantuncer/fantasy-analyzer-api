@@ -1283,6 +1283,8 @@ def create_app(
             "renews_at": iso(ent.renews_at) if ent.renews_at else None,
             "ends_at": iso(ent.ends_at) if ent.ends_at else None,
             "gifted": ent.gifted,
+            "interval": ent.interval,
+            "payment_due": ent.payment_due,
         }
 
     async def features_for(authorization: str | None) -> frozenset[plans.Feature]:

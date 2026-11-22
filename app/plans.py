@@ -70,6 +70,7 @@ class Subscription:
     provider_updated_at: datetime | None = None  # when the provider says this state began; older ones lose
     comp_until: datetime | None = None  # Pro gifted by an admin, until this moment
     updated_at: datetime | None = None
+    interval: str | None = None  # "month" or "year": how often the subscription bills
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,8 @@ class Entitlement:
     renews_at: datetime | None = None  # the next charge, for a subscription that renews
     ends_at: datetime | None = None  # when Pro stops: cancelled at period end, or a gift's last day
     gifted: bool = False
+    interval: str | None = None  # "month" or "year" for a paid plan
+    payment_due: bool = False  # the last renewal failed; Pro holds while the provider retries the card
 
     def allows(self, feature: Feature) -> bool:
         return feature in self.features
@@ -97,10 +100,11 @@ def plans_enforced() -> bool:
 def entitlement(user: User | None, sub: Subscription | None, now: datetime, enforced: bool = True) -> Entitlement:
     """The plan ``user`` is on at ``now``. Admins are on Pro whatever the row says."""
     plan, trial_ends, renews_at, ends_at, gifted = FREE, None, None, None, False
+    interval, payment_due = None, False
     if sub is not None:
         paid_until = sub.period_end + GRACE if sub.period_end else None
         if sub.status in PAYING and (paid_until is None or now < paid_until):
-            plan = PRO
+            plan, interval, payment_due = PRO, sub.interval, sub.status == "past_due"
             if sub.status == "trialing":
                 trial_ends = sub.period_end
             if sub.cancel_at_period_end:
@@ -112,7 +116,7 @@ def entitlement(user: User | None, sub: Subscription | None, now: datetime, enfo
     if user is not None and user.admin:
         plan = PRO
     features = PLANS[plan] if enforced else ALL
-    return Entitlement(plan, features, trial_ends, renews_at, ends_at, gifted)
+    return Entitlement(plan, features, trial_ends, renews_at, ends_at, gifted, interval, payment_due)
 
 
 class SubscriptionStore(Protocol):
@@ -136,6 +140,7 @@ create table if not exists subscriptions (
     updated_at timestamptz not null default now()
 );
 alter table subscriptions add column if not exists provider_updated_at timestamptz;
+alter table subscriptions add column if not exists interval text;
 """
 
 
@@ -172,7 +177,7 @@ def _older(new: datetime | None, kept: datetime | None) -> bool:
 class PostgresSubscriptionStore:
     _COLS = (
         "user_id, status, provider, customer_id, subscription_id, period_end, cancel_at_period_end, "
-        "provider_updated_at, comp_until, updated_at"
+        "provider_updated_at, comp_until, updated_at, interval"
     )
 
     def __init__(self, url: str):
@@ -199,12 +204,12 @@ class PostgresSubscriptionStore:
         with self._connect() as conn:
             row = conn.execute(
                 "insert into subscriptions (user_id, status, provider, customer_id, subscription_id, period_end, "
-                "cancel_at_period_end, provider_updated_at) values (%s, %s, %s, %s, %s, %s, %s, %s) "
+                "cancel_at_period_end, provider_updated_at, interval) values (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "on conflict (user_id) do update set "
                 "status=excluded.status, provider=excluded.provider, customer_id=excluded.customer_id, "
                 "subscription_id=excluded.subscription_id, period_end=excluded.period_end, "
                 "cancel_at_period_end=excluded.cancel_at_period_end, "
-                "provider_updated_at=excluded.provider_updated_at, updated_at=now() "
+                "provider_updated_at=excluded.provider_updated_at, interval=excluded.interval, updated_at=now() "
                 "where subscriptions.provider_updated_at is null or excluded.provider_updated_at is null "
                 "or excluded.provider_updated_at >= subscriptions.provider_updated_at returning user_id",
                 (
@@ -216,6 +221,7 @@ class PostgresSubscriptionStore:
                     sub.period_end,
                     sub.cancel_at_period_end,
                     sub.provider_updated_at,
+                    sub.interval,
                 ),
             ).fetchone()
         return row is not None
