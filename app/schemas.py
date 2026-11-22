@@ -826,6 +826,10 @@ class Me(BaseModel):
         default=None, description="When Pro stops: cancelled at period end, or a gift's last moment; UTC ISO 8601"
     )
     gifted: bool = Field(default=False, description="Pro gifted by an admin rather than paid for")
+    interval: Literal["month", "year"] | None = Field(default=None, description="How a paid plan bills")
+    payment_due: bool = Field(
+        default=False, description="The last renewal failed: Pro holds a few days while the card is retried"
+    )
 
 
 class AuthResult(BaseModel):

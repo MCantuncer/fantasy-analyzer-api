@@ -35,6 +35,7 @@ from app.plans import STATUSES, Subscription
 
 PROVIDER = "paddle"
 API = {"sandbox": "https://sandbox-api.paddle.com", "production": "https://api.paddle.com"}
+INTERVALS = ("month", "year")
 SIGNATURE_TOLERANCE = 300  # seconds: an older signed delivery is refused (a replay)
 
 
@@ -103,6 +104,7 @@ def subscription_from(data: dict, user_id: int) -> Subscription:
         period_end=_time(period.get("ends_at")),
         cancel_at_period_end=change.get("action") == "cancel",
         provider_updated_at=_time(data.get("updated_at")),
+        interval=interval if (interval := (data.get("billing_cycle") or {}).get("interval")) in INTERVALS else None,
     )
 
 
