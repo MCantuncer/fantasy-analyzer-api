@@ -86,9 +86,24 @@ def _with_minutes(recorded: dict) -> dict:
     return recorded
 
 
+def _scoreboard(request: httpx.Request) -> httpx.Response:
+    """Every day before: HOU scores big in the third (ESPN's scoreboard, quarters by side)."""
+    day = request.url.params["dates"]
+    sides = [
+        {"homeAway": "home", "team": {"id": str(HOU)}, "linescores": [{"value": v} for v in (26, 27, 36, 25)]},
+        {"homeAway": "away", "team": {"id": "1"}, "linescores": [{"value": v} for v in (28, 28, 28, 28)]},
+    ]
+    event = {"id": day, "season": {"type": 2}, "status": {"type": {"state": "post"}}}
+    return httpx.Response(200, json={"events": [event | {"competitions": [{"competitors": sides}]}]})
+
+
 def _client(recorded, schedule_raw, day4_players, box: Box | None):  # noqa: F811
     fake = ScoresEspn(_with_minutes(recorded), schedule_raw, day4_players)
-    app = create_app(EspnClient(transport=httpx.MockTransport(fake.handler)), store=MemoryStore())
+    app = create_app(
+        EspnClient(transport=httpx.MockTransport(fake.handler)),
+        store=MemoryStore(),
+        clock_transport=httpx.MockTransport(_scoreboard),
+    )
     app.state.now = lambda: FRIDAY_AFTERNOON
     if box is not None:
         app.state.game_boxes.set(2027, box)
@@ -127,6 +142,13 @@ def test_pregame_box_for_tonights_game(recorded, schedule_raw, day4_players):  #
         assert s["team_line"]["call"] == pytest.approx(s["call_raw"], abs=0.1)
     hou = body["away"] if game.away == HOU else body["home"]
     assert any(p["owner_team_id"] for p in hou["players"])
+
+    # Points by quarter: the call cut into four, HOU's third-quarter habit on top.
+    for side in ("away", "home"):
+        q = body[side]["quarters"]
+        assert len(q["points"]) == 4 and sum(q["points"]) == round(sum(q["raw"]))
+        assert body[side]["call_raw"] - 2 < sum(q["raw"]) < body[side]["call_raw"]
+    assert hou["quarters"]["games"] >= 1 and hou["quarters"]["shape"][2] > 0
 
     # Kept a few minutes: the same box again without a new league load.
     again = client.post("/api/scores/pregame", json={"league_id": LEAGUE_ID, "season": 2027, "game_id": game.id}).json()

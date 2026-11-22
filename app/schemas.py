@@ -1382,6 +1382,23 @@ class PregameTeamLine(BaseModel):
     gap: float = Field(description="total - call: + the lines run over Our call, - under it")
 
 
+class PregameQuarters(BaseModel):
+    """One side's points by quarter before tip-off (app/quarters.py): Our call cut into four quarters."""
+
+    points: list[int] = Field(description="Whole points in Q1-Q4; they add up to the rounded sum of raw")
+    raw: list[float] = Field(
+        description="Q1-Q4 before rounding; their sum runs about a point under the call (overtime)"
+    )
+    league: list[float] = Field(description="The call x the league's share of a game's points in each quarter")
+    favourite: list[float] = Field(
+        description="The favourite's fast start and fourth-quarter fade: + for the favourite early, - late"
+    )
+    shape: list[float] = Field(
+        description="The team's own quarter shape and the opponent's allowed shape, this season and last"
+    )
+    games: int = Field(description="This season's games read for the team's shape (0: last season's alone)")
+
+
 class PregameSide(BaseModel):
     pro_team_id: int
     abbrev: str
@@ -1392,6 +1409,7 @@ class PregameSide(BaseModel):
     players: list[PregamePlayer] = Field(description="Everyone expected to play, most minutes first")
     out: list[PregameOut] = Field(description="Ruled out tonight")
     team_line: PregameTeamLine
+    quarters: PregameQuarters | None = Field(default=None, description="Points by quarter; None without a call")
 
 
 class PregameBox(BaseModel):
