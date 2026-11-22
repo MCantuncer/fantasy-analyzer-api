@@ -267,7 +267,6 @@ COURT has two plans (`app/plans.py`). Free is the fantasy league: rosters, moves
 
 The split is in code: `Feature` names each Pro feature and `PLANS` lists each plan's features, so a new Pro feature is one enum member. Who has Pro is in the `subscriptions` table, one row per account: the payment provider's status and period end, plus `comp_until` when an admin gifted Pro. `entitlement()` turns that row into the plan an account is on now: Pro while the subscription is trialing, active or past due, until three days after its period ends (a card the provider still retries, or a late webhook), or while a gift lasts. Admins are always Pro. `/api/me` sends `plan` and `features`, and the site locks a spot from that list only. Until `PLANS_ENFORCED` is set, every account gets every feature.
 
-
 ### Private leagues
 
 ESPN has no API keys for fantasy, so private leagues need the user's `espn_s2` and `SWID` cookies. Send them in the `X-ESPN-S2` and `X-ESPN-SWID` headers. The backend:
