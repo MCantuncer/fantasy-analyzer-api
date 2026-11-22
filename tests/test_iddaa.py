@@ -158,3 +158,24 @@ def test_the_watch_saves_iddaa_and_admins_read_it_back(recorded):
     assert g["game_id"] == game.id and g["margin"] == -11.5 and g["total"] == 228.5
     assert g["ours"]["away"] != g["ours"]["home"] and 0.5 <= g["ours"]["chance"] <= 1  # our call, same look
     assert {"Joel Embiid", "Tyrese Maxey"} <= {p["name"] for p in g["players"]}
+
+
+def test_our_call_beside_iddaa_counts_who_is_ruled_out(recorded):
+    """Can 2026-11-22: a player ruled out during the day must move our game call on Our Estimates, as
+    it does on Scores: each look calls the game with the OUT tags saved for that day."""
+    app, store, sched = _app(recorded)
+    day = min(d for d, gs in sched.games.items() if gs and d >= 3)
+    game = sched.games[day][0]
+    away, home = sched.teams[game.away][1], sched.teams[game.home][1]
+    event = {"i": 9, "hn": home, "an": away, "ci": iddaa.NBA, "d": int(game.start.timestamp())}
+    app.state.now = lambda: game.start - timedelta(hours=1)
+    app.state.iddaa_transport = bulletin([event])
+    asyncio.run(app.state.book_log_sweep())  # builds the box on its first look
+    box = app.state.game_boxes.get(2027) or app.state.last_boxes.get(2027)
+    assert box is not None
+    store.save_pregame(2027, day, {"teams": {}, "players": {"77": {"team": game.home, "status": "OUT"}}})
+    seen = []
+    real = box.call
+    box.call = lambda d, a, h, out=None: seen.append(out) or real(d, a, h, out)
+    asyncio.run(app.state.book_log_sweep())
+    assert seen and all(out == {77} for out in seen)
