@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from app import plans, schemas
 from app.accounts import MemoryAccountStore, User
@@ -93,11 +94,12 @@ def app(fake_espn):
     )
 
 
-def client_for(app, email, admin=False) -> TestClient:
+def client_for(app, email, admin=False, raise_server_exceptions=True) -> TestClient:
     user = app.state.accounts.create_user(email, None)
     user.user_type = "admin" if admin else "user"
     app.state.accounts.save_session(hash_token(email), user.id)
-    return TestClient(app, headers={"Authorization": f"Bearer {email}"})
+    headers = {"Authorization": f"Bearer {email}"}
+    return TestClient(app, headers=headers, raise_server_exceptions=raise_server_exceptions)
 
 
 def me(client) -> dict:
@@ -157,3 +159,106 @@ def test_postgres_store():
     assert (got.status, got.subscription_id, got.period_end, got.cancel_at_period_end) == ("active", "sub_1", NOW, True)
     assert got.comp_until == NOW  # a webhook write leaves the gift alone
     plans.PostgresSubscriptionStore(os.environ["TEST_DATABASE_URL"])  # the table is made once; a restart is fine
+
+
+# Pro fields and Pro endpoints -------------------------------------------------------------------
+
+LINE = schemas.NextGameLine(
+    minutes=34, pts=27, reb=6, ast=7, stl=1, blk=0.5, three_pm=3, to=3, fgm=9, fga=19, ftm=6, fta=7
+)
+
+
+def card_extras() -> schemas.PlayerCardExtras:
+    return schemas.PlayerCardExtras(news=[], names={1: "Luka"}, next_game=LINE)
+
+
+def test_strip_blanks_pro_fields_on_a_copy():
+    extras = card_extras()
+    free = plans.strip(extras, frozenset())
+    assert free.next_game is None and free.names == {1: "Luka"}
+    assert extras.next_game == LINE  # a shared, cached original is never changed
+    assert plans.strip(extras, frozenset(Feature)) is extras
+    assert plans.strip(extras, frozenset({Feature.NEXT_GAME})) is extras
+    nested = [{"a": extras}]
+    assert plans.strip(nested, frozenset())[0]["a"].next_game is None and nested[0]["a"].next_game == LINE
+
+
+def test_models_without_pro_fields_pass_untouched():
+    other = schemas.Me(id=1, email=None, has_google=False, leagues=[], notices=[])
+    assert not plans.reaches_pro(schemas.Me) and plans.strip(other, frozenset()) is other
+
+
+def all_models():
+    return [m for m in vars(schemas).values() if isinstance(m, type) and issubclass(m, BaseModel)]
+
+
+def test_pro_fields_can_be_blanked():
+    marked = [
+        (m.__name__, name)
+        for m in all_models()
+        for name, info in m.model_fields.items()
+        if plans.field_feature(info) is not None
+    ]
+    assert ("PlayerRef", "next_game") in marked and ("Game", "call") in marked
+    for model, name in marked:
+        assert not getattr(schemas, model).model_fields[name].is_required(), f"{model}.{name} needs a default"
+
+
+def test_every_route_with_pro_fields_strips_them(app):
+    from fastapi.routing import APIRoute
+
+    reaching = [
+        r
+        for r in app.routes
+        if isinstance(r, APIRoute)
+        and r.response_model is not None
+        and any(plans.reaches_pro(m) for m in plans._models_in(r.response_model))
+    ]
+    paths = {r.path for r in reaching}
+    assert {"/api/analyze", "/api/scores", "/api/player-card/extras", "/api/sample/teams/{team_id}"} <= paths
+    assert all(hasattr(r.endpoint, "__wrapped__") for r in reaching)
+
+
+@pytest.fixture
+def card_route(app):
+    @app.post("/test/card", response_model=schemas.PlayerCardExtras)
+    async def card() -> schemas.PlayerCardExtras:
+        return app.state.test_card
+
+    app.state.test_card = card_extras()
+    return app
+
+
+def test_free_accounts_get_no_pro_fields(card_route):
+    app = card_route
+    app.state.plans_enforced = True
+    assert client_for(app, "fan@example.com").post("/test/card").json()["next_game"] is None
+    assert TestClient(app).post("/test/card").json()["next_game"] is None  # a visitor too
+    assert client_for(app, "boss@example.com", admin=True).post("/test/card").json()["next_game"]["pts"] == 27
+    assert app.state.test_card.next_game == LINE
+
+
+def test_pro_fields_stay_while_plans_are_off(card_route):
+    app = card_route
+    app.state.plans_enforced = False
+    assert client_for(app, "fan@example.com").post("/test/card").json()["next_game"]["pts"] == 27
+
+
+@pytest.mark.parametrize(
+    "path,body,feature",
+    [
+        ("/api/book-compare", {}, "estimates"),
+        ("/api/book-compare/record", {}, "sportsbook"),
+        ("/api/book-compare/lost", {}, "estimates"),
+        ("/api/scores/pregame", {"league_id": 1, "game_id": 1}, "pregame"),
+        ("/api/match-form", {"away": "BOS", "home": "NYK"}, "match_form"),
+    ],
+)
+def test_pro_endpoints_ask_free_accounts_to_upgrade(app, path, body, feature):
+    app.state.plans_enforced = True
+    r = client_for(app, "fan@example.com").post(path, json=body)
+    assert r.status_code == 402, r.text
+    assert r.json()["detail"]["code"] == "upgrade_required" and r.json()["detail"]["feature"] == feature
+    assert TestClient(app).post(path, json=body).status_code == 401
+    boss = client_for(app, "boss@example.com", admin=True, raise_server_exceptions=False)
+    assert boss.post(path, json=body).status_code != 402  # past the gate (the test league has no such game)
