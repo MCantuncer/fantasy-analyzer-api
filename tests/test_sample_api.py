@@ -178,3 +178,23 @@ def test_postgres_keeps_sample_runs():
     assert store.sample_days(1999) == [today.isoformat(), yesterday]
     assert store.get_sample(1999, today.isoformat(), 3) == {"team": 3}
     assert store.get_sample(1999, month_ago, 3) is None  # cleared when a newer index was saved
+
+
+def test_visitors_get_no_pro_numbers_once_plans_are_on(fake_espn, report):
+    from app.schemas import NextGameLine
+
+    line = NextGameLine(minutes=30, pts=20, reb=5, ast=4, stl=1, blk=1, three_pm=2, to=2, fgm=7, fga=15, ftm=4, fta=5)
+    first = report.pickups[0]
+    with_line = report.model_copy(
+        update={"pickups": [first.model_copy(update={"add": first.add.model_copy(update={"next_game": line})})]}
+    )
+    app = sample_app(fake_espn, with_line)
+    with TestClient(app) as client:
+        run_today(client)
+        url = f"/api/sample/teams/{MY_TEAM}"
+        app.state.plans_enforced = False
+        assert client.get(url).json()["pickups"][0]["add"]["next_game"]["pts"] == 20
+        app.state.plans_enforced = True
+        after = client.get(url).json()
+        assert after["pickups"][0]["add"]["next_game"] is None  # tonight's real line is Pro
+        assert after["pickups"][0]["add"]["name"] == first.add.name and after["team_id"] == MY_TEAM

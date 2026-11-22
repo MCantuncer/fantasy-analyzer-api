@@ -3851,6 +3851,11 @@ def create_app(
         body = schemas.SampleIndex(**index, fresh=age <= 1, phase=phase).model_dump(mode="json")
         return JSONResponse(body, headers=SAMPLE_CACHE)
 
+    def free_sample(body: dict) -> dict:
+        report = schemas.AnalysisReport.model_validate(body)
+        free = plans.strip(report, frozenset())
+        return body if free is report else free.model_dump(mode="json")
+
     @app.get(
         "/api/sample/teams/{team_id}",
         response_model=schemas.AnalysisReport,
@@ -3874,6 +3879,9 @@ def create_app(
                     break
         if body is None:
             raise HTTPException(404, detail=SAMPLE_NO_TEAM)
+        if app.state.plans_enforced:
+            # Visitors are on Free: the sample is today's run, so its Pro numbers are tonight's real ones.
+            body = await run_in_threadpool(free_sample, body)
         return JSONResponse(body, headers=SAMPLE_CACHE)
 
     @app.post("/api/news/check", response_model=schemas.NewsCheck, responses={401: {"model": schemas.ErrorBody}})
