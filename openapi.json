@@ -9483,6 +9483,17 @@
           },
           "home": {
             "$ref": "#/components/schemas/TeamForm"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchNext"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Their next game with this away and home, if scheduled"
           }
         },
         "type": "object",
@@ -9528,6 +9539,55 @@
           "home"
         ],
         "title": "MatchFormRequest"
+      },
+      "MatchNext": {
+        "properties": {
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "neutral": {
+            "type": "boolean",
+            "title": "Neutral"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind",
+            "description": "\"regular\", \"cup\", \"play_in\" or \"playoff\"; null when ESPN could not say"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "game_id",
+          "start",
+          "neutral",
+          "kind",
+          "note"
+        ],
+        "title": "MatchNext",
+        "description": "Their next meeting with the away team visiting (tonight's game on Our Estimates)."
       },
       "MatchupProjection": {
         "properties": {

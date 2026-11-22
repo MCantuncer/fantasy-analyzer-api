@@ -1551,11 +1551,22 @@ class TeamForm(BaseModel):
     games: list[FormGame] = Field(description="Every game this season, most recent first (no preseason)")
 
 
+class MatchNext(BaseModel):
+    """Their next meeting with the away team visiting (tonight's game on Our Estimates)."""
+
+    game_id: int
+    start: str
+    neutral: bool
+    kind: str | None = Field(description='"regular", "cup", "play_in" or "playoff"; null when ESPN could not say')
+    note: str | None
+
+
 class MatchForm(BaseModel):
     """Both teams' season so far, for the match card's Form view."""
 
     away: TeamForm
     home: TeamForm
+    next: MatchNext | None = Field(default=None, description="Their next game with this away and home, if scheduled")
 
 
 class PlayerCardRequest(BaseModel):

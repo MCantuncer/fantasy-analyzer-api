@@ -4077,7 +4077,25 @@ def create_app(
             wins = sum(g.won for g in games)
             return schemas.TeamForm(abbrev=abbrev, name=name, wins=wins, losses=len(games) - wins, games=games)
 
-        return schemas.MatchForm(away=side(ids["away"]), home=side(ids["home"]))
+        upcoming = [
+            g
+            for gs in sched.games.values()
+            for g in gs
+            if (g.away, g.home) == (ids["away"], ids["home"]) and game_status(g, now) != "final"
+        ]
+        nxt = min(upcoming, key=lambda g: g.start, default=None)
+        meet = None
+        if nxt is not None:
+            when = sched.date_of(nxt.day)
+            k = (await day_kinds(when)).get(nxt.id) if when else None
+            meet = schemas.MatchNext(
+                game_id=nxt.id,
+                start=nxt.start.isoformat().replace("+00:00", "Z"),
+                neutral=bool(k and k.neutral),
+                kind=k.kind if k else None,
+                note=k.note if k else None,
+            )
+        return schemas.MatchForm(away=side(ids["away"]), home=side(ids["home"]), next=meet)
 
     async def card_next_game(
         league_id: int, season: int, player_id: int, creds: EspnCredentials | None

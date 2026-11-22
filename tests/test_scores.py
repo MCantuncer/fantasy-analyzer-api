@@ -565,6 +565,24 @@ def test_match_form_without_the_scoreboard_has_no_kinds(recorded, schedule_raw, 
     assert g["kind"] is None and g["note"] is None
 
 
+def test_match_form_names_their_next_meeting_with_its_kind(recorded, schedule_raw, day4_players):
+    sched = parse_schedule(schedule_raw)
+    game = next(g for g in sched.games[5] if HOU in (g.away, g.home))
+    away, home = sched.teams[game.away][0], sched.teams[game.home][0]
+
+    def scoreboard(request: httpx.Request) -> httpx.Response:
+        event = {"id": str(game.id), "season": {"type": 2}, "competitions": [{"neutralSite": True}]}
+        return httpx.Response(200, json={"events": [event]})
+
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, MORNING_AFTER, scoreboard)
+    client.app.state.sample_league_id = LEAGUE_ID
+    nxt = client.post("/api/match-form", json={"season": 2027, "away": away, "home": home}).json()["next"]
+    assert nxt["game_id"] == game.id and nxt["kind"] == "regular" and nxt["neutral"] is True
+    # The other way round is the return game, a different one.
+    back = client.post("/api/match-form", json={"season": 2027, "away": home, "home": away}).json()["next"]
+    assert back is None or (back["game_id"] != game.id and back["start"] > nxt["start"])
+
+
 def test_nba_team_before_tonights_games(recorded, schedule_raw, day4_players):
     client, _, _ = scores_client(recorded, schedule_raw, day4_players, FRIDAY_AFTERNOON)
     body = client.post("/api/nba-team", json={"league_id": LEAGUE_ID, "season": 2027, "team": "SA"}).json()
