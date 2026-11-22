@@ -67,6 +67,7 @@ class Subscription:
     subscription_id: str | None = None
     period_end: datetime | None = None  # end of the paid (or trial) period
     cancel_at_period_end: bool = False
+    provider_updated_at: datetime | None = None  # when the provider says this state began; older ones lose
     comp_until: datetime | None = None  # Pro gifted by an admin, until this moment
     updated_at: datetime | None = None
 
@@ -116,7 +117,8 @@ def entitlement(user: User | None, sub: Subscription | None, now: datetime, enfo
 
 class SubscriptionStore(Protocol):
     def get(self, user_id: int) -> Subscription | None: ...
-    def save(self, sub: Subscription) -> None: ...
+    def by_subscription(self, subscription_id: str) -> Subscription | None: ...
+    def save(self, sub: Subscription) -> bool: ...
     def gift(self, user_id: int, until: datetime | None) -> None: ...
 
 
@@ -129,9 +131,11 @@ create table if not exists subscriptions (
     subscription_id text unique,
     period_end timestamptz,
     cancel_at_period_end boolean not null default false,
+    provider_updated_at timestamptz,
     comp_until timestamptz,
     updated_at timestamptz not null default now()
 );
+alter table subscriptions add column if not exists provider_updated_at timestamptz;
 """
 
 
@@ -142,11 +146,18 @@ class MemorySubscriptionStore:
     def get(self, user_id: int) -> Subscription | None:
         return self.rows.get(user_id)
 
-    def save(self, sub: Subscription) -> None:
+    def by_subscription(self, subscription_id: str) -> Subscription | None:
+        return next((s for s in self.rows.values() if s.subscription_id == subscription_id), None)
+
+    def save(self, sub: Subscription) -> bool:
+        """Writes the provider's state unless the row already holds a newer one; True when written."""
         kept = self.rows.get(sub.user_id)
+        if kept and _older(sub.provider_updated_at, kept.provider_updated_at):
+            return False
         sub.comp_until = kept.comp_until if kept else sub.comp_until  # a gift is the admin's to change
         sub.updated_at = datetime.now(UTC)
         self.rows[sub.user_id] = sub
+        return True
 
     def gift(self, user_id: int, until: datetime | None) -> None:
         sub = self.rows.setdefault(user_id, Subscription(user_id))
@@ -154,10 +165,14 @@ class MemorySubscriptionStore:
         sub.updated_at = datetime.now(UTC)
 
 
+def _older(new: datetime | None, kept: datetime | None) -> bool:
+    return new is not None and kept is not None and new < kept
+
+
 class PostgresSubscriptionStore:
     _COLS = (
         "user_id, status, provider, customer_id, subscription_id, period_end, cancel_at_period_end, "
-        "comp_until, updated_at"
+        "provider_updated_at, comp_until, updated_at"
     )
 
     def __init__(self, url: str):
@@ -172,14 +187,26 @@ class PostgresSubscriptionStore:
             row = conn.execute(f"select {self._COLS} from subscriptions where user_id=%s", (user_id,)).fetchone()
         return Subscription(*row) if row else None
 
-    def save(self, sub: Subscription) -> None:
+    def by_subscription(self, subscription_id: str) -> Subscription | None:
         with self._connect() as conn:
-            conn.execute(
+            row = conn.execute(
+                f"select {self._COLS} from subscriptions where subscription_id=%s", (subscription_id,)
+            ).fetchone()
+        return Subscription(*row) if row else None
+
+    def save(self, sub: Subscription) -> bool:
+        """Writes the provider's state unless the row already holds a newer one; True when written."""
+        with self._connect() as conn:
+            row = conn.execute(
                 "insert into subscriptions (user_id, status, provider, customer_id, subscription_id, period_end, "
-                "cancel_at_period_end) values (%s, %s, %s, %s, %s, %s, %s) on conflict (user_id) do update set "
+                "cancel_at_period_end, provider_updated_at) values (%s, %s, %s, %s, %s, %s, %s, %s) "
+                "on conflict (user_id) do update set "
                 "status=excluded.status, provider=excluded.provider, customer_id=excluded.customer_id, "
                 "subscription_id=excluded.subscription_id, period_end=excluded.period_end, "
-                "cancel_at_period_end=excluded.cancel_at_period_end, updated_at=now()",
+                "cancel_at_period_end=excluded.cancel_at_period_end, "
+                "provider_updated_at=excluded.provider_updated_at, updated_at=now() "
+                "where subscriptions.provider_updated_at is null or excluded.provider_updated_at is null "
+                "or excluded.provider_updated_at >= subscriptions.provider_updated_at returning user_id",
                 (
                     sub.user_id,
                     sub.status,
@@ -188,8 +215,10 @@ class PostgresSubscriptionStore:
                     sub.subscription_id,
                     sub.period_end,
                     sub.cancel_at_period_end,
+                    sub.provider_updated_at,
                 ),
-            )
+            ).fetchone()
+        return row is not None
 
     def gift(self, user_id: int, until: datetime | None) -> None:
         with self._connect() as conn:
