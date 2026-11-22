@@ -660,6 +660,73 @@
         }
       }
     },
+    "/api/book-compare/lost": {
+      "post": {
+        "summary": "Lost Log",
+        "description": "Anyone signed in (Our Estimates): the bets the page took on the latest saved nights, every\nlost one with why it lost, and the causes that keep coming back (app/lostlog.py). Built from\nwhat is saved each night (iddaa's lines and our call, our player lines, the results, the OUT\ntags at tip-off), so a night reads the same whenever it is asked. Comparison only.",
+        "operationId": "lost_log_api_book_compare_lost_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LostLogRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LostLog"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/errors/resolve": {
       "post": {
         "summary": "Resolve Error",
@@ -6442,6 +6509,71 @@
         ],
         "title": "CategoryScore"
       },
+      "CauseCount": {
+        "properties": {
+          "cause": {
+            "type": "string",
+            "title": "Cause"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cause",
+          "count"
+        ],
+        "title": "CauseCount"
+      },
+      "CauseRepeat": {
+        "properties": {
+          "cause": {
+            "type": "string",
+            "title": "Cause"
+          },
+          "group": {
+            "type": "string",
+            "title": "Group"
+          },
+          "piece": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Piece"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "share": {
+            "type": "number",
+            "title": "Share",
+            "description": "Of that kind of bet's losses over the nights read"
+          },
+          "candidate": {
+            "type": "boolean",
+            "title": "Candidate",
+            "description": "Came back often enough to go to the signal search (tested blind first)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cause",
+          "group",
+          "piece",
+          "count",
+          "share",
+          "candidate"
+        ],
+        "title": "CauseRepeat"
+      },
       "CheckVerdict": {
         "properties": {
           "check": {
@@ -6841,6 +6973,17 @@
             "type": "array",
             "title": "Odds",
             "description": "The book's prices for this market at the last look; offered sides only"
+          },
+          "why": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LossReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Once final: why the result landed where it did"
           }
         },
         "type": "object",
@@ -7072,6 +7215,17 @@
             ],
             "title": "Rung Closer",
             "description": "Whose chances read the result better over the rungs (Brier score)"
+          },
+          "why": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LossReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Once final: why the result landed where it did"
           }
         },
         "type": "object",
@@ -9608,6 +9762,295 @@
           "team_name"
         ],
         "title": "LinkedTeam"
+      },
+      "LossReason": {
+        "properties": {
+          "cause": {
+            "type": "string",
+            "enum": [
+              "luck",
+              "pace",
+              "minutes",
+              "late_news",
+              "other"
+            ],
+            "title": "Cause",
+            "description": "luck: threes, free throws, shot-making; pace; minutes; late_news: ruled out after our call; other: twos, turnovers, boards, shots taken, a player far off his line"
+          },
+          "piece": {
+            "type": "string",
+            "title": "Piece",
+            "description": "three, free_throws, pace, late_news, other, minutes, shots, shooting, rate"
+          },
+          "points": {
+            "type": "number",
+            "title": "Points",
+            "description": "Its size, in the row's own unit (points, rebounds...), signed like the miss"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "One line for the page, e.g. \"NO made 8 of 35 threes (we expected 36%)\""
+          }
+        },
+        "type": "object",
+        "required": [
+          "cause",
+          "piece",
+          "points",
+          "text"
+        ],
+        "title": "LossReason",
+        "description": "Why a settled number landed where it did against ours (app/lostlog.py): the biggest piece of\nthe miss that points the way the miss went."
+      },
+      "LostBet": {
+        "properties": {
+          "game": {
+            "type": "string",
+            "title": "Game",
+            "description": "\"NO @ SA\""
+          },
+          "group": {
+            "type": "string",
+            "title": "Group",
+            "description": "winner, margin, total, team_pts, or the player stat"
+          },
+          "bet": {
+            "type": "string",
+            "title": "Bet",
+            "description": "The bet as the page writes it: \"Over 227.5\", \"MEM +5.5\", \"Cam Spencer 2+ threes\""
+          },
+          "odd": {
+            "type": "number",
+            "title": "Odd"
+          },
+          "chance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chance",
+            "description": "Our chance it would win, as stated before tip-off"
+          },
+          "ours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours"
+          },
+          "book": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book"
+          },
+          "actual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual"
+          },
+          "cause": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "luck",
+                  "pace",
+                  "minutes",
+                  "late_news",
+                  "other"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cause",
+            "description": "None when no piece explains it"
+          },
+          "piece": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Piece"
+          },
+          "points": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Points"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "game",
+          "group",
+          "bet",
+          "odd",
+          "chance",
+          "ours",
+          "book",
+          "actual",
+          "cause",
+          "piece",
+          "points",
+          "text"
+        ],
+        "title": "LostBet"
+      },
+      "LostLog": {
+        "properties": {
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "nights": {
+            "items": {
+              "$ref": "#/components/schemas/LostNight"
+            },
+            "type": "array",
+            "title": "Nights",
+            "description": "Newest first"
+          },
+          "lost": {
+            "type": "integer",
+            "title": "Lost"
+          },
+          "causes": {
+            "items": {
+              "$ref": "#/components/schemas/CauseCount"
+            },
+            "type": "array",
+            "title": "Causes"
+          },
+          "repeats": {
+            "items": {
+              "$ref": "#/components/schemas/CauseRepeat"
+            },
+            "type": "array",
+            "title": "Repeats",
+            "description": "Causes that are not luck, most frequent first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "season",
+          "nights",
+          "lost",
+          "causes",
+          "repeats"
+        ],
+        "title": "LostLog"
+      },
+      "LostLogRequest": {
+        "properties": {
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season (the year it ends); the current one when unset"
+          },
+          "nights": {
+            "type": "integer",
+            "maximum": 60.0,
+            "minimum": 1.0,
+            "title": "Nights",
+            "description": "How many of the latest saved nights",
+            "default": 14
+          }
+        },
+        "type": "object",
+        "title": "LostLogRequest"
+      },
+      "LostNight": {
+        "properties": {
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "bets": {
+            "type": "integer",
+            "title": "Bets",
+            "description": "Settled bets the page took (odds over 1.33)"
+          },
+          "won": {
+            "type": "integer",
+            "title": "Won"
+          },
+          "expected": {
+            "type": "number",
+            "title": "Expected",
+            "description": "Wins our chances added up to"
+          },
+          "lost": {
+            "items": {
+              "$ref": "#/components/schemas/LostBet"
+            },
+            "type": "array",
+            "title": "Lost"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day",
+          "date",
+          "bets",
+          "won",
+          "expected",
+          "lost"
+        ],
+        "title": "LostNight"
       },
       "MatchForm": {
         "properties": {
