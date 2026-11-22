@@ -65,6 +65,7 @@ from app.gameclock import apply_clocks, apply_on_court, fetch_clocks, fetch_on_c
 from app.garbagetime import SummaryBook
 from app.lineup import next_game, open_slots, parse_lineup, slot_name, team_days, week_of
 from app.mail import Mailer, create_mailer, reset_email, site_url
+from app.matchform import GameKind, fetch_kinds, team_form
 from app.memory import give_back_after, limit_arenas
 from app.nbateam import LATEST as TEAM_LATEST
 from app.nbateam import played_days, team_id_of, team_season
@@ -181,6 +182,7 @@ IMPACT_TRACK_RECORD = (
 )
 # While a game is on, one ESPN call a minute serves every visitor.
 LIVE_SCORES_TTL = 60.0
+GAME_KINDS_TTL = 7 * 24 * 3600.0
 # A lineup change in the ESPN app shows within this long; a finished day's lineup never changes.
 LINEUP_TTL = 30.0
 # ESPN's injury feed (play chances): teams file the NBA report every 15 minutes.
@@ -374,6 +376,7 @@ def create_app(
     app.state.week_sits = TTLCache(LEAGUE_TTL)
     # Quarter and clock from ESPN's scoreboard, by date; refreshed as often as live scores.
     app.state.clocks = TTLCache(LIVE_SCORES_TTL)
+    app.state.game_kinds = TTLCache(GAME_KINDS_TTL, max_items=400)  # a finished day's game kinds never change
     # Who is on the floor in each game in progress, from ESPN's box scores; as fresh as the clocks.
     app.state.on_court = TTLCache(LIVE_SCORES_TTL)
     app.state.lineups = TTLCache(LINEUP_TTL)
@@ -3993,6 +3996,107 @@ def create_app(
             if nxt and (opp := nxt.away if nxt.home == team_id else nxt.home) in sched.teams
             else None,
         )
+
+    async def day_kinds(day_date) -> dict[int, GameKind]:
+        """Each game's kind on a finished day, read from ESPN's scoreboard once and kept (it never changes)."""
+        kinds = app.state.game_kinds.get(day_date)
+        if kinds is None:
+            kinds = await fetch_kinds(day_date, app.state.clock_transport)
+            if kinds is None:
+                return {}  # not kept: the next look tries again
+            app.state.game_kinds.set(day_date, kinds)
+        return kinds
+
+    @app.post(
+        "/api/match-form",
+        response_model=schemas.MatchForm,
+        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+    )
+    async def match_form(
+        body: schemas.MatchFormRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.MatchForm:
+        """Both teams' games so far (results, each game's MVP, its kind), for the match card on Our Estimates.
+        Built from the Scores page's day boxes, read through the public line-log league."""
+        await current_user(authorization)
+        season = body.season or current_season()
+        league_id = app.state.line_log_league_id or app.state.sample_league_id
+        if not league_id:
+            raise HTTPException(503, detail={"code": "no_league", "message": "No public league to read games with."})
+        sched = await score_calendar(season)
+        ids = {side: team_id_of(sched, ab) for side, ab in (("away", body.away), ("home", body.home))}
+        missing = [ab for ab, tid in ((body.away, ids["away"]), (body.home, ids["home"])) if tid is None]
+        if missing:
+            raise HTTPException(404, detail={"code": "no_team", "message": f"No NBA team {missing[0]}."})
+        now = app.state.now()
+        days = sorted({d for tid in ids.values() for d in played_days(sched, tid, now)})
+        gate = asyncio.Semaphore(6)
+
+        async def one(day: int) -> tuple[int, dict, dict[int, GameKind]]:
+            async with gate:
+                box = await score_day(season, day, league_id, None, sched)
+                when = sched.date_of(day)
+                return day, box, (await day_kinds(when)) if when else {}
+
+        got = await asyncio.gather(*(one(d) for d in days))
+        boxes = {d: box for d, box, _ in got}
+        kinds = {gid: k for _, _, ks in got for gid, k in ks.items()}
+
+        def star(s) -> schemas.FormStar | None:
+            return (
+                schemas.FormStar(player_id=s.player_id, name=s.name, team=s.team, game_score=s.game_score, **s.stats)
+                if s
+                else None
+            )
+
+        def side(tid: int) -> schemas.TeamForm:
+            abbrev, name = sched.teams[tid]
+            games = []
+            for fg in team_form(tid, boxes):
+                k = kinds.get(fg.game_id)
+                if k is not None and k.kind == "preseason":
+                    continue
+                games.append(
+                    schemas.FormGame(
+                        game_id=fg.game_id,
+                        date=fg.date,
+                        start=fg.start,
+                        home=fg.home,
+                        neutral=bool(k and k.neutral),
+                        kind=k.kind if k else None,
+                        note=k.note if k else None,
+                        opponent=fg.opponent,
+                        opponent_name=fg.opponent_name
+                        or next((n for ab, n in sched.teams.values() if ab == fg.opponent), fg.opponent),
+                        points=fg.points,
+                        opponent_points=fg.opponent_points,
+                        won=fg.won,
+                        mvp=star(fg.mvp),
+                        best=star(fg.best),
+                        opp_best=star(fg.opp_best),
+                    )
+                )
+            wins = sum(g.won for g in games)
+            return schemas.TeamForm(abbrev=abbrev, name=name, wins=wins, losses=len(games) - wins, games=games)
+
+        upcoming = [
+            g
+            for gs in sched.games.values()
+            for g in gs
+            if (g.away, g.home) == (ids["away"], ids["home"]) and game_status(g, now) != "final"
+        ]
+        nxt = min(upcoming, key=lambda g: g.start, default=None)
+        meet = None
+        if nxt is not None:
+            when = sched.date_of(nxt.day)
+            k = (await day_kinds(when)).get(nxt.id) if when else None
+            meet = schemas.MatchNext(
+                game_id=nxt.id,
+                start=nxt.start.isoformat().replace("+00:00", "Z"),
+                neutral=bool(k and k.neutral),
+                kind=k.kind if k else None,
+                note=k.note if k else None,
+            )
+        return schemas.MatchForm(away=side(ids["away"]), home=side(ids["home"]), next=meet)
 
     async def card_next_game(
         league_id: int, season: int, player_id: int, creds: EspnCredentials | None
