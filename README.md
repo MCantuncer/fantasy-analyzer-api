@@ -140,6 +140,11 @@ All settings are optional for local development.
 | `RESEND_API_KEY` | none | Resend API key for the password reset email; Forgot password stays off until it is set |
 | `EMAIL_FROM` | `COURT <no-reply@courtfantasy.app>` | Sender of the reset email, on a domain verified in Resend |
 | `SITE_URL` | `https://courtfantasy.app` | Website the reset link opens |
+| `PADDLE_API_KEY` | none | Paddle API key (server side); payments stay off until it, the webhook secret and both prices are set |
+| `PADDLE_WEBHOOK_SECRET` | none | Secret of the Paddle notification destination pointing at `/api/billing/webhook` |
+| `PADDLE_CLIENT_TOKEN` | none | Paddle.js client-side token, handed to the site by `/api/billing/config` |
+| `PADDLE_PRICE_MONTHLY`, `PADDLE_PRICE_YEARLY` | none | Paddle price ids of Pro ($4.99 a month, $39 a year; the 7-day trial is set on the prices) |
+| `PADDLE_ENV` | `sandbox` | `sandbox` or `production` |
 | `PLANS_ENFORCED` | off | `true` locks Pro features to Pro accounts (see [Plans](#plans)); off, every account gets every feature |
 | `ANTHROPIC_API_KEY` | none | Lets Claude Haiku read managers' notes on trade ideas so the checks start where the note points; notes are kept unread without it |
 | `LEAGUE_CACHE_SECONDS` | `600` | How long league data from ESPN is cached |
@@ -170,6 +175,11 @@ All settings are optional for local development.
 | POST | `/api/keepers/save` | `{league_id, team_id, season?, player_ids}` | Replaces the kept players and returns them |
 | POST | `/api/errors` | `{kind, name, message, stack, page, build}` | Records a website crash (no account needed; rate-limited) |
 | POST | `/api/admin/errors` | | Admins only: error reports, most recent first |
+| GET | `/api/billing/config` | | Whether payments are on, Paddle's environment, client token and price ids |
+| POST | `/api/billing/checkout` | `{interval}` | A Paddle transaction for Pro (`month` or `year`) tagged with the account; the site opens Paddle's checkout on its id. 409 `already_pro` |
+| POST | `/api/billing/sync` | `{transaction_id}` | After checkout: reads the subscription from Paddle so Pro opens before the webhook lands; answers like `/api/me` |
+| POST | `/api/billing/portal` | | Paddle's customer portal for the account (card, invoices, cancel) |
+| POST | `/api/billing/webhook` | Paddle event | Paddle's signed notifications; not for the site |
 | POST | `/api/admin/gift-pro` | `{email, days}` | Admins only: Pro for that account for `days` days; `0` ends the gift |
 | POST | `/api/admin/usage` | `{days?}` | Admins only: daily visitors, page views, server events and new accounts, plus account totals |
 | POST | `/api/admin/errors/resolve` | `{id}` | Admins only: marks a report fixed; it opens again if it happens again |
@@ -268,6 +278,8 @@ COURT has two plans (`app/plans.py`). Free is the fantasy league: rosters, moves
 The split is in code: `Feature` names each Pro feature and `PLANS` lists each plan's features, so a new Pro feature is one enum member. Who has Pro is in the `subscriptions` table, one row per account: the payment provider's status and period end, plus `comp_until` when an admin gifted Pro. `entitlement()` turns that row into the plan an account is on now: Pro while the subscription is trialing, active or past due, until three days after its period ends (a card the provider still retries, or a late webhook), or while a gift lasts. Admins are always Pro. `/api/me` sends `plan` and `features`, and the site locks a spot from that list only. Until `PLANS_ENFORCED` is set, every account gets every feature.
 
 Two guards keep Pro numbers on the server. Endpoints that are only estimates (`/api/book-compare` and its record and lost picks, `/api/scores/pregame`, `/api/match-form`) call `require_feature`, which answers a Free account with `402 {code: "upgrade_required", feature}`. A Pro field inside a free response (a player's `next_game`, a game's `call`) is marked once in `app/schemas.py` with `json_schema_extra=pro(Feature.X)`; the app's route class (`plans.ProRoute`) strips every marked field the caller's plan lacks from any route whose response can hold one, on a shallow copy, so the shared caches never change. Visitors are Free. A test fails when a route that returns a Pro field isn't stripped or a marked field has no default to fall back to.
+
+Payments go through Paddle (`app/billing.py`), the seller of record: it takes the card, charges the buyer's VAT, runs the trial and retries failed renewals. Checkout opens on a transaction the API creates with the account id in its `custom_data`, so the page never decides which account a payment unlocks. Paddle's webhook is the source of truth: a delivery must carry a valid `Paddle-Signature` (HMAC-SHA256 of `ts:body` with the destination's secret, at most 5 minutes old), each event id is handled once (`billing_events`), and an older subscription state never overwrites a newer one. `/api/billing/sync` reads the subscription right after checkout so nobody waits for the webhook, and when a paid period has ended with no renewal heard of, the API asks Paddle once an hour before the account would drop to Free.
 
 ### Private leagues
 

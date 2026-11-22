@@ -777,6 +777,34 @@ class GiftProResult(BaseModel):
     until: str | None = Field(description="When the gift ends, UTC ISO 8601; None: no gift")
 
 
+BillingInterval = Literal["month", "year"]
+
+
+class BillingConfig(BaseModel):
+    enabled: bool = Field(description="Paddle is set up: checkout can open")
+    environment: Literal["sandbox", "production"] | None = None
+    client_token: str | None = Field(default=None, description="Paddle.js client-side token (public)")
+    prices: dict[BillingInterval, str] = Field(
+        default_factory=dict, description="Paddle price id by billing interval, for localized price previews"
+    )
+
+
+class CheckoutRequest(BaseModel):
+    interval: BillingInterval = "year"
+
+
+class CheckoutStart(BaseModel):
+    transaction_id: str = Field(description="Open Paddle's checkout on this transaction (Paddle.Checkout.open)")
+
+
+class BillingSyncRequest(BaseModel):
+    transaction_id: str = Field(pattern=r"^txn_[a-z0-9]{10,64}$")
+
+
+class BillingPortal(BaseModel):
+    url: str = Field(description="Paddle's customer portal for this account: card, invoices, cancel")
+
+
 class Me(BaseModel):
     id: int
     email: str | None

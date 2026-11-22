@@ -37,7 +37,17 @@ PAGES = frozenset(
 )  # fmt: skip
 # Things done on the server, counted where they happen.
 EVENTS = frozenset(
-    {"signup", "sign_in", "league_added", "password_reset", "verify", "analysis", "trade_feedback", "chat_post"}
+    {
+        "signup",
+        "sign_in",
+        "league_added",
+        "password_reset",
+        "verify",
+        "analysis",
+        "trade_feedback",
+        "chat_post",
+        "checkout",
+    }
 )
 
 
