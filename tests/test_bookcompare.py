@@ -22,6 +22,7 @@ def book_record() -> dict:
         {}, sched, [({k: EVENT[k] for k in ("i", "hn", "an", "ci", "d")}, EVENT)], game.start - timedelta(hours=1)
     )
     rec[33]["games"]["401"]["ours"] = [108, 121, 0.85]
+    rec[33]["games"]["401"]["source"] = "iddaa"
     return rec[33]
 
 
@@ -207,6 +208,19 @@ def test_the_record_adds_up_settled_rungs_over_nights():
         "picks": [],
         "calibration": [],
     }
+
+
+def test_rungs_saved_from_nesine_are_left_out_of_the_scoring():
+    names = {EMBIID: "Joel Embiid", MAXEY: "Tyrese Maxey"}
+    book = book_record()
+    del book["games"]["401"]["source"]  # a night saved from nesine's bulletin, before the switch
+    night = bookcompare.compare_day(book, our_lines(), final_day(), names)
+    [g] = night["games"]
+    assert g["source"] is None and g["players"] and all(p["ladder"] for p in g["players"])  # rows still shown
+    assert all(p["rungs"] == [] and p["best_value"] is None and p["rung_closer"] is None for p in g["players"])
+    assert all(t["rungs"] == 0 and t["value_picks"] == 0 for t in night["tally"])
+    got = bookcompare.record([night])
+    assert got["rungs"] == 0 and got["picks"] == [] and got["series"][0]["picks"] == 0
 
 
 def test_anyone_signed_in_reads_the_record(recorded):
