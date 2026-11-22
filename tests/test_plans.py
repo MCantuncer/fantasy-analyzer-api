@@ -71,6 +71,16 @@ def test_schema_lists_every_feature():
     assert set(typing.get_args(schemas.PlanFeature)) == {f.value for f in Feature}
 
 
+def test_an_older_provider_state_never_overwrites_a_newer_one():
+    store = plans.MemorySubscriptionStore()
+    assert store.save(Subscription(1, "active", subscription_id="sub_1", provider_updated_at=NOW))
+    late = Subscription(1, "past_due", subscription_id="sub_1", provider_updated_at=NOW - timedelta(1))
+    assert not store.save(late)  # webhooks can arrive out of order
+    assert store.get(1).status == "active" and store.by_subscription("sub_1").user_id == 1
+    assert store.save(Subscription(1, "canceled", subscription_id="sub_1", provider_updated_at=NOW))
+    assert store.by_subscription("sub_2") is None
+
+
 def test_memory_store_keeps_a_gift_through_webhook_writes():
     store = plans.MemorySubscriptionStore()
     until = NOW + timedelta(days=5)
@@ -152,8 +162,10 @@ def test_postgres_store():
     user = accounts.create_user("fan@example.com", None)
     assert store.get(user.id) is None
     store.gift(user.id, NOW)
-    store.save(Subscription(user.id, "active", "paddle", "ctm_1", "sub_1", NOW, True))
+    assert store.save(Subscription(user.id, "active", "paddle", "ctm_1", "sub_1", NOW, True, NOW))
     got = store.get(user.id)
     assert (got.status, got.subscription_id, got.period_end, got.cancel_at_period_end) == ("active", "sub_1", NOW, True)
     assert got.comp_until == NOW  # a webhook write leaves the gift alone
+    assert not store.save(Subscription(user.id, "past_due", "paddle", "ctm_1", "sub_1", NOW, False, NOW - timedelta(1)))
+    assert store.by_subscription("sub_1").status == "active" and store.by_subscription("sub_9") is None
     plans.PostgresSubscriptionStore(os.environ["TEST_DATABASE_URL"])  # the table is made once; a restart is fine
