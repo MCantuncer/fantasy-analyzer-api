@@ -1042,6 +1042,7 @@ def create_app(
                     for m in g["markets"]
                 ],
                 players=[schemas.ComparePlayer(**{**p, "team": ab(p["team"])}) for p in g["players"]],
+                estimates=[schemas.CompareEstimate(**{**e, "team": ab(e["team"])}) for e in g["estimates"]],
             )
             for g in got["games"]
         ]
