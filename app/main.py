@@ -22,7 +22,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import benched, bookcompare, iddaa, linelog, lostlog, playchance, pregame, schemas
+from app import benched, bookcompare, iddaa, linelog, lostlog, plans, playchance, pregame, schemas
 from app import errors as error_reports
 from app.accounts import (
     PASSWORD_MIN,
@@ -333,6 +333,7 @@ def create_app(
     usage_store: UsageStore | None = None,
     error_store: error_reports.ErrorStore | None = None,
     mailer: Mailer | None = None,
+    subscriptions: plans.SubscriptionStore | None = None,
 ) -> FastAPI:
     limit_arenas()  # before any worker thread starts: see app/memory.py
     app = FastAPI(title="COURT API", version="0.1.0")
@@ -351,6 +352,10 @@ def create_app(
     app.state.watch_states: dict[int, dict[int, PlayerState]] = {}  # season -> ESPN's tags at the last look
     app.state.social = social or create_social_store()
     app.state.accounts = accounts or create_account_store()
+    # Who has Pro (app/plans.py), after accounts: its table points at users.
+    app.state.subscriptions = subscriptions or plans.create_subscription_store()
+    app.state.plans_enforced = plans.plans_enforced()
+    app.state.entitlements = TTLCache(30, max_items=4096)  # user id -> Entitlement, read once per page load
     app.state.feedback = feedback or create_feedback_store()
     app.state.reader = reader or create_reader()
     app.state.deep_reader = deep_reader or create_deep_reader()
@@ -1249,7 +1254,30 @@ def create_app(
             ],
             notices=[schemas.Notice(id=n.id, text=n.text, at=iso(n.created_at)) for n in notices],
             admin=is_admin(user),
+            **plan_fields(await entitlement_of(user)),
         )
+
+    def plan_fields(ent: plans.Entitlement) -> dict:
+        return {
+            "plan": ent.plan,
+            "features": sorted(ent.features),
+            "trial_ends": iso(ent.trial_ends) if ent.trial_ends else None,
+            "renews_at": iso(ent.renews_at) if ent.renews_at else None,
+            "ends_at": iso(ent.ends_at) if ent.ends_at else None,
+            "gifted": ent.gifted,
+        }
+
+    async def entitlement_of(user: User | None) -> plans.Entitlement:
+        """What this account may see now (app/plans.py): one database read, kept for half a minute."""
+        enforced = app.state.plans_enforced
+        if user is None:
+            return plans.entitlement(None, None, app.state.now(), enforced)
+        got = app.state.entitlements.get((user.id,))
+        if got is None:
+            sub = await run_in_threadpool(app.state.subscriptions.get, user.id)
+            got = plans.entitlement(user, sub, app.state.now(), enforced)
+            app.state.entitlements.set((user.id,), got)
+        return got
 
     def is_admin(user: User | None) -> bool:
         return bool(user and user.admin)
@@ -1290,6 +1318,23 @@ def create_app(
                 raise HTTPException(429, detail={"code": "slow_down", "message": "Too many tries. Wait a while."})
         for key in keys:
             buckets[key].append(now)
+
+    @app.post(
+        "/api/admin/gift-pro",
+        response_model=schemas.GiftProResult,
+        responses={403: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+    )
+    async def gift_pro(body: schemas.GiftProRequest, authorization: str | None = Header(default=None)):
+        """Admins only: give an account Pro for a number of days (friends, testers), or end the gift."""
+        await admin_user(authorization)
+        found = await run_in_threadpool(app.state.accounts.login_lookup, normalize_email(body.email))
+        if found is None:
+            raise HTTPException(404, detail={"code": "no_account", "message": "No account uses that email."})
+        user = found[0]
+        until = app.state.now() + timedelta(days=body.days) if body.days else None
+        await run_in_threadpool(app.state.subscriptions.gift, user.id, until)
+        app.state.entitlements.drop(lambda key: key == (user.id,))
+        return schemas.GiftProResult(user_id=user.id, until=iso(until) if until else None)
 
     @app.get("/api/auth/config", response_model=schemas.AuthConfig)
     async def auth_config() -> schemas.AuthConfig:
