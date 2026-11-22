@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.plans import Feature, pro
+
 
 class LeagueRequest(BaseModel):
     league_id: int = Field(gt=0)
@@ -199,7 +201,11 @@ class PlayerRef(BaseModel):
         default=None, description="Listed out: the news headline games_out rests on, when it reported a timeline"
     )
     hot_run: HotRun | None = Field(default=None, description="Set when his last 15 days run well above his usual")
-    next_game: NextGameLine | None = Field(default=None, description="His line for his next game; none while he is out")
+    next_game: NextGameLine | None = Field(
+        default=None,
+        description="His line for his next game; none while he is out. Pro",
+        json_schema_extra=pro(Feature.NEXT_GAME),
+    )
 
 
 class CategoryOutlook(BaseModel):
@@ -1224,7 +1230,11 @@ class Game(BaseModel):
     away: GameSide
     home: GameSide
     lines: list[GameLine] = Field(description="Everyone who played, most minutes first")
-    call: GameCall | None = Field(default=None, description="Our call for the score; None before the box is built")
+    call: GameCall | None = Field(
+        default=None,
+        description="Our call for the score; None before the box is built. Pro",
+        json_schema_extra=pro(Feature.GAME_CALLS),
+    )
 
 
 class FixturePlayer(BaseModel):
@@ -1728,7 +1738,8 @@ class PlayerCardExtras(BaseModel):
     next_game: NextGameLine | None = Field(
         default=None,
         description="His line for his next game, as FA Targets shows it; none while he is out or when this "
-        "league doesn't list him",
+        "league doesn't list him. Pro",
+        json_schema_extra=pro(Feature.NEXT_GAME),
     )
 
 

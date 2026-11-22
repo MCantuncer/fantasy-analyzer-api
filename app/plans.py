@@ -15,11 +15,20 @@ Admins always have every feature.
 
 from __future__ import annotations
 
+import contextvars
+import functools
+import inspect
 import os
+import typing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Protocol
+
+from fastapi import Response
+from fastapi.routing import APIRoute
+from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 
 from app.accounts import User
 
@@ -194,3 +203,137 @@ class PostgresSubscriptionStore:
 def create_subscription_store() -> SubscriptionStore:
     url = os.getenv("DATABASE_URL", "").strip()
     return PostgresSubscriptionStore(url) if url else MemorySubscriptionStore()
+
+
+# Pro fields inside free responses ------------------------------------------------------------
+# A field that only Pro accounts see carries its feature in the schema:
+#     next_game: NextGameLine | None = Field(default=None, json_schema_extra=pro(Feature.NEXT_GAME))
+# and ``strip`` hands everyone else a copy with that field back at its default. Only the models on
+# the way to a blanked field are copied (shallowly), so a shared cached report is never changed.
+
+FEATURE_KEY = "pro_feature"
+
+
+def pro(feature: Feature) -> dict:
+    """``json_schema_extra`` for a field only accounts with ``feature`` see."""
+    return {FEATURE_KEY: feature.value}
+
+
+def field_feature(info: FieldInfo) -> Feature | None:
+    extra = info.json_schema_extra
+    return Feature(extra[FEATURE_KEY]) if isinstance(extra, dict) and FEATURE_KEY in extra else None
+
+
+def _models_in(annotation) -> list[type[BaseModel]]:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return [annotation]
+    return [m for arg in typing.get_args(annotation) for m in _models_in(arg)]
+
+
+@functools.cache
+def reaches_pro(model: type[BaseModel]) -> bool:
+    """Whether ``model`` holds a Pro field anywhere inside it."""
+    _seen.add(model)
+    try:
+        return any(
+            field_feature(info) is not None
+            or any(m not in _seen and reaches_pro(m) for m in _models_in(info.annotation))
+            for info in model.model_fields.values()
+        )
+    finally:
+        _seen.discard(model)
+
+
+_seen: set[type[BaseModel]] = set()  # models on the walk's path, so a model that holds itself ends
+
+
+def strip(value, features: frozenset[Feature]):
+    """``value`` with every Pro field outside ``features`` back at its default; ``value`` itself
+    when nothing changes."""
+    if len(features) == len(Feature):
+        return value
+    if isinstance(value, BaseModel):
+        cls = type(value)
+        if not reaches_pro(cls):
+            return value
+        changes = {}
+        for name, info in cls.model_fields.items():
+            current = getattr(value, name)
+            feature = field_feature(info)
+            if feature is not None and feature not in features:
+                blank = info.get_default(call_default_factory=True)
+                if current != blank:
+                    changes[name] = blank
+            elif current is not None and any(reaches_pro(m) for m in _models_in(info.annotation)):
+                new = strip(current, features)
+                if new is not current:
+                    changes[name] = new
+        return value.model_copy(update=changes) if changes else value
+    if isinstance(value, list):
+        new = [strip(v, features) for v in value]
+        return new if any(a is not b for a, b in zip(new, value, strict=True)) else value
+    if isinstance(value, dict):
+        new = {k: strip(v, features) for k, v in value.items()}
+        return new if any(new[k] is not v for k, v in value.items()) else value
+    return value
+
+
+# Every route whose response can hold a Pro field strips it on the way out ----------------------
+# ``ProRoute`` is the app's route class: when a route's response model reaches a Pro field, its
+# endpoint's result goes through ``strip`` for the caller's features. New routes are covered the
+# moment they return such a model; nothing to remember. The caller is read from the request's
+# Authorization header, kept for the request by ``RequestScope``.
+
+_scope: contextvars.ContextVar[dict | None] = contextvars.ContextVar("plans_request_scope", default=None)
+
+
+class RequestScope:
+    """ASGI middleware: keeps the request's scope where ``ProRoute``'s endpoints can read it."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        token = _scope.set(scope)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _scope.reset(token)
+
+
+def _authorization(scope: dict) -> str | None:
+    for key, value in scope.get("headers", []):
+        if key == b"authorization":
+            return value.decode("latin-1")
+    return None
+
+
+class ProRoute(APIRoute):
+    def __init__(self, path: str, endpoint, **kwargs):
+        model = kwargs.get("response_model")
+        if model is not None and any(reaches_pro(m) for m in _models_in(model)):
+            endpoint = _stripping(endpoint)
+        super().__init__(path, endpoint, **kwargs)
+
+
+def _stripping(endpoint):
+    if not inspect.iscoroutinefunction(endpoint):
+        raise TypeError(f"{endpoint.__name__} returns Pro fields: make it async so they can be stripped")
+
+    @functools.wraps(endpoint)
+    async def stripped(*args, **kwargs):
+        result = await endpoint(*args, **kwargs)
+        scope = _scope.get()
+        if scope is None or isinstance(result, Response):
+            return result
+        features = await scope["app"].state.features_for(_authorization(scope))
+        return strip(result, features)
+
+    return stripped
+
+
+def request_memo() -> dict | None:
+    """A dict that lives as long as the current request (None outside one): the signed-in user is
+    read once even when both the endpoint and ``ProRoute`` ask."""
+    scope = _scope.get()
+    return None if scope is None else scope.setdefault("court_memo", {})
