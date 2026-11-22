@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import json
 import logging
 import os
 import secrets
@@ -22,7 +23,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import benched, bookcompare, iddaa, linelog, lostlog, plans, playchance, pregame, schemas
+from app import benched, billing, bookcompare, iddaa, linelog, lostlog, plans, playchance, pregame, schemas
 from app import errors as error_reports
 from app.accounts import (
     PASSWORD_MIN,
@@ -338,6 +339,8 @@ def create_app(
     error_store: error_reports.ErrorStore | None = None,
     mailer: Mailer | None = None,
     subscriptions: plans.SubscriptionStore | None = None,
+    billing_events: billing.EventStore | None = None,
+    paddle: billing.Paddle | None = None,
 ) -> FastAPI:
     limit_arenas()  # before any worker thread starts: see app/memory.py
     app = FastAPI(title="COURT API", version="0.1.0")
@@ -361,6 +364,11 @@ def create_app(
     app.state.subscriptions = subscriptions or plans.create_subscription_store()
     app.state.plans_enforced = plans.plans_enforced()
     app.state.entitlements = TTLCache(30, max_items=4096)  # user id -> Entitlement, read once per page load
+    # Payments (app/billing.py): off until Paddle's settings are there.
+    config = billing.paddle_config()
+    app.state.paddle = paddle or (billing.Paddle(config) if config else None)
+    app.state.billing_events = billing_events or billing.create_event_store()
+    app.state.billing_rechecked = TTLCache(3600, max_items=4096)  # user id: renewal asked of Paddle this hour
     app.state.feedback = feedback or create_feedback_store()
     app.state.reader = reader or create_reader()
     app.state.deep_reader = deep_reader or create_deep_reader()
@@ -1296,6 +1304,30 @@ def create_app(
             )
         return user
 
+    async def recheck_renewal(sub: plans.Subscription | None) -> plans.Subscription | None:
+        """A paid period that has ended with no renewal heard of yet: ask Paddle once an hour, so a lost
+        webhook never locks out someone whose card was charged."""
+        paddle: billing.Paddle | None = app.state.paddle
+        due = (
+            sub is not None
+            and paddle is not None
+            and sub.provider == billing.PROVIDER
+            and sub.subscription_id
+            and sub.status in plans.PAYING
+            and sub.period_end is not None
+            and sub.period_end < app.state.now()
+        )
+        if not due or app.state.billing_rechecked.get((sub.user_id,)):
+            return sub
+        app.state.billing_rechecked.set((sub.user_id,), True)
+        try:
+            fresh = billing.subscription_from(await paddle.subscription(sub.subscription_id), sub.user_id)
+        except (billing.BillingError, KeyError, ValueError):
+            logging.getLogger(__name__).warning("billing: renewal recheck failed", exc_info=True)
+            return sub
+        await run_in_threadpool(app.state.subscriptions.save, fresh)
+        return await run_in_threadpool(app.state.subscriptions.get, sub.user_id)
+
     async def entitlement_of(user: User | None) -> plans.Entitlement:
         """What this account may see now (app/plans.py): one database read, kept for half a minute."""
         enforced = app.state.plans_enforced
@@ -1303,7 +1335,7 @@ def create_app(
             return plans.entitlement(None, None, app.state.now(), enforced)
         got = app.state.entitlements.get((user.id,))
         if got is None:
-            sub = await run_in_threadpool(app.state.subscriptions.get, user.id)
+            sub = await recheck_renewal(await run_in_threadpool(app.state.subscriptions.get, user.id))
             got = plans.entitlement(user, sub, app.state.now(), enforced)
             app.state.entitlements.set((user.id,), got)
         return got
@@ -1364,6 +1396,123 @@ def create_app(
         await run_in_threadpool(app.state.subscriptions.gift, user.id, until)
         app.state.entitlements.drop(lambda key: key == (user.id,))
         return schemas.GiftProResult(user_id=user.id, until=iso(until) if until else None)
+
+    # Billing (app/billing.py) -------------------------------------------------------------------
+
+    BILLING_OFF = {"code": "billing_off", "message": "Payments aren't open yet."}
+    PADDLE_DOWN = {"code": "billing_unreachable", "message": "Paddle didn't answer. Try again."}
+    NOT_YOURS = {"code": "not_yours", "message": "That checkout belongs to another account."}
+    E = {"model": schemas.ErrorBody}
+
+    def paddle_or_503() -> billing.Paddle:
+        if app.state.paddle is None:
+            raise HTTPException(503, detail=BILLING_OFF)
+        return app.state.paddle
+
+    def forget_plan(user_id: int) -> None:
+        app.state.entitlements.drop(lambda key: key == (user_id,))
+
+    @app.get("/api/billing/config", response_model=schemas.BillingConfig)
+    async def billing_config() -> schemas.BillingConfig:
+        """What the site needs to open Paddle's checkout; nothing secret."""
+        paddle: billing.Paddle | None = app.state.paddle
+        if paddle is None:
+            return schemas.BillingConfig(enabled=False)
+        cfg = paddle.config
+        return schemas.BillingConfig(
+            enabled=True, environment=cfg.environment, client_token=cfg.client_token, prices=cfg.prices
+        )
+
+    @app.post(
+        "/api/billing/checkout",
+        response_model=schemas.CheckoutStart,
+        responses={401: E, 409: E, 502: E, 503: E},
+    )
+    async def billing_checkout(
+        body: schemas.CheckoutRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.CheckoutStart:
+        """A Paddle transaction for Pro, tagged with this account: the site opens the checkout on it."""
+        user = await current_user(authorization)
+        paddle = paddle_or_503()
+        sub = await run_in_threadpool(app.state.subscriptions.get, user.id)
+        paying = plans.entitlement(None, sub, app.state.now())
+        if paying.plan == plans.PRO and not paying.gifted:
+            raise HTTPException(409, detail={"code": "already_pro", "message": "This account already has Pro."})
+        try:
+            txn = await paddle.start_checkout(user.id, body.interval)
+        except billing.BillingError as exc:
+            raise HTTPException(502, detail=PADDLE_DOWN) from exc
+        counted("checkout")
+        return schemas.CheckoutStart(transaction_id=txn)
+
+    @app.post(
+        "/api/billing/sync",
+        response_model=schemas.Me,
+        responses={401: E, 403: E, 502: E, 503: E},
+    )
+    async def billing_sync(body: schemas.BillingSyncRequest, authorization: str | None = Header(default=None)):
+        """Right after checkout: read the subscription from Paddle so Pro opens before the webhook lands."""
+        user = await current_user(authorization)
+        paddle = paddle_or_503()
+        try:
+            txn = await paddle.transaction(body.transaction_id)
+            if billing.account_of(txn) != user.id:
+                raise HTTPException(403, detail=NOT_YOURS)
+            if txn.get("subscription_id"):
+                data = await paddle.subscription(txn["subscription_id"])
+                await run_in_threadpool(app.state.subscriptions.save, billing.subscription_from(data, user.id))
+                forget_plan(user.id)
+        except billing.BillingError as exc:
+            raise HTTPException(502, detail=PADDLE_DOWN) from exc
+        return await me_for(user)
+
+    @app.post(
+        "/api/billing/portal",
+        response_model=schemas.BillingPortal,
+        responses={401: E, 404: E, 502: E, 503: E},
+    )
+    async def billing_portal(authorization: str | None = Header(default=None)) -> schemas.BillingPortal:
+        """Paddle's customer portal for this account: change the card, see invoices, cancel."""
+        user = await current_user(authorization)
+        paddle = paddle_or_503()
+        sub = await run_in_threadpool(app.state.subscriptions.get, user.id)
+        if sub is None or sub.provider != billing.PROVIDER or not sub.customer_id:
+            raise HTTPException(404, detail={"code": "no_subscription", "message": "This account has no subscription."})
+        try:
+            return schemas.BillingPortal(url=await paddle.portal_url(sub.customer_id, sub.subscription_id))
+        except billing.BillingError as exc:
+            raise HTTPException(502, detail=PADDLE_DOWN) from exc
+
+    @app.post("/api/billing/webhook", include_in_schema=False)
+    async def billing_webhook(request: Request) -> dict:
+        """Paddle's notifications. Only a delivery signed with our secret changes a subscription."""
+        paddle = paddle_or_503()
+        body = await request.body()
+        if not billing.verify_signature(request.headers.get("paddle-signature"), body, paddle.config.webhook_secret):
+            raise HTTPException(401, detail={"code": "bad_signature", "message": "Not signed by Paddle."})
+        try:
+            event = json.loads(body)
+            kind, event_id, data = event["event_type"], event["event_id"], event["data"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(400, detail={"code": "bad_event", "message": "Not a Paddle event."}) from exc
+        if not kind.startswith("subscription."):
+            return {"ok": True}
+        user_id = billing.account_of(data)
+        if user_id is None:
+            known = await run_in_threadpool(app.state.subscriptions.by_subscription, data.get("id") or "")
+            user_id = known.user_id if known else None
+        if user_id is None:
+            logging.getLogger(__name__).warning("billing: %s %s has no account", kind, event_id)
+            return {"ok": True}
+        if not await run_in_threadpool(app.state.billing_events.first_time, event_id):
+            return {"ok": True}  # delivered before
+        try:
+            await run_in_threadpool(app.state.subscriptions.save, billing.subscription_from(data, user_id))
+        except Exception:
+            await run_in_threadpool(app.state.billing_events.forget, event_id)  # Paddle delivers it again
+            raise
+        forget_plan(user_id)
+        return {"ok": True}
 
     @app.get("/api/auth/config", response_model=schemas.AuthConfig)
     async def auth_config() -> schemas.AuthConfig:
