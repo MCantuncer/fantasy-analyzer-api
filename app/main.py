@@ -256,6 +256,10 @@ def current_season(now: datetime | None = None) -> int:
     return now.year + 1 if now.month >= 8 else now.year
 
 
+# Errors of an endpoint only Pro accounts may call: not signed in, or upgrade_required (app/plans.py).
+PRO_ONLY = {401: {"model": schemas.ErrorBody}, 402: {"model": schemas.ErrorBody}}
+
+
 def env_int(name: str) -> int | None:
     raw = os.getenv(name, "").strip()
     try:
@@ -337,6 +341,7 @@ def create_app(
 ) -> FastAPI:
     limit_arenas()  # before any worker thread starts: see app/memory.py
     app = FastAPI(title="COURT API", version="0.1.0")
+    app.router.route_class = plans.ProRoute  # Pro fields leave only for accounts with that feature
     app.state.espn = espn or EspnClient()
     app.state.leagues = TTLCache(LEAGUE_TTL)
     app.state.deep_free_agents = TTLCache(LEAGUE_TTL, max_items=2048)
@@ -437,6 +442,7 @@ def create_app(
     )
 
     app.add_middleware(error_reports.RouteContext)
+    app.add_middleware(plans.RequestScope)
 
     @app.exception_handler(EspnError)
     async def espn_error(_: Request, exc: EspnError) -> JSONResponse:
@@ -947,26 +953,24 @@ def create_app(
         await admin_user(authorization)
         return await book_compare(body)
 
-    @app.post("/api/book-compare", response_model=schemas.BookCompare, responses={401: {"model": schemas.ErrorBody}})
+    @app.post("/api/book-compare", response_model=schemas.BookCompare, responses=PRO_ONLY)
     async def user_book_compare(
         body: schemas.BookLinesRequest, authorization: str | None = Header(default=None)
     ) -> schemas.BookCompare:
         """Anyone signed in (the Our Estimates page): the comparison below. A failed read of the sportsbook
         shows as failed, without the error text, which stays with the admins."""
-        await current_user(authorization)
+        await require_feature(authorization, plans.Feature.ESTIMATES)
         got = await book_compare(body)
         return got.model_copy(update={"look": got.look.model_copy(update={"error": None})})
 
-    @app.post(
-        "/api/book-compare/record", response_model=schemas.BookRecord, responses={401: {"model": schemas.ErrorBody}}
-    )
+    @app.post("/api/book-compare/record", response_model=schemas.BookRecord, responses=PRO_ONLY)
     async def book_record(
         body: schemas.BookRecordRequest, authorization: str | None = Header(default=None)
     ) -> schemas.BookRecord:
         """Anyone signed in (Our Estimates): the latest saved nights as one record of the player rungs:
         the value picks by our chance with their result at the book's odds, and how well each side's
         chances matched what happened (app/bookcompare.py record). Comparison only."""
-        await current_user(authorization)
+        await require_feature(authorization, plans.Feature.SPORTSBOOK)
         season = body.season or current_season(app.state.now())
         days = await run_in_threadpool(app.state.store.book_line_days, season)
         nights = []
@@ -976,7 +980,7 @@ def create_app(
                 nights.append(got)
         return schemas.BookRecord(season=season, **await run_in_threadpool(bookcompare.record, nights))
 
-    @app.post("/api/book-compare/lost", response_model=schemas.LostLog, responses={401: {"model": schemas.ErrorBody}})
+    @app.post("/api/book-compare/lost", response_model=schemas.LostLog, responses=PRO_ONLY)
     async def lost_log(
         body: schemas.LostLogRequest, authorization: str | None = Header(default=None)
     ) -> schemas.LostLog:
@@ -984,7 +988,7 @@ def create_app(
         lost one with why it lost, and the causes that keep coming back (app/lostlog.py). Built from
         what is saved each night (iddaa's lines and our call, our player lines, the results, the OUT
         tags at tip-off), so a night reads the same whenever it is asked. Comparison only."""
-        await current_user(authorization)
+        await require_feature(authorization, plans.Feature.ESTIMATES)
         season = body.season or current_season(app.state.now())
         days = await run_in_threadpool(app.state.store.book_line_days, season)
         try:
@@ -1199,7 +1203,13 @@ def create_app(
 
     async def current_user(authorization: str | None, required: bool = True) -> User | None:
         token = bearer(authorization)
-        user = await run_in_threadpool(app.state.accounts.session_user, hash_token(token)) if token else None
+        memo = plans.request_memo()
+        if token and memo is not None and ("user", token) in memo:
+            user = memo[("user", token)]
+        else:
+            user = await run_in_threadpool(app.state.accounts.session_user, hash_token(token)) if token else None
+            if token and memo is not None:
+                memo[("user", token)] = user
         if user is None and required:
             raise HTTPException(401, detail=NOT_SIGNED_IN)
         return user
@@ -1266,6 +1276,25 @@ def create_app(
             "ends_at": iso(ent.ends_at) if ent.ends_at else None,
             "gifted": ent.gifted,
         }
+
+    async def features_for(authorization: str | None) -> frozenset[plans.Feature]:
+        return (await entitlement_of(await current_user(authorization, required=False))).features
+
+    app.state.features_for = features_for
+
+    async def require_feature(authorization: str | None, feature: plans.Feature) -> User:
+        """The signed-in account, when its plan includes ``feature``: 402 upgrade_required otherwise."""
+        user = await current_user(authorization)
+        if not (await entitlement_of(user)).allows(feature):
+            raise HTTPException(
+                402,
+                detail={
+                    "code": plans.UPGRADE_REQUIRED,
+                    "feature": feature.value,
+                    "message": "This is part of COURT Pro.",
+                },
+            )
+        return user
 
     async def entitlement_of(user: User | None) -> plans.Entitlement:
         """What this account may see now (app/plans.py): one database read, kept for half a minute."""
@@ -3133,7 +3162,7 @@ def create_app(
         "/api/scores/pregame",
         response_model=schemas.PregameBox,
         responses={
-            401: {"model": schemas.ErrorBody},
+            **PRO_ONLY,
             404: {"model": schemas.ErrorBody},
             409: {"model": schemas.ErrorBody},
         },
@@ -3148,7 +3177,7 @@ def create_app(
         expected to play with his line for this game and its reasons (the player card's line, plus the
         rest of each rotation read for this box), who is out, and how the lines stand against the call.
         Kept a few minutes; lines follow the league's cache (injury tags within about 10 minutes)."""
-        await current_user(authorization)
+        await require_feature(authorization, plans.Feature.PREGAME)
         creds = read_credentials(x_espn_s2, x_espn_swid)
         season = body.season or current_season()
         sched = await score_calendar(season)
@@ -4091,14 +4120,14 @@ def create_app(
     @app.post(
         "/api/match-form",
         response_model=schemas.MatchForm,
-        responses={401: {"model": schemas.ErrorBody}, 404: {"model": schemas.ErrorBody}},
+        responses={**PRO_ONLY, 404: {"model": schemas.ErrorBody}},
     )
     async def match_form(
         body: schemas.MatchFormRequest, authorization: str | None = Header(default=None)
     ) -> schemas.MatchForm:
         """Both teams' games so far (results, each game's MVP, its kind), for the match card on Our Estimates.
         Built from the Scores page's day boxes, read through the public line-log league."""
-        await current_user(authorization)
+        await require_feature(authorization, plans.Feature.MATCH_FORM)
         season = body.season or current_season()
         league_id = app.state.line_log_league_id or app.state.sample_league_id
         if not league_id:
