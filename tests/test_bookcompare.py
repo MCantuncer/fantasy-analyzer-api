@@ -244,6 +244,7 @@ def test_the_record_adds_up_settled_rungs_over_nights():
         "book_score": None,
         "picks": [],
         "calibration": [],
+        "cut": {"markets": [], "bands": []},
     }
 
 
@@ -260,6 +261,36 @@ def test_rungs_saved_from_nesine_are_left_out_of_the_scoring():
     assert got["rungs"] == 0 and got["picks"] == [] and got["series"][0]["picks"] == 0
 
 
+def test_the_book_s_cut_by_kind_of_bet_and_by_odds_band():
+    book = book_record()
+    g = book["games"]["401"]
+    g["board"] = [
+        [113, "-11.5", [["1", 1.65], ["2", 1.65]]],  # 1/1.65 * 2 = 1.212
+        [621, "", [["1", 1.8], ["0", 13.0], ["2", 1.65]]],
+        [769, "", [["< 150.5", 130.0], ["201-210", 1.6], ["211-220", 1.6]]],
+        [2, "", [["1", 1.0], ["2", 4.71]]],  # a closed side: not fully priced, left out
+        [999, "1.5", [["Alt", 1.6], ["Üst", 1.7]]],  # unknown type, two outcomes: a two-way line
+    ]
+    markets = bookcompare.board_markets(book)
+    assert [m[0] for m in markets] == ["two_way", "three_way", "total_ranges", "two_way"]
+    assert markets[0][1] == round(2 / 1.65, 4)
+    nesine = {**book, "games": {"401": {k: v for k, v in g.items() if k != "source"}}}
+    assert bookcompare.board_markets(nesine) == []  # nights saved from nesine add nothing
+    names = {EMBIID: "Joel Embiid", MAXEY: "Tyrese Maxey"}
+    night = {**bookcompare.compare_day(book, our_lines(), final_day(), names), "markets": markets}
+    got = bookcompare.cut([night, night])
+    fams = {m["family"]: m for m in got["markets"]}
+    assert fams["two_way"]["markets"] == 4 and fams["two_way"]["payback"] > fams["three_way"]["payback"]
+    assert [m["family"] for m in got["markets"]][-1] == "total_ranges"  # lowest cut first, the biggest last
+    settled = [r for gm in night["games"] for p in gm["players"] for r in p["rungs"] if r["hit"] is not None]
+    assert sum(b["rungs"] for b in got["bands"]) == 2 * len(settled)
+    assert got["bands"][0]["odds_from"] == iddaa.MIN_ODD and all(0 < b["implied"] < 1 for b in got["bands"])
+    net = round(2 * sum(r["odd"] - 1 if r["hit"] else -1 for r in settled), 2)
+    assert round(sum(b["net"] for b in got["bands"]), 2) == net
+    assert bookcompare.record([night])["cut"]["markets"]
+    assert bookcompare.cut([]) == {"markets": [], "bands": []}
+
+
 def test_anyone_signed_in_reads_the_record(recorded):
     app, store, _ = _app(recorded)
     store.save_book_lines(2027, 33, book_record())
@@ -267,7 +298,8 @@ def test_anyone_signed_in_reads_the_record(recorded):
     assert TestClient(app).post("/api/book-compare/record", json={"season": 2027}).status_code == 401
     got = signed_in(app, team_id=None).post("/api/book-compare/record", json={"season": 2027}).json()
     assert got["season"] == 2027 and got["nights"] == 1 and got["series"][0]["day"] == 33
-    assert {"picks", "calibration", "ours_score", "book_score"} <= set(got)
+    assert {"picks", "calibration", "ours_score", "book_score", "cut"} <= set(got)
+    assert {m["family"] for m in got["cut"]["markets"]} == {"two_way"}  # the saved board, read back
 
 
 def test_each_game_market_carries_the_book_s_prices_from_our_pick_s_side():

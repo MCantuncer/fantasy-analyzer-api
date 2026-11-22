@@ -16,10 +16,14 @@ read from them can change later without losing a night. A day's record:
         "win": [home odd, away odd],                      0 where iddaa doesn't offer that side
         "margin" | "total" | "home_pts" | "away_pts": [line, first odd, second odd],
         "players": {name: {stat: [[n, odd], ...]}},       "Name n+" ladders, stats as STATS
-        "ours": [away, home, chance]}}}                   our call at the same look (app/main.py)
+        "ours": [away, home, chance],                     our call at the same look (app/main.py)
+        "board": [[market type, line, [[outcome, odd], ...]], ...]}}}   every other market, raw
 
 The margin line is the home team's handicap (-5.5: home by 6 or more), its odds home then away; a
-total's odds are under then over. Only each market's main line (its two odds closest) is kept.
+total's odds are under then over. Only each market's main line (its two odds closest) is kept in
+those fields; "board" keeps every market but the player ladders as iddaa lists it (alternate lines,
+3-way, bands, quarters...), so how much the book keeps on each kind of bet can be measured later
+(Can 2026-11-22: where does the book take its cut). A line is iddaa's "sov" text ("" when none).
 """
 
 from __future__ import annotations
@@ -160,6 +164,19 @@ def parse_event(data: dict) -> dict:
         for rungs in stats.values():
             rungs.sort()
     out["players"] = players
+    board = []
+    for m in data.get("m") or []:
+        if m.get("st") in STATS:
+            continue
+        outcomes = []
+        for o in m.get("o") or []:
+            try:
+                outcomes.append([str(o["n"]), float(o["odd"])])
+            except (KeyError, TypeError, ValueError):
+                continue
+        if outcomes:
+            board.append([m.get("st"), "" if m.get("sov") is None else str(m.get("sov")), outcomes])
+    out["board"] = board
     return out
 
 

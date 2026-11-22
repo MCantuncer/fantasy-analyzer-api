@@ -984,7 +984,7 @@ def create_app(
             except Exception:
                 logging.getLogger(__name__).warning("book record: no results for day %s", day, exc_info=True)
         got = await run_in_threadpool(bookcompare.compare_day, book, lines, played, {})
-        return {**got, "day": day}
+        return {**got, "day": day, "markets": bookcompare.board_markets(book)}
 
     async def book_compare(body: schemas.BookLinesRequest) -> schemas.BookCompare:
         """One NBA day of the sportsbook's lines (iddaa's own bulletin) beside ours (player lines from the
