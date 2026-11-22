@@ -1016,9 +1016,10 @@ def create_app(
         box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
         if book and box is not None:
             now = app.state.now()
+            out = await ruled_out(season, day)
             for g in book.get("games", {}).values():
                 if not g.get("ours") and datetime.fromisoformat(g["tip"]) > now:  # no look had the box yet
-                    c = box.call(day, g["away"], g["home"])
+                    c = box.call(day, g["away"], g["home"], out)
                     g["ours"] = [c.away, c.home, round(c.chance, 3)]
         got = await run_in_threadpool(bookcompare.compare_day, book, lines, played, names)
 
@@ -1725,9 +1726,10 @@ def create_app(
         if box is None:
             start_game_box(season)  # just after a deploy: our call joins at the next look
         for day, record in changed.items():
+            out = await ruled_out(season, day) if box is not None else set()  # who is OUT, as on Scores
             for g in record["games"].values():
                 if g["checked"] == status["checked"] and box is not None:  # our call beside iddaa's, same look
-                    c = box.call(day, g["away"], g["home"])
+                    c = box.call(day, g["away"], g["home"], out)
                     g["ours"] = [c.away, c.home, round(c.chance, 3)]
             await run_in_threadpool(app.state.store.save_book_lines, season, day, record)
         status.update(ok=True, error=None, games=len(looks), matched=len(games))
