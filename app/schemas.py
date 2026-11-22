@@ -2186,11 +2186,12 @@ class CompareMarket(CompareRow):
 
 
 class CompareEstimate(BaseModel):
-    """Our line for a player before the book posts a bet on him (app/bookcompare.py compare_day)."""
+    """Our line for a player in a game (app/bookcompare.py compare_day): the match card's rows."""
 
     name: str
     player_id: int
     team: str = Field(description="NBA team abbreviation")
+    priced: bool = Field(default=False, description="iddaa has a player bet on him")
     minutes: float
     pts: float
     reb: float
@@ -2214,7 +2215,7 @@ class CompareGame(BaseModel):
     markets: list[CompareMarket]
     players: list[ComparePlayer]
     estimates: list[CompareEstimate] = Field(
-        default_factory=list, description="Our lines for the players the book has no bet on yet"
+        default_factory=list, description="Our line for every player expected to play 10+ minutes, most points first"
     )
 
 

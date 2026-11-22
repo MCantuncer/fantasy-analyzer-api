@@ -124,11 +124,15 @@ def test_before_the_book_posts_player_bets_the_night_shows_our_estimates():
     assert g["estimates"][0]["played"] is None and g["estimates"][0]["actual"] is None
     # Under 10 minutes he isn't listed.
 
-    # Bets posted: the priced players move to their bet rows; the rest stay as estimates, with results.
+    assert not any(e["priced"] for e in g["estimates"])
+
+    # Bets posted: every player keeps his line for the match card, the priced ones marked, with results.
     [g] = bookcompare.compare_day(book_record(), lines, final_day(), names)["games"]
     assert {p["name"] for p in g["players"]} >= {"Joel Embiid", "Tyrese Maxey"}
-    [lowry] = g["estimates"]
-    assert lowry["name"] == "Kyle Lowry" and lowry["played"] is False and lowry["actual"] is None
+    by = {e["name"]: e for e in g["estimates"]}
+    assert list(by) == ["Joel Embiid", "Tyrese Maxey", "Kyle Lowry"]
+    assert by["Joel Embiid"]["priced"] and by["Tyrese Maxey"]["priced"] and not by["Kyle Lowry"]["priced"]
+    assert by["Kyle Lowry"]["played"] is False and by["Kyle Lowry"]["actual"] is None
 
 
 def test_admins_read_a_day_compared(recorded):
@@ -149,7 +153,7 @@ def test_admins_read_a_day_compared(recorded):
     assert winner["team"] == "PHI" and winner["ours"] == 0.85
     assert any(p["name"] == "Joel Embiid" and p["stat"] == "pts" and p["ours"] == 31.0 for p in g["players"])
     assert {t["stat"] for t in got["tally"]} >= {"pts", "winner", "total"}
-    assert g["estimates"] == []  # both have bets
+    assert [(e["name"], e["priced"]) for e in g["estimates"]] == [("Joel Embiid", True), ("Tyrese Maxey", True)]
 
     early = book_record()
     early["games"]["401"]["players"] = {}

@@ -164,13 +164,13 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                     }
                 )
 
-        # Our estimates for the players the book has no bet on yet (Can 2026-11-22: its player bets
-        # mostly come after 19:00 Turkey time, so until then the night is our numbers alone).
+        # Our line for every player we expect to play this much, bet or not (Can 2026-11-22: clicking a
+        # match opens a card with each player's line). priced: iddaa has a player bet on him.
         priced = {ids[n] for n in read["players"] if n in ids}
         estimates = []
         for pid_s, (team, *nums) in ours_lines.items():
             pid = int(pid_s)
-            if team not in teams or pid in priced or not known.get(pid) or nums[OURS_AT["minutes"]] < MIN_MINUTES:
+            if team not in teams or not known.get(pid) or nums[OURS_AT["minutes"]] < MIN_MINUTES:
                 continue
             got = box.get(pid)
             estimates.append(
@@ -178,6 +178,7 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                     "name": known[pid],
                     "player_id": pid,
                     "team": team,
+                    "priced": pid in priced,
                     **{stat: nums[OURS_AT[stat]] for stat in ("minutes", *PLAYER_STATS)},
                     "played": None if not final else got is not None,
                     "actual": {stat: float(got[DAY_STAT[stat]]) for stat in PLAYER_STATS} if got else None,
