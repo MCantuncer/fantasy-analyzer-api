@@ -383,20 +383,23 @@ def test_card_news_leads_with_the_latest_word_and_looks_for_more():
     )
     store.save_news_state("meta", {"refreshed_at": iso(now - timedelta(minutes=11)), "season": 2027})
     app.state.news.transport = httpx.MockTransport(lambda _: httpx.Response(503))
-    client = signed_in(app, team_id=None)
     body = {"league_id": LEAGUE_ID, "season": 2027, "player_id": PID}
 
-    news = client.post("/api/player-card/extras", json=body).json()["news"]
-    assert len(news) == 1, "one story, updated game by game"
-    assert news[0]["headline"] == "Test Center: Upgraded to probable Sunday"
-    assert news[0]["published_at"] == iso(now - timedelta(minutes=20)), "dated when the headline was said"
+    # One event loop for the whole test: without it each request's loop closes when the answer is
+    # sent, cancelling the check the card started in the background whenever it is still running
+    # (the CI failures on main, 2026-11-21, when the check took longer than the answer).
+    with signed_in(app, team_id=None) as client:
+        news = client.post("/api/player-card/extras", json=body).json()["news"]
+        assert len(news) == 1, "one story, updated game by game"
+        assert news[0]["headline"] == "Test Center: Upgraded to probable Sunday"
+        assert news[0]["published_at"] == iso(now - timedelta(minutes=20)), "dated when the headline was said"
 
-    # The last check was 11 minutes ago, so opening the card started one.
-    for _ in range(100):
-        if app.state.news.last_refresh() == now:
-            break
-        time.sleep(0.02)
-    assert app.state.news.last_refresh() == now
+        # The last check was 11 minutes ago, so opening the card started one.
+        for _ in range(250):
+            if app.state.news.last_refresh() == now:
+                break
+            time.sleep(0.02)
+        assert app.state.news.last_refresh() == now
 
 
 def test_a_card_before_any_news_check_does_not_start_one():
