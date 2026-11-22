@@ -4072,6 +4072,7 @@ def create_app(
                         won=fg.won,
                         mvp=star(fg.mvp),
                         best=star(fg.best),
+                        opp_best=star(fg.opp_best),
                     )
                 )
             wins = sum(g.won for g in games)

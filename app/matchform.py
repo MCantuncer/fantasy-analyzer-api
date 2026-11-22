@@ -108,6 +108,7 @@ class FormGame:
     opponent_points: int
     mvp: StarLine | None  # the winning side's best Game Score
     best: StarLine | None  # this team's best Game Score (the MVP itself after a win)
+    opp_best: StarLine | None  # the opponent's best Game Score (the MVP itself after a loss)
 
     @property
     def won(self) -> bool:
@@ -148,6 +149,7 @@ def form_game(game: dict, team_id: int, date_: str | None) -> FormGame | None:
     winner = me if pts > opp else them
     win_lines = [ln for ln in lines if ln.get("pro_team_id") == winner.get("pro_team_id")]
     my_lines = [ln for ln in lines if ln.get("pro_team_id") == team_id]
+    their_lines = [ln for ln in lines if ln.get("pro_team_id") == them.get("pro_team_id")]
     return FormGame(
         game_id=int(game["id"]),
         date=date_,
@@ -159,6 +161,7 @@ def form_game(game: dict, team_id: int, date_: str | None) -> FormGame | None:
         opponent_points=int(opp),
         mvp=_star(win_lines, winner.get("abbrev", "")),
         best=_star(my_lines, me.get("abbrev", "")),
+        opp_best=_star(their_lines, them.get("abbrev", "")),
     )
 
 

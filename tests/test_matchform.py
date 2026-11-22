@@ -71,8 +71,10 @@ def test_mvp_comes_from_the_winners_and_best_from_the_team():
     assert ny.mvp is not None and (ny.mvp.player_id, ny.mvp.team) == (1, "IND")
     assert ny.mvp.stats["pts"] == 18 and ny.mvp.stats["fga"] == 12 and ny.mvp.stats["stl"] == 0
     assert ny.best is not None and ny.best.player_id == 3
+    assert ny.opp_best == ny.mvp  # after a loss the other side's best is the MVP
     ind = form_game(g, 11, "2026-11-13")
     assert ind is not None and ind.won and ind.home and ind.mvp == ind.best
+    assert ind.opp_best is not None and ind.opp_best.player_id == 3
     assert form_game(g, 5, None) is None  # not in this game
     assert form_game({**g, "status": "live"}, 11, None) is None
 

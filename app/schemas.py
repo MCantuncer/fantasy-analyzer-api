@@ -1541,6 +1541,7 @@ class FormGame(BaseModel):
     won: bool
     mvp: FormStar | None = Field(description="The game's MVP: best Game Score on the winning side")
     best: FormStar | None = Field(description="This team's best Game Score (the MVP after a win)")
+    opp_best: FormStar | None = Field(description="The opponent's best Game Score (the MVP after a loss)")
 
 
 class TeamForm(BaseModel):

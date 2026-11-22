@@ -5804,6 +5804,28 @@
         ],
         "title": "BookCompare"
       },
+      "BookCut": {
+        "properties": {
+          "markets": {
+            "items": {
+              "$ref": "#/components/schemas/CutMarket"
+            },
+            "type": "array",
+            "title": "Markets",
+            "description": "By kind of bet, lowest cut first"
+          },
+          "bands": {
+            "items": {
+              "$ref": "#/components/schemas/CutBand"
+            },
+            "type": "array",
+            "title": "Bands",
+            "description": "Every settled player rung by odds band"
+          }
+        },
+        "type": "object",
+        "title": "BookCut"
+      },
       "BookGame": {
         "properties": {
           "game_id": {
@@ -6197,6 +6219,10 @@
             "type": "array",
             "title": "Series",
             "description": "One line per night, oldest first"
+          },
+          "cut": {
+            "$ref": "#/components/schemas/BookCut",
+            "description": "Where the book takes its cut (comparison only)"
           }
         },
         "type": "object",
@@ -7325,6 +7351,101 @@
         ],
         "title": "CrowdedDay"
       },
+      "CutBand": {
+        "properties": {
+          "odds_from": {
+            "type": "number",
+            "title": "Odds From",
+            "description": "Odds over this"
+          },
+          "odds_to": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Odds To",
+            "description": "Up to and including this; None: and up"
+          },
+          "rungs": {
+            "type": "integer",
+            "title": "Rungs",
+            "description": "Settled player rungs (iddaa nights)"
+          },
+          "hits": {
+            "type": "integer",
+            "title": "Hits"
+          },
+          "ours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours",
+            "description": "Our average chance on them"
+          },
+          "implied": {
+            "type": "number",
+            "title": "Implied",
+            "description": "The price's average chance, 1/odds with the margin in"
+          },
+          "net": {
+            "type": "number",
+            "title": "Net",
+            "description": "One unit on every rung at the book's odds: net units"
+          }
+        },
+        "type": "object",
+        "required": [
+          "odds_from",
+          "odds_to",
+          "rungs",
+          "hits",
+          "ours",
+          "implied",
+          "net"
+        ],
+        "title": "CutBand"
+      },
+      "CutMarket": {
+        "properties": {
+          "family": {
+            "type": "string",
+            "title": "Family",
+            "description": "two_way, three_way, combo (winner + total), margin_bands, half_full, top_quarter, total_ranges or many"
+          },
+          "markets": {
+            "type": "integer",
+            "title": "Markets",
+            "description": "Fully priced markets of this kind on the saved boards"
+          },
+          "overround": {
+            "type": "number",
+            "title": "Overround",
+            "description": "Median sum of 1/odds over a market's outcomes"
+          },
+          "payback": {
+            "type": "number",
+            "title": "Payback",
+            "description": "1 / overround: what the book pays back of a fairly priced stake"
+          }
+        },
+        "type": "object",
+        "required": [
+          "family",
+          "markets",
+          "overround",
+          "payback"
+        ],
+        "title": "CutMarket"
+      },
       "DayLineup": {
         "properties": {
           "league_id": {
@@ -8091,6 +8212,17 @@
               }
             ],
             "description": "This team's best Game Score (the MVP after a win)"
+          },
+          "opp_best": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FormStar"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The opponent's best Game Score (the MVP after a loss)"
           }
         },
         "type": "object",
@@ -8108,7 +8240,8 @@
           "opponent_points",
           "won",
           "mvp",
-          "best"
+          "best",
+          "opp_best"
         ],
         "title": "FormGame"
       },
