@@ -4669,6 +4669,83 @@
         }
       }
     },
+    "/api/match-form": {
+      "post": {
+        "summary": "Match Form",
+        "description": "Both teams' games so far (results, each game's MVP, its kind), for the match card on Our Estimates.\nBuilt from the Scores page's day boxes, read through the public line-log league.",
+        "operationId": "match_form_api_match_form_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MatchFormRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchForm"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/player-card": {
       "post": {
         "summary": "Player Card",
@@ -6112,6 +6189,14 @@
             },
             "type": "array",
             "title": "Calibration"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/RecordNight"
+            },
+            "type": "array",
+            "title": "Series",
+            "description": "One line per night, oldest first"
           }
         },
         "type": "object",
@@ -6419,6 +6504,101 @@
         "title": "ClientError",
         "description": "A crash or unhandled error in the website, sent so it shows up in the error reports."
       },
+      "CompareEstimate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "team": {
+            "type": "string",
+            "title": "Team",
+            "description": "NBA team abbreviation"
+          },
+          "priced": {
+            "type": "boolean",
+            "title": "Priced",
+            "description": "iddaa has a player bet on him",
+            "default": false
+          },
+          "minutes": {
+            "type": "number",
+            "title": "Minutes"
+          },
+          "pts": {
+            "type": "number",
+            "title": "Pts"
+          },
+          "reb": {
+            "type": "number",
+            "title": "Reb"
+          },
+          "ast": {
+            "type": "number",
+            "title": "Ast"
+          },
+          "stl": {
+            "type": "number",
+            "title": "Stl"
+          },
+          "blk": {
+            "type": "number",
+            "title": "Blk"
+          },
+          "three_pm": {
+            "type": "number",
+            "title": "Three Pm"
+          },
+          "played": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Played",
+            "description": "False when his team played without him; None before the result"
+          },
+          "actual": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual",
+            "description": "What he did, by stat, once his game is final"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "player_id",
+          "team",
+          "minutes",
+          "pts",
+          "reb",
+          "ast",
+          "stl",
+          "blk",
+          "three_pm",
+          "played",
+          "actual"
+        ],
+        "title": "CompareEstimate",
+        "description": "Our line for a player in a game (app/bookcompare.py compare_day): the match card's rows."
+      },
       "CompareGame": {
         "properties": {
           "game_id": {
@@ -6486,6 +6666,14 @@
             },
             "type": "array",
             "title": "Players"
+          },
+          "estimates": {
+            "items": {
+              "$ref": "#/components/schemas/CompareEstimate"
+            },
+            "type": "array",
+            "title": "Estimates",
+            "description": "Our line for every player expected to play 10+ minutes, most points first"
           }
         },
         "type": "object",
@@ -7807,6 +7995,213 @@
         ],
         "title": "ForgotPasswordRequest"
       },
+      "FormGame": {
+        "properties": {
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date",
+            "description": "US game date, YYYY-MM-DD"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "home": {
+            "type": "boolean",
+            "title": "Home"
+          },
+          "neutral": {
+            "type": "boolean",
+            "title": "Neutral",
+            "description": "Played at a neutral site (e.g. the Mexico City game)"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind",
+            "description": "\"regular\", \"cup\", \"play_in\" or \"playoff\"; null when ESPN could not say"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "ESPN's note: \"NBA Cup - Group Play\", \"NBA Mexico City Game\""
+          },
+          "opponent": {
+            "type": "string",
+            "title": "Opponent"
+          },
+          "opponent_name": {
+            "type": "string",
+            "title": "Opponent Name"
+          },
+          "points": {
+            "type": "integer",
+            "title": "Points"
+          },
+          "opponent_points": {
+            "type": "integer",
+            "title": "Opponent Points"
+          },
+          "won": {
+            "type": "boolean",
+            "title": "Won"
+          },
+          "mvp": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FormStar"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The game's MVP: best Game Score on the winning side"
+          },
+          "best": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FormStar"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "This team's best Game Score (the MVP after a win)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "game_id",
+          "date",
+          "start",
+          "home",
+          "neutral",
+          "kind",
+          "note",
+          "opponent",
+          "opponent_name",
+          "points",
+          "opponent_points",
+          "won",
+          "mvp",
+          "best"
+        ],
+        "title": "FormGame"
+      },
+      "FormStar": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "team": {
+            "type": "string",
+            "title": "Team",
+            "description": "His team's abbreviation"
+          },
+          "game_score": {
+            "type": "number",
+            "title": "Game Score",
+            "description": "Hollinger Game Score from the fantasy line (no fouls, blended rebounds)"
+          },
+          "minutes": {
+            "type": "integer",
+            "title": "Minutes"
+          },
+          "pts": {
+            "type": "integer",
+            "title": "Pts"
+          },
+          "reb": {
+            "type": "integer",
+            "title": "Reb"
+          },
+          "ast": {
+            "type": "integer",
+            "title": "Ast"
+          },
+          "stl": {
+            "type": "integer",
+            "title": "Stl"
+          },
+          "blk": {
+            "type": "integer",
+            "title": "Blk"
+          },
+          "tpm": {
+            "type": "integer",
+            "title": "Tpm"
+          },
+          "to": {
+            "type": "integer",
+            "title": "To"
+          },
+          "fgm": {
+            "type": "integer",
+            "title": "Fgm"
+          },
+          "fga": {
+            "type": "integer",
+            "title": "Fga"
+          },
+          "ftm": {
+            "type": "integer",
+            "title": "Ftm"
+          },
+          "fta": {
+            "type": "integer",
+            "title": "Fta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "team",
+          "game_score",
+          "minutes",
+          "pts",
+          "reb",
+          "ast",
+          "stl",
+          "blk",
+          "tpm",
+          "to",
+          "fgm",
+          "fga",
+          "ftm",
+          "fta"
+        ],
+        "title": "FormStar"
+      },
       "Game": {
         "properties": {
           "id": {
@@ -9080,6 +9475,59 @@
           "team_name"
         ],
         "title": "LinkedTeam"
+      },
+      "MatchForm": {
+        "properties": {
+          "away": {
+            "$ref": "#/components/schemas/TeamForm"
+          },
+          "home": {
+            "$ref": "#/components/schemas/TeamForm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "away",
+          "home"
+        ],
+        "title": "MatchForm",
+        "description": "Both teams' season so far, for the match card's Form view."
+      },
+      "MatchFormRequest": {
+        "properties": {
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season year, e.g. 2027 for 2026-27"
+          },
+          "away": {
+            "type": "string",
+            "maxLength": 5,
+            "minLength": 1,
+            "title": "Away",
+            "description": "Visiting team abbreviation as ESPN writes it"
+          },
+          "home": {
+            "type": "string",
+            "maxLength": 5,
+            "minLength": 1,
+            "title": "Home",
+            "description": "Home team abbreviation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "away",
+          "home"
+        ],
+        "title": "MatchFormRequest"
       },
       "MatchupProjection": {
         "properties": {
@@ -13516,6 +13964,75 @@
         ],
         "title": "RecordBucket"
       },
+      "RecordNight": {
+        "properties": {
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day",
+            "description": "NBA day (scoring period)"
+          },
+          "settled": {
+            "type": "boolean",
+            "title": "Settled",
+            "description": "The night has results; False before tip-off"
+          },
+          "picks": {
+            "type": "integer",
+            "title": "Picks",
+            "description": "Settled rungs with value over 0 by our chance"
+          },
+          "hits": {
+            "type": "integer",
+            "title": "Hits"
+          },
+          "net": {
+            "type": "number",
+            "title": "Net",
+            "description": "One unit on each at the book's odds: net units"
+          },
+          "marked": {
+            "type": "number",
+            "title": "Marked",
+            "description": "Sum of the picks' value: what our chances expected them to make"
+          },
+          "players": {
+            "type": "integer",
+            "title": "Players",
+            "description": "How many players the picks spread over"
+          },
+          "top_hit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top Hit",
+            "description": "Odds of the biggest pick that landed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day",
+          "settled",
+          "picks",
+          "hits",
+          "net",
+          "marked",
+          "players",
+          "top_hit"
+        ],
+        "title": "RecordNight"
+      },
       "RecordPicks": {
         "properties": {
           "stat": {
@@ -15327,6 +15844,43 @@
           "expected_cats_won"
         ],
         "title": "TeamBuild"
+      },
+      "TeamForm": {
+        "properties": {
+          "abbrev": {
+            "type": "string",
+            "title": "Abbrev"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "wins": {
+            "type": "integer",
+            "title": "Wins"
+          },
+          "losses": {
+            "type": "integer",
+            "title": "Losses"
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/FormGame"
+            },
+            "type": "array",
+            "title": "Games",
+            "description": "Every game this season, most recent first (no preseason)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "abbrev",
+          "name",
+          "wins",
+          "losses",
+          "games"
+        ],
+        "title": "TeamForm"
       },
       "TeamLinkChallenge": {
         "properties": {

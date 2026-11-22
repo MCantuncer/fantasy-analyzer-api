@@ -516,6 +516,55 @@ def test_nba_team_endpoint(recorded, schedule_raw, day4_players):
     assert r.status_code == 404 and r.json()["detail"]["code"] == "no_team"
 
 
+def test_match_form_endpoint_tags_kinds_and_reads_through_the_public_league(recorded, schedule_raw, day4_players):
+    sched = parse_schedule(schedule_raw)
+    game = next(g for g in sched.games[4] if HOU in (g.away, g.home))
+    other = sched.teams[game.home if game.away == HOU else game.away][0]
+    asked = []
+
+    def scoreboard(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.params.get("dates"))
+        cup = {"notes": [{"headline": "NBA Cup - Group Play"}]}
+        return httpx.Response(
+            200, json={"events": [{"id": str(game.id), "season": {"type": 2}, "competitions": [cup]}]}
+        )
+
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, MORNING_AFTER, scoreboard)
+    body = {"season": 2027, "away": "hou", "home": other}
+    assert client.post("/api/match-form", json=body).status_code == 503  # no public league to read with
+    client.app.state.sample_league_id = LEAGUE_ID
+    r = client.post("/api/match-form", json=body)
+    assert r.status_code == 200
+    hou, opp = r.json()["away"], r.json()["home"]
+    assert hou["abbrev"] == "HOU" and opp["abbrev"] == other
+    assert len(hou["games"]) == len(opp["games"]) == 1 and hou["wins"] + opp["wins"] == 1
+    g = hou["games"][0]
+    assert (g["game_id"], g["kind"], g["note"], g["neutral"]) == (game.id, "cup", "NBA Cup - Group Play", False)
+    assert g["won"] == (g["points"] > g["opponent_points"]) and g["opponent"] == other
+    winner = "HOU" if g["won"] else other
+    assert g["mvp"]["team"] == winner and g["best"]["team"] == "HOU" and g["mvp"]["minutes"] > 0
+    assert opp["games"][0]["mvp"] == g["mvp"]
+    assert "20261023" in asked and len(asked) == len(set(asked))  # one look per day either team played
+    seen = list(asked)
+    client.post("/api/match-form", json=body)
+    assert asked == seen  # a finished day's kinds are kept
+
+    r = client.post("/api/match-form", json={"season": 2027, "away": "HOU", "home": "XYZ"})
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "no_team"
+
+
+def test_match_form_without_the_scoreboard_has_no_kinds(recorded, schedule_raw, day4_players):
+    client, _, _ = scores_client(recorded, schedule_raw, day4_players, MORNING_AFTER)
+    client.app.state.sample_league_id = LEAGUE_ID
+    sched = parse_schedule(schedule_raw)
+    game = next(g for g in sched.games[4] if HOU in (g.away, g.home))
+    other = sched.teams[game.home if game.away == HOU else game.away][0]
+    r = client.post("/api/match-form", json={"season": 2027, "away": other, "home": "HOU"})
+    assert r.status_code == 200
+    g = r.json()["home"]["games"][0]
+    assert g["kind"] is None and g["note"] is None
+
+
 def test_nba_team_before_tonights_games(recorded, schedule_raw, day4_players):
     client, _, _ = scores_client(recorded, schedule_raw, day4_players, FRIDAY_AFTERNOON)
     body = client.post("/api/nba-team", json={"league_id": LEAGUE_ID, "season": 2027, "team": "SA"}).json()

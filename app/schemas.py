@@ -1501,6 +1501,63 @@ class NbaTeam(BaseModel):
     next_game: TeamNextGame | None
 
 
+class MatchFormRequest(BaseModel):
+    season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")
+    away: str = Field(min_length=1, max_length=5, description="Visiting team abbreviation as ESPN writes it")
+    home: str = Field(min_length=1, max_length=5, description="Home team abbreviation")
+
+
+class FormStar(BaseModel):
+    player_id: int
+    name: str
+    team: str = Field(description="His team's abbreviation")
+    game_score: float = Field(description="Hollinger Game Score from the fantasy line (no fouls, blended rebounds)")
+    minutes: int
+    pts: int
+    reb: int
+    ast: int
+    stl: int
+    blk: int
+    tpm: int
+    to: int
+    fgm: int
+    fga: int
+    ftm: int
+    fta: int
+
+
+class FormGame(BaseModel):
+    game_id: int
+    date: str | None = Field(description="US game date, YYYY-MM-DD")
+    start: str
+    home: bool
+    neutral: bool = Field(description="Played at a neutral site (e.g. the Mexico City game)")
+    kind: str | None = Field(description='"regular", "cup", "play_in" or "playoff"; null when ESPN could not say')
+    note: str | None = Field(description='ESPN\'s note: "NBA Cup - Group Play", "NBA Mexico City Game"')
+    opponent: str
+    opponent_name: str
+    points: int
+    opponent_points: int
+    won: bool
+    mvp: FormStar | None = Field(description="The game's MVP: best Game Score on the winning side")
+    best: FormStar | None = Field(description="This team's best Game Score (the MVP after a win)")
+
+
+class TeamForm(BaseModel):
+    abbrev: str
+    name: str
+    wins: int
+    losses: int
+    games: list[FormGame] = Field(description="Every game this season, most recent first (no preseason)")
+
+
+class MatchForm(BaseModel):
+    """Both teams' season so far, for the match card's Form view."""
+
+    away: TeamForm
+    home: TeamForm
+
+
 class PlayerCardRequest(BaseModel):
     league_id: int = Field(gt=0)
     season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")
