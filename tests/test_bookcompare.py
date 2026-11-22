@@ -107,6 +107,29 @@ def test_a_day_compares_players_and_the_game_against_the_result():
     assert m[("winner", PHI)]["book"] is None and m[("winner", PHI)]["closer"] is None  # iddaa closed PHI
 
 
+def test_before_the_book_posts_player_bets_the_night_shows_our_estimates():
+    # Can 2026-11-22: iddaa's player bets mostly come after 19:00 Turkey time; until then, our lines.
+    BENCH, DEEP = 111, 222
+    lines = our_lines()
+    lines["lines"][str(BENCH)] = [PHI, 14.0, 6.0, 3.0, 1.0, 0.5, 0.2, 0.8, 1.0, 2.0, 5.0, 1.0, 1.0]
+    lines["lines"][str(DEEP)] = [PHI, 6.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 0.0, 0.0]
+    names = {EMBIID: "Joel Embiid", MAXEY: "Tyrese Maxey", BENCH: "Kyle Lowry", DEEP: "Deep Bench"}
+    early = book_record()
+    early["games"]["401"]["players"] = {}
+    [g] = bookcompare.compare_day(early, lines, None, names)["games"]
+    assert g["players"] == []
+    assert [e["name"] for e in g["estimates"]] == ["Joel Embiid", "Tyrese Maxey", "Kyle Lowry"]  # most points first
+    assert g["estimates"][0]["pts"] == 31.0 and g["estimates"][0]["reb"] == 9.0 and g["estimates"][0]["minutes"] == 34.0
+    assert g["estimates"][0]["played"] is None and g["estimates"][0]["actual"] is None
+    # Under 10 minutes he isn't listed.
+
+    # Bets posted: the priced players move to their bet rows; the rest stay as estimates, with results.
+    [g] = bookcompare.compare_day(book_record(), lines, final_day(), names)["games"]
+    assert {p["name"] for p in g["players"]} >= {"Joel Embiid", "Tyrese Maxey"}
+    [lowry] = g["estimates"]
+    assert lowry["name"] == "Kyle Lowry" and lowry["played"] is False and lowry["actual"] is None
+
+
 def test_admins_read_a_day_compared(recorded):
     app, store, sched = _app(recorded)
     store.save_book_lines(2027, 33, book_record())
@@ -116,7 +139,8 @@ def test_admins_read_a_day_compared(recorded):
         [IndexPlayer(EMBIID, "Joel Embiid", "PHI", "C", 99.0), IndexPlayer(MAXEY, "Tyrese Maxey", "PHI", "G", 99.0)],
     )
     assert signed_in(app, team_id=None).post("/api/admin/book-compare", json={"season": 2027}).status_code == 403
-    got = boss(app).post("/api/admin/book-compare", json={"season": 2027}).json()
+    admin = boss(app)
+    got = admin.post("/api/admin/book-compare", json={"season": 2027}).json()
     assert got["day"] == 33 and got["days"] == [33] and got["bands"]["pts"] == 5.0
     [g] = got["games"]
     assert g["away"] == "MIL" and g["home"] == "PHI"
@@ -124,6 +148,15 @@ def test_admins_read_a_day_compared(recorded):
     assert winner["team"] == "PHI" and winner["ours"] == 0.85
     assert any(p["name"] == "Joel Embiid" and p["stat"] == "pts" and p["ours"] == 31.0 for p in g["players"])
     assert {t["stat"] for t in got["tally"]} >= {"pts", "winner", "total"}
+    assert g["estimates"] == []  # both have bets
+
+    early = book_record()
+    early["games"]["401"]["players"] = {}
+    store.save_book_lines(2027, 33, early)
+    [g] = admin.post("/api/admin/book-compare", json={"season": 2027}).json()["games"]
+    got_early = [(e["name"], e["team"], e["pts"]) for e in g["estimates"]]
+    assert got_early == [("Joel Embiid", "PHI", 31.0), ("Tyrese Maxey", "PHI", 24.0)]
+    store.save_book_lines(2027, 33, book_record())
 
     # Anyone signed in reads the same comparison (the Our Estimates page); signed out, nobody.
     assert app.state.book_log is not None

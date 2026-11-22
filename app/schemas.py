@@ -2185,6 +2185,23 @@ class CompareMarket(CompareRow):
     )
 
 
+class CompareEstimate(BaseModel):
+    """Our line for a player before the book posts a bet on him (app/bookcompare.py compare_day)."""
+
+    name: str
+    player_id: int
+    team: str = Field(description="NBA team abbreviation")
+    minutes: float
+    pts: float
+    reb: float
+    ast: float
+    stl: float
+    blk: float
+    three_pm: float
+    played: bool | None = Field(description="False when his team played without him; None before the result")
+    actual: dict[str, float] | None = Field(description="What he did, by stat, once his game is final")
+
+
 class CompareGame(BaseModel):
     game_id: int
     away: str
@@ -2196,6 +2213,9 @@ class CompareGame(BaseModel):
     home_score: int | None
     markets: list[CompareMarket]
     players: list[ComparePlayer]
+    estimates: list[CompareEstimate] = Field(
+        default_factory=list, description="Our lines for the players the book has no bet on yet"
+    )
 
 
 class CompareTally(BaseModel):

@@ -39,6 +39,7 @@ PLAYER_STATS = ("three_pm", "reb", "ast", "stl", "blk", "pts")  # the site's sta
 DAY_STAT = {"pts": "pts", "reb": "reb", "ast": "ast", "stl": "stl", "blk": "blk", "three_pm": "tpm"}
 OURS_AT = {name: i for i, (name, _) in enumerate(linelog.STATS)}
 LEVEL = 0.1  # misses this close read as level
+MIN_MINUTES = 10.0  # estimates listed before the book's player bets: players we expect to play this much
 RUNG_LEVEL = 0.005  # rung scores this close read as level
 SUFFIX = re.compile(r"( (jr|sr|ii|iii|iv|v))+$")
 
@@ -155,6 +156,27 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                     }
                 )
 
+        # Our estimates for the players the book has no bet on yet (Can 2026-11-22: its player bets
+        # mostly come after 19:00 Turkey time, so until then the night is our numbers alone).
+        priced = {ids[n] for n in read["players"] if n in ids}
+        estimates = []
+        for pid_s, (team, *nums) in ours_lines.items():
+            pid = int(pid_s)
+            if team not in teams or pid in priced or not known.get(pid) or nums[OURS_AT["minutes"]] < MIN_MINUTES:
+                continue
+            got = box.get(pid)
+            estimates.append(
+                {
+                    "name": known[pid],
+                    "player_id": pid,
+                    "team": team,
+                    **{stat: nums[OURS_AT[stat]] for stat in ("minutes", *PLAYER_STATS)},
+                    "played": None if not final else got is not None,
+                    "actual": {stat: float(got[DAY_STAT[stat]]) for stat in PLAYER_STATS} if got else None,
+                }
+            )
+        estimates.sort(key=lambda e: (-e["pts"], e["name"]))
+
         # The game: winner, margin, total, team points.
         markets = []
         ours_call = g.get("ours")
@@ -238,6 +260,7 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                 "home_score": h_pts,
                 "markets": markets,
                 "players": players,
+                "estimates": estimates,
             }
         )
     return {"games": out_games, "tally": tally(out_games)}
