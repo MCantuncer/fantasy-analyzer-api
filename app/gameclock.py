@@ -199,3 +199,68 @@ def apply_on_court(body: dict, on_court: dict[int, frozenset[int]]) -> dict:
             g = {**g, "lines": [{**ln, "on_court": ln["player_id"] in on} for ln in g["lines"]]}
         games.append(g)
     return {**body, "games": games}
+
+
+# Fouls during a game (Can 2026-11-23): each player's personal fouls, from the box score, and each team's
+# fouls this period, from the play-by-play, for foul trouble (app/liveline.py) and the penalty
+# (app/quarters.py). Offensive fouls and technicals don't count toward a team's penalty.
+NOT_TEAM_FOULS = ("offensive", "charge", "technical", "techfoul")
+
+
+@dataclass(frozen=True)
+class GameFouls:
+    players: dict[int, int]  # ESPN athlete id -> personal fouls
+    period: int  # the latest period in the play-by-play; 0 when it has none
+    teams: dict[int, tuple[float, ...]]  # ESPN team id -> clock (seconds left) of each team foul that period
+
+
+def parse_fouls(raw: dict) -> GameFouls | None:
+    """Fouls from one game's summary; None when its box score has none to read."""
+    players: dict[int, int] = {}
+    for team in (raw.get("boxscore") or {}).get("players") or []:
+        for block in team.get("statistics") or []:
+            keys = block.get("keys") or []
+            if "fouls" not in keys:
+                continue
+            at = keys.index("fouls")
+            for a in block.get("athletes") or []:
+                try:
+                    players[int(a["athlete"]["id"])] = int(float((a.get("stats") or [])[at]))
+                except (KeyError, TypeError, ValueError, IndexError):
+                    continue
+    if not players:
+        return None
+    plays = raw.get("plays") or []
+    period = 0
+    for p in plays:
+        try:
+            period = max(period, int((p.get("period") or {}).get("number") or 0))
+        except (TypeError, ValueError):
+            continue
+    teams: dict[int, list[float]] = {}
+    for p in plays:
+        kind = str((p.get("type") or {}).get("text") or "").lower()
+        if "foul" not in kind or any(w in kind for w in NOT_TEAM_FOULS):
+            continue
+        try:
+            if int((p.get("period") or {}).get("number") or 0) != period:
+                continue
+            team = int((p.get("team") or {}).get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        left = clock_seconds(str((p.get("clock") or {}).get("displayValue") or ""))
+        if team and left is not None:
+            teams.setdefault(team, []).append(left)
+    return GameFouls(players=players, period=period, teams={t: tuple(v) for t, v in teams.items()})
+
+
+async def fetch_fouls(game_id: int, transport: httpx.AsyncBaseTransport | None = None) -> GameFouls | None:
+    """One game's fouls from ESPN's summary; None when it can't be read."""
+    async with httpx.AsyncClient(transport=transport, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT}) as http:
+        try:
+            resp = await http.get(SUMMARY, params={"event": game_id})
+            if resp.status_code != 200:
+                return None
+            return parse_fouls(resp.json())
+        except (httpx.HTTPError, ValueError):
+            return None

@@ -48,6 +48,22 @@ def test_nothing_left_at_the_end_and_no_line_without_minutes():
     assert liveline.live_line(5, 10, 10.0, 0.0, 20.0, 0) is None
 
 
+def test_fouls_take_minutes():
+    base = liveline.live_line(10, 20, 20.0, 34.0, 26.0, 0)
+    two = liveline.live_line(10, 20, 20.0, 34.0, 26.0, 0, 2)  # 2 fouls in the 3rd: fine
+    four = liveline.live_line(10, 20, 20.0, 34.0, 26.0, 0, 4)  # 4 in the 3rd: foul trouble
+    five = liveline.live_line(10, 20, 20.0, 34.0, 26.0, 0, 5)
+    out = liveline.live_line(10, 20, 20.0, 34.0, 26.0, 0, 6)
+    assert two.minutes_left == base.minutes_left
+    assert four.minutes_left == pytest.approx(base.minutes_left * (1 + liveline.FOUL_TROUBLE))
+    assert five.minutes_left == pytest.approx(base.minutes_left * (1 + liveline.FIVE_FOULS))
+    assert out.minutes_left == 0 and out.final == 10
+    # 2 fouls in the 1st is trouble; at the end of the 1st, 2 fouls is the 2nd quarter's allowance
+    assert liveline.foul_share(2, 6.0) == 1 + liveline.FOUL_TROUBLE
+    assert liveline.foul_share(2, 12.0) == 1.0 and liveline.foul_share(3, 12.0) == 1 + liveline.FOUL_TROUBLE
+    assert liveline.foul_share(None, 30.0) == 1.0
+
+
 def test_the_miss_shrinks_as_the_game_goes():
     assert liveline.within(0) == (4.4, 8.3)
     h, m = liveline.within(27)
@@ -96,8 +112,9 @@ def test_live_lines_endpoint(schedule_raw):  # noqa: F811
     away, home = live["away"]["pro_team_id"], live["home"]["pro_team_id"]
 
     def scoreboard(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/summary"):
-            return httpx.Response(404)
+        if request.url.path.endswith("/summary"):  # the away star has 6 fouls: fouled out
+            box = {"keys": ["fouls"], "athletes": [{"athlete": {"id": "1"}, "stats": ["6"]}]}
+            return httpx.Response(200, json={"boxscore": {"players": [{"statistics": [box]}]}})
         event = {
             "id": str(live["id"]),
             "status": {"period": 2, "displayClock": "0.0", "type": {"state": "in", "shortDetail": "Halftime"}},
@@ -129,7 +146,9 @@ def test_live_lines_endpoint(schedule_raw):  # noqa: F811
     assert set(rows) == {1, 2, 3}
     star = rows[1]
     assert star["line_pts"] == 24.0 and star["pts"] == 6
-    assert 6 + 10 < star["final"] < 6 + 12.5  # about his usual rest, a touch under: no catch-up
+    assert star["fouls"] == 6 and star["final"] == 6 and star["minutes_left"] == 0  # fouled out
+    assert rows[2]["fouls"] is None  # not in ESPN's box: as usual
+    assert 6 + 2 < rows[2]["final"]
     assert rows[3]["final"] > 14
 
     # Before tip-off or after the final: no lines.

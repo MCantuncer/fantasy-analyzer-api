@@ -75,7 +75,15 @@ from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFou
 from app.espn.parse import PRO_TEAM_ABBREV, League, Player, parse_calendar, parse_league, parse_player, proven_players
 from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
-from app.gameclock import apply_clocks, apply_on_court, elapsed_minutes, fetch_clocks, fetch_on_court
+from app.gameclock import (
+    GameFouls,
+    apply_clocks,
+    apply_on_court,
+    elapsed_minutes,
+    fetch_clocks,
+    fetch_fouls,
+    fetch_on_court,
+)
 from app.garbagetime import SummaryBook
 from app.lineup import next_game, open_slots, parse_lineup, slot_name, team_days, week_of
 from app.mail import Mailer, create_mailer, reset_email, site_url
@@ -414,6 +422,7 @@ def create_app(
     app.state.quarter_days = TTLCache(GAME_KINDS_TTL, max_items=400)  # a finished day's quarters, the same
     # Who is on the floor in each game in progress, from ESPN's box scores; as fresh as the clocks.
     app.state.on_court = TTLCache(LIVE_SCORES_TTL)
+    app.state.live_fouls = TTLCache(LIVE_SCORES_TTL)  # (ESPN game id,) -> GameFouls, or False when unreadable
     app.state.lineups = TTLCache(LINEUP_TTL)
     app.state.past_lineups = TTLCache(PAST_LINEUP_TTL)
     app.state.injury_feed = TTLCache(INJURY_FEED_TTL)
@@ -3488,9 +3497,21 @@ def create_app(
                     found[pid] = p
         return [found[pid] for pid in ids if pid in found]
 
-    async def live_quarter_sides(season: int, sched: Schedule, day: int, game, clock) -> schemas.LiveQuarters | None:
+    async def game_fouls(game_id: int) -> GameFouls | None:
+        """A game in progress's fouls (ESPN's summary), read once a minute at most."""
+        hit = app.state.live_fouls.get((game_id,))
+        if hit is not None:
+            return hit or None
+        got = await fetch_fouls(game_id, app.state.clock_transport)
+        app.state.live_fouls.set((game_id,), got or False)
+        return got
+
+    async def live_quarter_sides(
+        season: int, sched: Schedule, day: int, game, clock, fouls: GameFouls | None
+    ) -> schemas.LiveQuarters | None:
         """Both sides' quarters in a game in progress (quarters.live_quarters), from Our call as it stood at
-        tip-off, the season's quarter shapes and ESPN's linescores. None without any of them."""
+        tip-off, the season's quarter shapes, ESPN's linescores and each side's fouls this quarter (the
+        penalty). None without any of the first three."""
         box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
         if box is None or box.scores is None or clock is None or clock.linescores is None:
             return None
@@ -3501,22 +3522,27 @@ def create_app(
         pre_h = quarters.quarter_line(season, shapes, game.home, game.away, c.home, c.away)
         real_a, real_h = clock.linescores
         period = clock.period
+        # Team fouls count only when the play-by-play has reached the quarter on the clock.
+        known = fouls is not None and fouls.period == period and period <= quarters.QUARTERS
 
-        def side(team: int, pre, pre_o, real, real_o) -> schemas.LiveQuarterSide:
+        def side(team: int, other: int, pre, pre_o, real, real_o) -> schemas.LiveQuarterSide:
+            bonus = quarters.in_penalty(list(fouls.teams.get(other, ())), clock.seconds) if known else None
             live = quarters.live_quarters(
-                list(pre.raw), list(pre_o.raw), list(real), list(real_o), period, clock.seconds
+                list(pre.raw), list(pre_o.raw), list(real), list(real_o), period, clock.seconds, bool(bonus)
             )
             return schemas.LiveQuarterSide(
                 pro_team_id=team,
                 pregame=list(pre.points),
                 real=[round(x) for x in real[: quarters.QUARTERS]],
                 live=[round(x, 1) for x in live],
+                fouls=len(fouls.teams.get(team, ())) if known else None,
+                bonus=bonus,
             )
 
         return schemas.LiveQuarters(
             period=period,
-            away=side(game.away, pre_a, pre_h, real_a, real_h),
-            home=side(game.home, pre_h, pre_a, real_h, real_a),
+            away=side(game.away, game.home, pre_a, pre_h, real_a, real_h),
+            home=side(game.home, game.away, pre_h, pre_a, real_h, real_a),
         )
 
     @app.post(
@@ -3563,7 +3589,8 @@ def create_app(
         )
         if g is None or status != "live" or elapsed is None:
             return out
-        out.quarters = await live_quarter_sides(season, sched, day, game, clock)
+        fouls = await game_fouls(game.id)
+        out.quarters = await live_quarter_sides(season, sched, day, game, clock, fouls)
         record = await run_in_threadpool(app.state.store.get_player_lines, season, day)
         saved = (record or {}).get("lines", {})
         score = {g["away"]["pro_team_id"]: g["away"]["score"] or 0, g["home"]["pro_team_id"]: g["home"]["score"] or 0}
@@ -3574,8 +3601,9 @@ def create_app(
             line_minutes, line_pts = float(rec[LINE_MINUTES]), float(rec[LINE_PTS])
             team = ln["pro_team_id"]
             other = next((t for t in score if t != team), team)
+            pf = fouls.players.get(ln["player_id"]) if fouls is not None else None
             got = liveline.live_line(
-                ln["pts"], ln["minutes"], line_pts, line_minutes, elapsed, score[team] - score[other]
+                ln["pts"], ln["minutes"], line_pts, line_minutes, elapsed, score[team] - score[other], pf
             )
             if got is None:
                 continue
@@ -3591,6 +3619,7 @@ def create_app(
                     final=round(got.final, 1),
                     rest=round(got.rest, 1),
                     minutes_left=round(got.minutes_left, 1),
+                    fouls=pf,
                 )
             )
         return out

@@ -10613,6 +10613,18 @@
             "type": "number",
             "title": "Minutes Left",
             "description": "His minutes still to come"
+          },
+          "fouls": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fouls",
+            "description": "Personal fouls so far; none when ESPN's box can't be read"
           }
         },
         "type": "object",
@@ -10659,6 +10671,30 @@
             "type": "array",
             "title": "Live",
             "description": "Q1-Q4 now: real for quarters played, real so far plus the rest for the one in progress, our number moved by the margin so far for the rest"
+          },
+          "fouls": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fouls",
+            "description": "Team fouls in the quarter in progress; none when ESPN's play-by-play can't be read"
+          },
+          "bonus": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bonus",
+            "description": "The other side is in the penalty (each foul gives this side free throws); none when not known"
           }
         },
         "type": "object",
@@ -15975,6 +16011,12 @@
             "type": "boolean",
             "title": "Fresh",
             "description": "Analysed today or yesterday; false means today's run is late"
+          },
+          "pro_locked": {
+            "type": "boolean",
+            "title": "Pro Locked",
+            "description": "Plans are on: the sample's Pro numbers are blanked, so its Pro spots show locks",
+            "default": false
           },
           "phase": {
             "type": "string",
