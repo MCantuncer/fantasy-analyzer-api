@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import os
 import threading
-from collections.abc import Callable
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 
 import psycopg
 from psycopg_pool import ConnectionPool
@@ -22,14 +22,27 @@ MAX_SIZE = int(os.getenv("DB_POOL_SIZE", "4"))
 MAX_IDLE = float(os.getenv("DB_POOL_IDLE_SECONDS", "240"))
 
 _pools: dict[str, ConnectionPool] = {}
+_connects: dict[str, Callable[[], AbstractContextManager[psycopg.Connection]]] = {}
 _lock = threading.Lock()
 
+# Each store's tables (idempotent DDL), per database, in the order the stores were made, and how
+# many of them are in place. They are created on the first connection that works, not when the
+# store is made: a database that is down (or over its hosting quota) must not stop the server
+# from starting, since most pages only read ESPN. A later schema may reference an earlier one's
+# tables (users), so they always run in order.
+_schemas: dict[str, list[str]] = {}
+_applied: dict[str, int] = {}
+_schema_lock = threading.Lock()
 
-def connector(url: str) -> Callable[[], AbstractContextManager[psycopg.Connection]]:
-    """``with connector(url)() as conn:`` borrows a pooled connection (autocommit) and gives it back."""
+
+def connector(url: str, schema: str | None = None) -> Callable[[], AbstractContextManager[psycopg.Connection]]:
+    """``with connector(url)() as conn:`` borrows a pooled connection (autocommit) and gives it back.
+
+    ``schema`` is the store's tables: made before the first query that reaches the database.
+    """
     with _lock:
-        pool = _pools.get(url)
-        if pool is None:
+        connect = _connects.get(url)
+        if connect is None:
             pool = ConnectionPool(
                 url,
                 min_size=0,
@@ -42,4 +55,27 @@ def connector(url: str) -> Callable[[], AbstractContextManager[psycopg.Connectio
                 name="db",
             )
             _pools[url] = pool
-    return pool.connection
+            connect = _connects[url] = _borrower(url, pool)
+        if schema is not None and schema not in _schemas.setdefault(url, []):
+            _schemas[url].append(schema)
+    return connect
+
+
+def _borrower(url: str, pool: ConnectionPool) -> Callable[[], AbstractContextManager[psycopg.Connection]]:
+    @contextmanager
+    def connect() -> Iterator[psycopg.Connection]:
+        with pool.connection() as conn:
+            _make_tables(url, conn)
+            yield conn
+
+    return connect
+
+
+def _make_tables(url: str, conn: psycopg.Connection) -> None:
+    if _applied.get(url, 0) >= len(_schemas.get(url, ())):
+        return
+    with _schema_lock:
+        schemas = _schemas.get(url, [])
+        while _applied.get(url, 0) < len(schemas):
+            conn.execute(schemas[_applied.get(url, 0)])
+            _applied[url] = _applied.get(url, 0) + 1
