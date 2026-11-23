@@ -504,6 +504,9 @@ class SampleTeam(BaseModel):
 class SampleIndex(BaseModel):
     analysed_on: str = Field(description="The day the sample was analysed (UTC date); its teams' reports are from it")
     fresh: bool = Field(description="Analysed today or yesterday; false means today's run is late")
+    pro_locked: bool = Field(
+        default=False, description="Plans are on: the sample's Pro numbers are blanked, so its Pro spots show locks"
+    )
     phase: Literal["season", "offseason"] = Field(
         description="offseason: last season's final sample, until the new season's first run"
     )

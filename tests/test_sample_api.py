@@ -198,3 +198,6 @@ def test_visitors_get_no_pro_numbers_once_plans_are_on(fake_espn, report):
         after = client.get(url).json()
         assert after["pickups"][0]["add"]["next_game"] is None  # tonight's real line is Pro
         assert after["pickups"][0]["add"]["name"] == first.add.name and after["team_id"] == MY_TEAM
+        assert client.get("/api/sample").json()["pro_locked"] is True  # the site shows the locks
+        app.state.plans_enforced = False
+        assert client.get("/api/sample").json()["pro_locked"] is False

@@ -3848,7 +3848,8 @@ def create_app(
         if index is None:
             raise HTTPException(404, detail=SAMPLE_OFF)
         age = (app.state.now().date() - date.fromisoformat(day)).days
-        body = schemas.SampleIndex(**index, fresh=age <= 1, phase=phase).model_dump(mode="json")
+        locked = app.state.plans_enforced
+        body = schemas.SampleIndex(**index, fresh=age <= 1, phase=phase, pro_locked=locked).model_dump(mode="json")
         return JSONResponse(body, headers=SAMPLE_CACHE)
 
     def free_sample(body: dict) -> dict:
