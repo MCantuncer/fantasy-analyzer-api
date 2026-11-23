@@ -1446,6 +1446,7 @@ class LivePlayerLine(BaseModel):
     final: float = Field(description="Where his points land at the end of regulation, from here")
     rest: float = Field(description="Points still to come")
     minutes_left: float = Field(description="His minutes still to come")
+    fouls: int | None = Field(default=None, description="Personal fouls so far; none when ESPN's box can't be read")
 
 
 class LiveQuarterSide(BaseModel):
@@ -1455,6 +1456,13 @@ class LiveQuarterSide(BaseModel):
     live: list[float] = Field(
         description="Q1-Q4 now: real for quarters played, real so far plus the rest for the one in progress, "
         "our number moved by the margin so far for the rest"
+    )
+    fouls: int | None = Field(
+        default=None, description="Team fouls in the quarter in progress; none when ESPN's play-by-play can't be read"
+    )
+    bonus: bool | None = Field(
+        default=None,
+        description="The other side is in the penalty (each foul gives this side free throws); none when not known",
     )
 
 

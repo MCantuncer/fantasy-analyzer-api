@@ -29,6 +29,14 @@ squared miss of every quarter to come in every season (0.3-0.8%, season left out
 only; scripts/quarter_backtest.py). Tested and not kept: the night's scoring pace (both teams'
 points so far against the call; fails 2024-25), cut-offs for leads or deficits past 10 (each fails a
 season) and a weight per quarter to come (fails 2022-23).
+
+Inside the quarter in progress (Can 2026-11-23, scripts/foul_backtest.py, 3, 6 and 9 minutes into
+each quarter): a side whose opponent is in the penalty (its 5th foul of the quarter on, or its 2nd in
+the last two minutes, gives free throws) scores BONUS more a minute left, and the rest of a quarter
+scores a little more than its start (IN_QUARTER, zero at both ends). Each lowered the squared miss of
+the rest of the quarter in every season, both ways of fitting. Not kept: a whistle-heavy night (all
+fouls so far), the opponent one foul from the penalty (each flips a season with the other pieces in),
+and each team's own bonus scoring (does not hold from one season to the next).
 """
 
 from __future__ import annotations
@@ -53,6 +61,10 @@ PRIOR_KEEP = 0.5  # of last season's shape kept into this one
 PRIOR_GAMES = 30.0  # games of it a team starts the season with
 GIVE_BACK = -0.0648  # x (margin so far - called margin so far) per quarter played, in each quarter to come
 QUARTER_SECONDS = 720.0
+BONUS = 0.093  # points a minute left in the quarter in progress while the opponent is in the penalty
+IN_QUARTER = 0.142  # points a minute, x the share of the quarter played x the share left
+TEAM_FOULS = 4  # fouls a quarter before the penalty; in its last two minutes, one
+LATE_SECONDS = 120.0
 
 Four = tuple[float, float, float, float]
 
@@ -255,12 +267,13 @@ def live_quarters(
     real_opponent: list[float],
     period: int,
     seconds: float | None,
+    bonus: bool = False,
 ) -> list[float]:
     """A side's four quarters during a game: the real ones played, the one in progress as its real points
     so far plus the rest of it, and the pre-game number (``pre``, raw) for the rest, each moved by
     GIVE_BACK x the side's margin past the called one per quarter played. ``real`` holds the points of
-    each period started (the one in progress last); ``seconds`` are left in it. In overtime, or past it,
-    the four are the real ones."""
+    each period started (the one in progress last); ``seconds`` are left in it; ``bonus`` when the
+    opponent is in the penalty. In overtime, or past it, the four are the real ones."""
     real = [*real, *([0.0] * QUARTERS)][:QUARTERS]
     real_opponent = [*real_opponent, *([0.0] * QUARTERS)][:QUARTERS]
     if period > QUARTERS or period <= 0:
@@ -275,6 +288,18 @@ def live_quarters(
     past = (sum(real[: cur + 1]) - sum(real_opponent[: cur + 1])) - (had - had_opponent)
     move = GIVE_BACK * past / played
     out = [float(x) for x in real[:cur]]
-    out.append(real[cur] + (pre[cur] + move) * left)
+    shape = IN_QUARTER * (1 - left) * left * QUARTER_SECONDS / 60
+    extra = BONUS * left * QUARTER_SECONDS / 60 if bonus else 0.0
+    out.append(real[cur] + (pre[cur] + move) * left + shape + extra)
     out += [pre[k] + move for k in range(cur + 1, QUARTERS)]
     return out
+
+
+def in_penalty(fouls: list[float], seconds: float | None) -> bool:
+    """Whether a side's next foul gives free throws, from the clock (seconds left) of each of its fouls
+    this quarter and the clock now: its 5th foul of the quarter on, or its 2nd in the last two minutes."""
+    now = seconds if seconds is not None else QUARTER_SECONDS
+    made = [f for f in fouls if f >= now]
+    if len(made) >= TEAM_FOULS:
+        return True
+    return now <= LATE_SECONDS and any(f <= LATE_SECONDS for f in made)

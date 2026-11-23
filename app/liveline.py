@@ -19,7 +19,13 @@ out and 1.5-2.3% fitted on earlier seasons only (2022-23 on), every season bette
 miss shrinks as the game goes (FINAL_WITHIN). Tested and dropped (2026-11-23): team ratings split
 into quarters, halves or starter/bench quarters (same as the whole game), each factor head to head
 (turnovers, boards, free throws, threes), and bursts of 4+ points in 15 seconds or 6+ in a minute in
-any setting (half, close game, trailing, leading, with a three). Foul trouble is not in yet.
+any setting (half, close game, trailing, leading, with a three).
+
+Fouls (Can 2026-11-23, scripts/foul_backtest.py, same five seasons and checkpoints): a player in foul
+trouble (2 fouls in the 1st quarter, 3 in the 2nd, 4 in the 3rd; 5 any time) plays fewer of his
+minutes left (FOUL_TROUBLE, FIVE_FOULS: on our minutes, 15.2 a player in trouble had 12.9), and a
+player with 6 has fouled out. Each lowers the squared miss in every season, both ways of fitting. How
+each coach handles foul trouble does not hold from one season to the next, so it is the same for all.
 """
 
 from __future__ import annotations
@@ -35,6 +41,9 @@ MARGIN_FROM = 10.0
 MINUTES_PACE = 0.083  # minutes share, x minutes so far vs his usual share by now (relative)
 HOT_ROLE = 7.04  # minutes, x the form gap, for a player whose usual minutes are under ROLE_MINUTES
 ROLE_MINUTES = 28.0
+FOUL_TROUBLE = -0.10  # minutes share, at quarter + 1 fouls (2 in the 1st quarter ... 4 in the 3rd), under 5
+FIVE_FOULS = -0.25  # minutes share, at 5 fouls
+FOUL_OUT = 6
 # How far his final points land from the live line (players with 20+ usual minutes), by regulation
 # minutes played: half land within the first number, 8 in 10 within the second.
 FINAL_WITHIN: tuple[tuple[float, float, float], ...] = (
@@ -71,11 +80,31 @@ def within(elapsed: float) -> tuple[float, float]:
     return 0.0, 0.0
 
 
+def foul_share(fouls: int | None, elapsed: float) -> float:
+    """What his fouls do to his minutes left: 1 as usual, less in foul trouble, 0 once fouled out."""
+    if not fouls:
+        return 1.0
+    if fouls >= FOUL_OUT:
+        return 0.0
+    if fouls == FOUL_OUT - 1:
+        return 1 + FIVE_FOULS
+    # the quarter he plays next: the one in progress, or the next one at a quarter's end
+    quarter = elapsed / 12 + 1 if elapsed % 12 == 0 else math.ceil(elapsed / 12)
+    return 1 + FOUL_TROUBLE if fouls >= quarter + 1 else 1.0
+
+
 def live_line(
-    pts: float, minutes: float, line_pts: float, line_minutes: float, elapsed: float, margin: float
+    pts: float,
+    minutes: float,
+    line_pts: float,
+    line_minutes: float,
+    elapsed: float,
+    margin: float,
+    fouls: int | None = None,
 ) -> LiveLine | None:
     """His live line, from his points and minutes so far, his tip-off line (points and minutes), the
-    regulation minutes played and his team's margin (positive when ahead). None without a usable line."""
+    regulation minutes played, his team's margin (positive when ahead) and his fouls (None when not
+    known). None without a usable line."""
     if line_minutes <= 0 or line_pts < 0 or not math.isfinite(elapsed):
         return None
     elapsed = min(GAME_MINUTES, max(0.0, elapsed))
@@ -90,7 +119,7 @@ def live_line(
     mins = line_minutes * left * (1 + MARGIN * blow * starter + MINUTES_PACE * pace)
     if line_minutes < ROLE_MINUTES:
         mins += HOT_ROLE * gap
-    mins = max(0.0, min(mins, GAME_MINUTES - elapsed))
+    mins = max(0.0, min(mins, GAME_MINUTES - elapsed)) * foul_share(fouls, elapsed)
     rest = rate * mins
     half, most = within(elapsed)
     return LiveLine(final=pts + rest, rest=rest, minutes_left=mins, half_within=half, most_within=most)
