@@ -23,7 +23,20 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import benched, billing, bookcompare, iddaa, linelog, lostlog, plans, playchance, pregame, quarters, schemas
+from app import (
+    benched,
+    billing,
+    bookcompare,
+    iddaa,
+    linelog,
+    liveline,
+    lostlog,
+    plans,
+    playchance,
+    pregame,
+    quarters,
+    schemas,
+)
 from app import errors as error_reports
 from app.accounts import (
     PASSWORD_MIN,
@@ -62,7 +75,7 @@ from app.espn.client import EspnClient, EspnCredentials, EspnError, LeagueNotFou
 from app.espn.parse import PRO_TEAM_ABBREV, League, Player, parse_calendar, parse_league, parse_player, proven_players
 from app.feed import DEFAULT_POSITIONS, PlayerName, Transaction, parse_players, parse_transactions
 from app.feedback import Feedback, FeedbackStore, create_feedback_store, deal_key, idea_key, model_version
-from app.gameclock import apply_clocks, apply_on_court, fetch_clocks, fetch_on_court
+from app.gameclock import apply_clocks, apply_on_court, elapsed_minutes, fetch_clocks, fetch_on_court
 from app.garbagetime import SummaryBook
 from app.lineup import next_game, open_slots, parse_lineup, slot_name, team_days, week_of
 from app.mail import Mailer, create_mailer, reset_email, site_url
@@ -219,6 +232,9 @@ LINE_LOG_FIRST = 60.0  # the first look after a start, and the retry while the l
 # The iddaa log (app/iddaa.py): in the hours before tip-off, iddaa's NBA lines, each game kept as it
 # stood at tip-off, for the admin comparison with ours. Comparison only. 0 turns it off.
 BOOK_LOG_SECONDS = float(os.getenv("BOOK_LOG_SECONDS", "900"))
+# Where a player's minutes and points sit in a line log row: [team, *linelog.STATS].
+LINE_MINUTES = 1 + [name for name, _ in linelog.STATS].index("minutes")
+LINE_PTS = 1 + [name for name, _ in linelog.STATS].index("pts")
 LINE_RESULTS_WAIT = 3  # days a settled night waits for its game rows before it is closed without them
 NOT_SIGNED_IN = {"code": "not_signed_in", "message": "Sign in first."}
 NOT_LINKED = {"code": "not_linked", "message": "Verify your team in this league first."}
@@ -1284,6 +1300,8 @@ def create_app(
             "renews_at": iso(ent.renews_at) if ent.renews_at else None,
             "ends_at": iso(ent.ends_at) if ent.ends_at else None,
             "gifted": ent.gifted,
+            "interval": ent.interval,
+            "payment_due": ent.payment_due,
         }
 
     async def features_for(authorization: str | None) -> frozenset[plans.Feature]:
@@ -3084,14 +3102,19 @@ def create_app(
                 app.state.score_days.set(key, body)
             return body
 
-    async def with_clocks(data: dict, day_date) -> dict:
-        """Adds the quarter and clock to games in progress, and ends games ESPN has called final."""
-        if day_date is None or not any(g["status"] == "live" for g in data["games"]):
-            return data
+    async def day_clocks(day_date) -> dict:
+        """ESPN's clocks for a day by game id, cached briefly; empty when the scoreboard can't be read."""
         clocks = app.state.clocks.get(day_date)
         if clocks is None:
             clocks = await fetch_clocks(day_date, app.state.clock_transport)
             app.state.clocks.set(day_date, clocks or {})
+        return clocks or {}
+
+    async def with_clocks(data: dict, day_date) -> dict:
+        """Adds the quarter and clock to games in progress, and ends games ESPN has called final."""
+        if day_date is None or not any(g["status"] == "live" for g in data["games"]):
+            return data
+        clocks = await day_clocks(day_date)
         if not clocks:
             return data
         data = apply_clocks(data, clocks)
@@ -3464,6 +3487,81 @@ def create_app(
                     app.state.deep_free_agents.set(key(pid), p)
                     found[pid] = p
         return [found[pid] for pid in ids if pid in found]
+
+    @app.post(
+        "/api/scores/live-lines",
+        response_model=schemas.LiveLines,
+        responses={**PRO_ONLY, 404: {"model": schemas.ErrorBody}},
+    )
+    async def score_live_lines(
+        body: schemas.PregameRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.LiveLines:
+        """A game in progress: where each player's points land at the end of regulation (app/liveline.py),
+        from his line at tip-off (the line log) and his points, minutes and team margin so far. Players
+        without a saved tip-off line are left out. Follows the live scores' minute-long cache."""
+        await require_feature(authorization, plans.Feature.PREGAME)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        sched = await score_calendar(season)
+        days = [body.day] if body.day in sched.games else sorted(sched.games)
+        found = next(((d, g) for d in days for g in sched.games.get(d, []) if g.id == body.game_id), None)
+        if found is None:
+            raise HTTPException(404, detail={"code": "no_game", "message": "No such game this season."})
+        day, game = found
+        data = await score_day(season, day, body.league_id, creds, sched)
+        data = await with_clocks(data, sched.date_of(day))
+        g = next((x for x in data["games"] if x["id"] == game.id), None)
+        status = g["status"] if g else "scheduled"
+        clock = (await day_clocks(sched.date_of(day))).get(game.id) if status == "live" else None
+        elapsed = elapsed_minutes(clock) if clock is not None else None
+        half, most = liveline.within(elapsed or 0.0)
+        out = schemas.LiveLines(
+            league_id=body.league_id,
+            season=season,
+            day=day,
+            game_id=game.id,
+            status=status,
+            clock=g.get("clock") if g else None,
+            elapsed=elapsed,
+            half_within=round(half, 1),
+            most_within=round(most, 1),
+            lines=[],
+        )
+        if g is None or status != "live" or elapsed is None:
+            return out
+        record = await run_in_threadpool(app.state.store.get_player_lines, season, day)
+        saved = (record or {}).get("lines", {})
+        score = {g["away"]["pro_team_id"]: g["away"]["score"] or 0, g["home"]["pro_team_id"]: g["home"]["score"] or 0}
+        for ln in g["lines"]:
+            rec = saved.get(str(ln["player_id"]))
+            if not rec or ln["minutes"] <= 0:
+                continue
+            line_minutes, line_pts = float(rec[LINE_MINUTES]), float(rec[LINE_PTS])
+            team = ln["pro_team_id"]
+            other = next((t for t in score if t != team), team)
+            got = liveline.live_line(
+                ln["pts"], ln["minutes"], line_pts, line_minutes, elapsed, score[team] - score[other]
+            )
+            if got is None:
+                continue
+            out.lines.append(
+                schemas.LivePlayerLine(
+                    player_id=ln["player_id"],
+                    name=ln["name"],
+                    pro_team_id=team,
+                    pts=ln["pts"],
+                    minutes=ln["minutes"],
+                    line_pts=line_pts,
+                    line_minutes=line_minutes,
+                    final=round(got.final, 1),
+                    rest=round(got.rest, 1),
+                    minutes_left=round(got.minutes_left, 1),
+                )
+            )
+        return out
 
     @app.post("/api/scores/sits", response_model=schemas.WeekSits, responses={401: {"model": schemas.ErrorBody}})
     async def score_sits(

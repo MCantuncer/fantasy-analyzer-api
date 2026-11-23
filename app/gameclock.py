@@ -27,6 +27,29 @@ class Clock:
     state: str  # "pre", "in" or "post"
     label: str | None  # "Q4 2:31", "Half", "End Q3", "OT 0:48"; None unless in progress
     teams: frozenset[str]  # the two team abbreviations, a fallback when ids don't match
+    period: int = 0  # 1-4, 5+ for overtime; 0 before tip-off
+    seconds: float | None = None  # left in the period; None when ESPN's clock can't be read
+
+
+def clock_seconds(display_clock: str) -> float | None:
+    """Seconds left from ESPN's display clock: "2:31" or, under a minute, "45.2"."""
+    try:
+        if ":" in display_clock:
+            m, s = display_clock.split(":", 1)
+            return int(m) * 60 + float(s)
+        return float(display_clock) if display_clock else None
+    except ValueError:
+        return None
+
+
+def elapsed_minutes(clock: Clock) -> float | None:
+    """Regulation minutes played (0-48) of a game in progress; None when the clock isn't known.
+    Overtime counts as 48: the live line has no regulation time left to spread over."""
+    if clock.state != "in" or clock.period <= 0 or clock.seconds is None:
+        return None
+    if clock.period > 4:
+        return 48.0
+    return min(48.0, max(0.0, (clock.period - 1) * 12 + 12 - clock.seconds / 60))
 
 
 def period_name(period: int) -> str:
@@ -63,7 +86,9 @@ def parse_scoreboard(raw: dict) -> dict[int, Clock]:
             )
             comp = (event.get("competitions") or [{}])[0]
             teams = frozenset(c["team"]["abbreviation"].upper() for c in comp.get("competitors") or [])
-            out[int(event["id"])] = Clock(state=state, label=label, teams=teams)
+            period = int(status.get("period") or 0)
+            seconds = clock_seconds(str(status.get("displayClock") or ""))
+            out[int(event["id"])] = Clock(state=state, label=label, teams=teams, period=period, seconds=seconds)
         except (KeyError, TypeError, ValueError):
             continue
     return out

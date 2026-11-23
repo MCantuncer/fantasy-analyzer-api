@@ -4225,6 +4225,125 @@
         }
       }
     },
+    "/api/scores/live-lines": {
+      "post": {
+        "summary": "Score Live Lines",
+        "description": "A game in progress: where each player's points land at the end of regulation (app/liveline.py),\nfrom his line at tip-off (the line log) and his points, minutes and team margin so far. Players\nwithout a saved tip-off line are left out. Follows the live scores' minute-long cache.",
+        "operationId": "score_live_lines_api_scores_live_lines_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PregameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveLines"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Payment Required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/scores/sits": {
       "post": {
         "summary": "Score Sits",
@@ -10352,6 +10471,154 @@
         ],
         "title": "LinkedTeam"
       },
+      "LiveLines": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "title": "League Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "live",
+              "final"
+            ],
+            "title": "Status"
+          },
+          "clock": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clock",
+            "description": "Q4 2:31, Half; none unless the game is in progress"
+          },
+          "elapsed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsed",
+            "description": "Regulation minutes played (48 in overtime); none when ESPN's clock can't be read"
+          },
+          "half_within": {
+            "type": "number",
+            "title": "Half Within",
+            "description": "Half of final points land within this of the live line, at this point"
+          },
+          "most_within": {
+            "type": "number",
+            "title": "Most Within",
+            "description": "8 in 10 land within this"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/LivePlayerLine"
+            },
+            "type": "array",
+            "title": "Lines",
+            "description": "Each player who has played and had a line at tip-off; empty unless the game is in progress"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "season",
+          "day",
+          "game_id",
+          "status",
+          "half_within",
+          "most_within",
+          "lines"
+        ],
+        "title": "LiveLines"
+      },
+      "LivePlayerLine": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pro_team_id": {
+            "type": "integer",
+            "title": "Pro Team Id"
+          },
+          "pts": {
+            "type": "integer",
+            "title": "Pts",
+            "description": "Points so far"
+          },
+          "minutes": {
+            "type": "integer",
+            "title": "Minutes",
+            "description": "Minutes so far"
+          },
+          "line_pts": {
+            "type": "number",
+            "title": "Line Pts",
+            "description": "His points line at tip-off"
+          },
+          "line_minutes": {
+            "type": "number",
+            "title": "Line Minutes",
+            "description": "His minutes line at tip-off"
+          },
+          "final": {
+            "type": "number",
+            "title": "Final",
+            "description": "Where his points land at the end of regulation, from here"
+          },
+          "rest": {
+            "type": "number",
+            "title": "Rest",
+            "description": "Points still to come"
+          },
+          "minutes_left": {
+            "type": "number",
+            "title": "Minutes Left",
+            "description": "His minutes still to come"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pro_team_id",
+          "pts",
+          "minutes",
+          "line_pts",
+          "line_minutes",
+          "final",
+          "rest",
+          "minutes_left"
+        ],
+        "title": "LivePlayerLine"
+      },
       "LossReason": {
         "properties": {
           "cause": {
@@ -10996,6 +11263,28 @@
             "type": "boolean",
             "title": "Gifted",
             "description": "Pro gifted by an admin rather than paid for",
+            "default": false
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "month",
+                  "year"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval",
+            "description": "How a paid plan bills"
+          },
+          "payment_due": {
+            "type": "boolean",
+            "title": "Payment Due",
+            "description": "The last renewal failed: Pro holds a few days while the card is retried",
             "default": false
           }
         },
