@@ -72,7 +72,9 @@ def test_the_bet_a_row_takes_mirrors_the_page():
     margin["odds"] = [{"side": "pick", "odd": 1.59}, {"side": "other", "odd": 1.65}]
     got = lostlog.bet_of(margin, "game")
     assert got["bet"] == "under" and got["odd"] == 1.65 and got["won"] is False  # took the points, lost by 9
-    assert 0.59 < got["chance"] < 0.61
+    assert 0.59 < got["alone"] < 0.61  # our call alone: Normal(3.5 / 13.6)
+    assert abs(got["fair"] - 0.491) < 0.001  # the book's 1.65 against 1.59, its cut taken out
+    assert 0.49 < got["chance"] < 0.51  # 9 parts book, 1 part ours (Can 2026-11-23)
     game = {"away": AWAY, "home": HOME}
     assert lostlog._words(dict(margin, pick=HOME), got, game, AB) == "AAA +5.5"
     assert lostlog.bet_of(dict(margin, actual=5.5), "game")["won"] is None  # a push
@@ -133,4 +135,34 @@ def test_the_lost_log_is_for_signed_in_users(recorded):
     assert got.status_code == 200
     body = got.json()
     # no results read (no league to read them with): nothing settled, nothing lost
-    assert body == {"season": 2027, "nights": [], "lost": 0, "causes": [], "repeats": []}
+    assert body["nights"] == [] and body["lost"] == 0 and body["causes"] == [] and body["gems"] == []
+    assert body["book"]["bets"] == 0
+
+
+def test_the_book_blend_and_where_the_book_beat_us():
+    assert abs(lostlog.fair_chance(1.63, 1.61) - 0.4969) < 1e-3
+    assert abs(lostlog.fair_chance(1.63, None) - 1 / 1.63 / lostlog.BOOK_CUT) < 1e-9
+    assert abs(lostlog.blend_chance(0.67, 0.5) - 0.5177) < 1e-3  # DET @ ATL Over: 67% alone
+    assert lostlog.blend_chance(0.7, None) == 0.7
+    # a lost total: the book's 223.5 sat nearer 204 than our 231
+    row = {"market": "total", "ours": 231.0, "book": 223.5, "actual": 204.0}
+    row["odds"] = [{"side": "under", "odd": 1.61}, {"side": "over", "odd": 1.63}]
+    row["why"] = {"cause": "pace", "piece": "pace", "points": -8.0, "text": "Game ran 4 possessions slower"}
+    n = lostlog.night([{"away": AWAY, "home": HOME, "markets": [row], "players": []}], 34, AB)
+    (bet,) = n["lost"]
+    assert bet["book_closer"] is True and bet["alone"] > 0.6 and bet["chance"] < 0.53
+    assert n["game_bets"] == [[bet["alone"], bet["fair"], 0]]
+    nights = [n] * 8
+    got = lostlog.repeats(nights)
+    assert got["gems"][0] == {
+        "cause": "pace",
+        "group": "total",
+        "piece": "pace",
+        "count": 8,
+        "share": 1.0,
+        "candidate": True,
+    }
+    book = got["book"]
+    assert book["bets"] == 8 and book["book"] < book["ours"]  # the book read these better
+    assert book["best_weight"] == 1.0
+    assert lostlog.book_check([])["bets"] == 0

@@ -6416,6 +6416,72 @@
         ],
         "title": "BillingSyncRequest"
       },
+      "BookCheck": {
+        "properties": {
+          "bets": {
+            "type": "integer",
+            "title": "Bets",
+            "description": "Settled game bets read"
+          },
+          "ours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours",
+            "description": "Log loss on our chance alone (lower is better)"
+          },
+          "book": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book",
+            "description": "Log loss on the book's own chance"
+          },
+          "blend": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blend",
+            "description": "Log loss on the blend the page uses (BOOK_WEIGHT)"
+          },
+          "best_weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Weight",
+            "description": "The book weight that would have read these bets best"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bets",
+          "ours",
+          "book",
+          "blend",
+          "best_weight"
+        ],
+        "title": "BookCheck"
+      },
       "BookCompare": {
         "properties": {
           "season": {
@@ -10878,6 +10944,42 @@
           "text": {
             "type": "string",
             "title": "Text"
+          },
+          "alone": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alone",
+            "description": "Game bets: our call's chance on its own, before the book blend"
+          },
+          "fair": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair",
+            "description": "Game bets: the book's own chance, its cut taken out"
+          },
+          "book_closer": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book Closer",
+            "description": "Game bets: the book's number sat nearer the result than ours (winner: it favoured the other team)"
           }
         },
         "type": "object",
@@ -10929,6 +11031,24 @@
             "type": "array",
             "title": "Repeats",
             "description": "Causes that are not luck, most frequent first"
+          },
+          "gems": {
+            "items": {
+              "$ref": "#/components/schemas/CauseRepeat"
+            },
+            "type": "array",
+            "title": "Gems",
+            "description": "Lost game bets where the book was nearer the result than we were, by what we missed"
+          },
+          "book": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BookCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -11004,6 +11124,17 @@
             },
             "type": "array",
             "title": "Lost"
+          },
+          "game_bets": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Game Bets",
+            "description": "Each settled game bet: [our chance alone, the book's, won 1/0]"
           }
         },
         "type": "object",

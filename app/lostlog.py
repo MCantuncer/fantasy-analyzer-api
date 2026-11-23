@@ -49,6 +49,14 @@ STANDOUT = 6.0  # points off his line that make a player the story of an "other"
 # read, and this share of that kind's losses.
 REPEAT_MIN = 8
 REPEAT_SHARE = 0.3
+# A game bet's chance leans this much on the book's own price (Can 2026-11-23, "Blend: 90% book, 10%
+# us"; the page's BOOK_WEIGHT). Book moneylines of 2021-22..2023-24 (3,346 games): when we disagree,
+# the result lands on the book's number, and a blend fitted with each season left out puts 0.86-1.00
+# on the book. Can: keep it "for now", but the engine has to earn its own edge, so every lost game
+# bet where the book was closer is listed (``gems``) with what we missed, and ``book_check`` refits
+# the weight on the settled nights: as our own chance gets better it should come down.
+BOOK_WEIGHT = 0.9
+BOOK_CUT = 1.235  # iddaa's usual cut on a two-way game line, for a side whose other price is missing
 STAT_WORD = {
     "pts": "points",
     "reb": "rebounds",
@@ -63,6 +71,25 @@ DAY_STAT = {"pts": "pts", "reb": "reb", "ast": "ast", "stl": "stl", "blk": "blk"
 
 def _normal(z: float) -> float:
     return 0.5 * (1 + math.erf(z / math.sqrt(2)))
+
+
+def fair_chance(odd: float, against: float | None) -> float:
+    """The chance a book price reads as with its cut taken out: from the line's two prices, or its
+    usual cut when only one is there (the page's fairChance)."""
+    p = 1 / odd
+    return p / (p + 1 / against) if against and against > 1 else min(p / BOOK_CUT, 0.99)
+
+
+def _logit(p: float) -> float:
+    q = min(max(p, 0.001), 0.999)
+    return math.log(q / (1 - q))
+
+
+def blend_chance(ours: float, fair: float | None, weight: float = BOOK_WEIGHT) -> float:
+    """A game bet's chance: ours blended with the book's own in log-odds (the page's blendChance)."""
+    if fair is None:
+        return ours
+    return 1 / (1 + math.exp(-((1 - weight) * _logit(ours) + weight * _logit(fair))))
 
 
 def _num(v: float) -> str:
@@ -318,21 +345,31 @@ def bet_of(row: dict, kind: str) -> dict | None:
         odd = odds.get("pick")
         if odd is None or not iddaa.priced(odd) or row.get("ours") is None:
             return None
-        return {"bet": "to win", "odd": odd, "chance": row["ours"], "won": row.get("ours_hit")}
+        fair = fair_chance(odd, odds.get("other"))
+        return _game_bet("to win", None, odd, row["ours"], fair, row.get("ours_hit"))
     ours, book = row.get("ours"), row.get("book")
     if ours is None or book is None or abs(ours - book) < LEAN:
         return None
     over = ours > book
     if row["market"] == "margin":
-        odd = odds.get("pick" if over else "other")
+        side, facing = ("pick", "other") if over else ("other", "pick")
     else:
-        odd = odds.get("over" if over else "under")
+        side, facing = ("over", "under") if over else ("under", "over")
+    odd = odds.get(side)
     if odd is None or not iddaa.priced(odd):
         return None
-    chance = _normal(abs(ours - book) / SPREAD[row["market"]])
+    alone = _normal(abs(ours - book) / SPREAD[row["market"]])
     actual = row.get("actual")
     won = None if actual is None or actual == book else (actual > book) == over
-    return {"bet": "over" if over else "under", "line": book, "odd": odd, "chance": round(chance, 3), "won": won}
+    return _game_bet("over" if over else "under", book, odd, alone, fair_chance(odd, odds.get(facing)), won)
+
+
+def _game_bet(bet: str, line: float | None, odd: float, alone: float, fair: float, won: bool | None) -> dict:
+    out = {"bet": bet, "odd": odd, "chance": round(blend_chance(alone, fair), 3), "won": won}
+    out.update({"alone": round(alone, 3), "fair": round(fair, 3)})
+    if line is not None:
+        out["line"] = line
+    return out
 
 
 def _signed(v: float) -> str:
@@ -359,7 +396,7 @@ def _words(row: dict, b: dict, game: dict, abbrev: dict[int, str]) -> str:
 def night(games: list[dict], day: int, abbrev: dict[int, str]) -> dict:
     """One night's settled bets (after ``annotate``): how many, won, our expected wins, and every lost
     bet with its reason."""
-    settled, lost = [], []
+    settled, lost, game_bets = [], [], []
     for g in games:
         label = f"{abbrev.get(g['away'], '')} @ {abbrev.get(g['home'], '')}"
         rows = [("game", m) for m in g["markets"]] + [("player", p) for p in g["players"]]
@@ -368,6 +405,8 @@ def night(games: list[dict], day: int, abbrev: dict[int, str]) -> dict:
             if b is None or b["won"] is None:
                 continue
             settled.append(b)
+            if kind == "game":
+                game_bets.append([b["alone"], b["fair"], 1 if b["won"] else 0])
             if b["won"]:
                 continue
             why = row.get("why") or {}
@@ -390,6 +429,9 @@ def night(games: list[dict], day: int, abbrev: dict[int, str]) -> dict:
                     "piece": why.get("piece"),
                     "points": why.get("points"),
                     "text": why.get("text", ""),
+                    "alone": b.get("alone"),
+                    "fair": b.get("fair"),
+                    "book_closer": _book_closer(row) if kind == "game" else None,
                 }
             )
     return {
@@ -398,6 +440,44 @@ def night(games: list[dict], day: int, abbrev: dict[int, str]) -> dict:
         "won": sum(1 for b in settled if b["won"]),
         "expected": round(sum(b["chance"] or 0 for b in settled), 1),
         "lost": lost,
+        "game_bets": game_bets,
+    }
+
+
+def _book_closer(row: dict) -> bool | None:
+    """Whether the book's number sat nearer the result than ours (a winner: the book favoured the
+    other team)."""
+    ours, book, actual = row.get("ours"), row.get("book"), row.get("actual")
+    if row["market"] == "winner":
+        return None if book is None else book < 0.5
+    if ours is None or book is None or actual is None:
+        return None
+    return abs(actual - book) < abs(actual - ours)
+
+
+def book_check(nights: Iterable[dict]) -> dict:
+    """How the settled game bets read on our chance alone, the book's alone and the blend (log loss,
+    lower is better), and the book weight that would have read them best: as our own chance gets
+    better that weight should come down (it changes the page only after a blind test)."""
+    bets = [b for n in nights for b in n.get("game_bets", [])]
+
+    def loss(w: float) -> float:
+        out = 0.0
+        for alone, fair, won in bets:
+            p = min(max(blend_chance(alone, fair, w), 1e-6), 1 - 1e-6)
+            out -= math.log(p if won else 1 - p)
+        return out / len(bets)
+
+    if not bets:
+        return {"bets": 0, "ours": None, "book": None, "blend": None, "best_weight": None}
+    grid = [i / 20 for i in range(21)]
+    best = min(grid, key=loss)
+    return {
+        "bets": len(bets),
+        "ours": round(loss(0.0), 4),
+        "book": round(loss(1.0), 4),
+        "blend": round(loss(BOOK_WEIGHT), 4),
+        "best_weight": best,
     }
 
 
@@ -422,8 +502,25 @@ def repeats(nights: Iterable[dict]) -> dict:
                 "candidate": n >= REPEAT_MIN and share >= REPEAT_SHARE,
             }
         )
+    # the gems (Can 2026-11-23): game bets where the book was nearer the result than we were, by what
+    # we missed; a cause that keeps coming back is the engine's to fix (tested blind first)
+    gems = [x for x in lost if x.get("book_closer")]
+    gem_pairs = Counter((x["cause"] or "unexplained", x["group"], x["piece"]) for x in gems)
+    gem_groups = Counter(x["group"] for x in gems)
     return {
         "lost": len(lost),
         "causes": [{"cause": c, "count": n} for c, n in causes.most_common()],
         "repeats": flagged,
+        "gems": [
+            {
+                "cause": cause,
+                "group": group,
+                "piece": piece,
+                "count": n,
+                "share": round(n / gem_groups[group], 2),
+                "candidate": cause != LUCK and n >= REPEAT_MIN and n / gem_groups[group] >= REPEAT_SHARE,
+            }
+            for (cause, group, piece), n in gem_pairs.most_common()
+        ],
+        "book": book_check(nights),
     }
