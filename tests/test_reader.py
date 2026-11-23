@@ -138,6 +138,14 @@ def test_unclear_notes_get_a_closer_read_in_batches(client, league):
     assert stored.deep_reading["missing_check"].startswith("Compare") and stored.deep_batch is None
     assert check(client, idea)["verdicts"][0]["check"] == "build_conflict"  # the closer read leads now
 
+    # Nothing out and nothing new: the hourly cron leaves the database asleep until a new note.
+    client.app.state.deep_read_last = None
+    assert client.get("/api/feedback/deep-read").json()["sent"] == 0  # one look finds nothing
+    client.app.state.deep_read_last = None
+    assert client.get("/api/feedback/deep-read").json() == {"ok": True, "enabled": True, "skipped": True}
+    give_feedback(client, idea, "still ruins my punt")
+    assert "skipped" not in client.get("/api/feedback/deep-read").json()
+
 
 def test_deep_read_is_off_without_a_key(client):
     client.app.state.deep_reader = None

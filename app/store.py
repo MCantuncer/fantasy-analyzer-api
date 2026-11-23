@@ -551,4 +551,8 @@ class PostgresStore:
 
 def create_store() -> Store:
     url = os.getenv("DATABASE_URL", "").strip()
-    return PostgresStore(url) if url else MemoryStore()
+    if not url:
+        return MemoryStore()
+    from app.quiet import QuietStore  # the watches' records wait in memory so the database can sleep
+
+    return QuietStore(PostgresStore(url))  # type: ignore[return-value]

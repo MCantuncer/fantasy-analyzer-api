@@ -102,6 +102,7 @@ from app.news.verify import FACT_SOURCE, describe_fact
 from app.playercard import Card as ParsedCard
 from app.playercard import parse_card
 from app.playersearch import IndexPlayer, injury_tag, on_roster, parse_index
+from app.quiet import QuietStore
 from app.reader import DEEP_BATCH_MAX, DeepReader, NoteReader, Reading, create_deep_reader, create_reader
 from app.recap import VERSION as RECAP_VERSION
 from app.recap import Week as RecapWeek
@@ -399,6 +400,9 @@ def create_app(
     app.state.rules = rules or create_rule_store()
     app.state.deep_read_lock = asyncio.Lock()
     app.state.deep_read_last = None
+    # Nothing sent and nothing new since the last look: the hourly cron leaves the database asleep
+    # until a manager writes a note. Starts False, so the first look after a start checks.
+    app.state.deep_read_idle = False
     app.state.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip() or None
     app.state.login_attempts = defaultdict(deque)
     app.state.mailer = mailer if mailer is not None else create_mailer()
@@ -2107,6 +2111,20 @@ def create_app(
             except Exception:
                 logging.getLogger(__name__).warning("news watch failed", exc_info=True)
 
+    async def save_quiet_writes(force: bool = False) -> None:
+        """The watches' writes that wait in memory (app/quiet.py) go to the database together."""
+        store = app.state.store
+        if isinstance(store, QuietStore) and store.waiting and (force or store.due()):
+            await run_in_threadpool(store.flush)
+
+    async def save_quiet_writes_every_minute() -> None:
+        while True:
+            await asyncio.sleep(60)
+            try:
+                await save_quiet_writes()
+            except Exception:  # noqa: BLE001 - kept in memory and tried again next minute
+                logging.getLogger(__name__).warning("could not save the watches' records", exc_info=True)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         watch = asyncio.create_task(watch_injuries()) if WATCH_SECONDS > 0 else None
@@ -2116,9 +2134,13 @@ def create_app(
         line_watch = asyncio.create_task(watch_line_log()) if LINE_LOG_SECONDS > 0 else None
         book_watch = asyncio.create_task(watch_book_log()) if BOOK_LOG_SECONDS > 0 else None
         usage_flush = asyncio.create_task(flush_usage_every_minute())
+        quiet_flush = asyncio.create_task(save_quiet_writes_every_minute())
         try:
             yield
         finally:
+            quiet_flush.cancel()
+            with suppress(Exception):  # the watches' last looks, on a deploy or restart
+                await save_quiet_writes(force=True)
             for task in (watch, news_watch, pregame_watch, box_watch, line_watch, book_watch):
                 if task is not None:
                     task.cancel()
@@ -3069,10 +3091,13 @@ def create_app(
             last = app.state.deep_read_last
             if last is not None and (now - last).total_seconds() < DEEP_READ_MIN_SECONDS:
                 return {"ok": True, "enabled": True, "skipped": True}
+            if app.state.deep_read_idle:
+                return {"ok": True, "enabled": True, "skipped": True}
             app.state.deep_read_last = now
             store = app.state.feedback
             collected = 0
-            for batch_id in await run_in_threadpool(store.deep_batches):
+            batches = await run_in_threadpool(store.deep_batches)
+            for batch_id in batches:
                 results = await run_in_threadpool(reader.collect, batch_id)
                 for feedback_id, deep in (results or {}).items():
                     data = deep.model_dump() if deep is not None else None
@@ -3083,6 +3108,7 @@ def create_app(
             batch_id = await run_in_threadpool(reader.submit, notes) if notes else None
             if batch_id is not None:
                 await run_in_threadpool(store.mark_deep_batch, [f.id for f in pending], batch_id)
+            app.state.deep_read_idle = not batches and not notes
             return {"ok": True, "enabled": True, "collected": collected, "sent": len(notes) if batch_id else 0}
 
     async def score_day(season: int, day: int, league_id: int, creds: EspnCredentials | None, sched) -> dict:
@@ -4755,6 +4781,7 @@ def create_app(
             created_at=app.state.now(),
         )
         saved = await run_in_threadpool(app.state.feedback.save, entry)
+        app.state.deep_read_idle = False  # a new note may need a closer read
         counted("trade_feedback")
         return feedback_out(saved)
 
