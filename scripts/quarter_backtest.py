@@ -153,7 +153,7 @@ def replay(seasons: dict[int, list[dict]]) -> list[dict]:
                     calls[t] = gs.expected(s, t, o, home, last_day.get(t) == day - 1)
                 for t, o, q in ((g["home"], g["away"], g["hq"]), (g["away"], g["home"], g["aq"])):
                     rows.append(
-                        {"season": year, "call": calls[t], "margin": calls[t] - calls[o], "q": q}
+                        {"season": year, "game": g["id"], "call": calls[t], "margin": calls[t] - calls[o], "q": q}
                         | {"own": quarters.team_shape(year + 1, shapes, t, allowed=False)}
                         | {"opp": quarters.team_shape(year + 1, shapes, o, allowed=True)}
                     )
@@ -207,6 +207,49 @@ def predict(rows: list[dict], share: np.ndarray, b: np.ndarray | None, shape: bo
     return p
 
 
+def live_test(tested: list[dict]) -> None:
+    """quarters.live_quarters: at the end of each quarter, every quarter to come is the pre-game number
+    plus a weight x the margin so far past the called one, per quarter played. Fitted with the season
+    left out and on earlier seasons only, against the pre-game number alone."""
+    pre: dict[int, np.ndarray] = {}
+    for year in SEASONS:
+        test = [r for r in tested if r["season"] == year]
+        train = [r for r in tested if r["season"] != year]
+        share, b = fit(train, True)
+        for i, p in zip(range(len(test)), predict(test, share, b, True), strict=True):
+            pre[id(test[i])] = p
+    opp = {}
+    for r in tested:
+        opp.setdefault(r["game"], []).append(r)
+    x, y, season = [], [], []
+    for r in tested:
+        pair = opp[r["game"]]
+        if len(pair) != 2:
+            continue
+        o = pair[1] if pair[0] is r else pair[0]
+        p, po = pre[id(r)], pre[id(o)]
+        for j in (1, 2, 3):
+            past = (sum(r["q"][:j]) - sum(o["q"][:j])) - (p[:j].sum() - po[:j].sum())
+            for k in range(j, QUARTERS):
+                x.append(past / j)
+                y.append(r["q"][k] - p[k])
+                season.append(r["season"])
+    x, y, season = np.array(x), np.array(y), np.array(season)
+    print("\nlive quarters: squared miss of a quarter to come (pre-game number) and with GIVE_BACK minus it")
+    for mode in ("season left out", "earlier seasons only"):
+        out = []
+        for year in SEASONS:
+            m = season == year
+            t = (season != year) if mode == "season left out" else (season < year)
+            if not t.any():
+                t = season != year
+            w = float((x[t] * y[t]).sum() / (x[t] ** 2).sum())
+            base = float((y[m] ** 2).mean())
+            out.append(f"{year}: {base:.3f} {float(((y[m] - w * x[m]) ** 2).mean()) - base:+.3f} (w {w:.4f})")
+        print(f"  {mode}: " + "; ".join(out))
+    print("  GIVE_BACK, all seasons:", round(float((x * y).sum() / (x**2).sum()), 4))
+
+
 def main(folder: str) -> None:
     seasons = {}
     for year in (SEASONS[0] - 1, *SEASONS):
@@ -227,6 +270,7 @@ def main(folder: str) -> None:
             share, b = fit(train, True)
             shipped = ((q - predict(test, share, b, True)) ** 2).mean()
             print(f"  {year}: {base:.3f} {shipped - base:+.3f}")
+    live_test(tested)
     share, b = fit(tested, True)
     print("\nall seasons: LEAGUE_SHARE", np.round(share, 4).tolist())
     print(

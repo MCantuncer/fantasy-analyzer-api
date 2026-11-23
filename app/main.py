@@ -3488,6 +3488,37 @@ def create_app(
                     found[pid] = p
         return [found[pid] for pid in ids if pid in found]
 
+    async def live_quarter_sides(season: int, sched: Schedule, day: int, game, clock) -> schemas.LiveQuarters | None:
+        """Both sides' quarters in a game in progress (quarters.live_quarters), from Our call as it stood at
+        tip-off, the season's quarter shapes and ESPN's linescores. None without any of them."""
+        box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
+        if box is None or box.scores is None or clock is None or clock.linescores is None:
+            return None
+        ruled = await ruled_out(season, day)
+        shapes = await season_quarters(sched, day)
+        c = box.call(day, game.away, game.home, ruled)
+        pre_a = quarters.quarter_line(season, shapes, game.away, game.home, c.away, c.home)
+        pre_h = quarters.quarter_line(season, shapes, game.home, game.away, c.home, c.away)
+        real_a, real_h = clock.linescores
+        period = clock.period
+
+        def side(team: int, pre, pre_o, real, real_o) -> schemas.LiveQuarterSide:
+            live = quarters.live_quarters(
+                list(pre.raw), list(pre_o.raw), list(real), list(real_o), period, clock.seconds
+            )
+            return schemas.LiveQuarterSide(
+                pro_team_id=team,
+                pregame=list(pre.points),
+                real=[round(x) for x in real[: quarters.QUARTERS]],
+                live=[round(x, 1) for x in live],
+            )
+
+        return schemas.LiveQuarters(
+            period=period,
+            away=side(game.away, pre_a, pre_h, real_a, real_h),
+            home=side(game.home, pre_h, pre_a, real_h, real_a),
+        )
+
     @app.post(
         "/api/scores/live-lines",
         response_model=schemas.LiveLines,
@@ -3532,6 +3563,7 @@ def create_app(
         )
         if g is None or status != "live" or elapsed is None:
             return out
+        out.quarters = await live_quarter_sides(season, sched, day, game, clock)
         record = await run_in_threadpool(app.state.store.get_player_lines, season, day)
         saved = (record or {}).get("lines", {})
         score = {g["away"]["pro_team_id"]: g["away"]["score"] or 0, g["home"]["pro_team_id"]: g["home"]["score"] or 0}

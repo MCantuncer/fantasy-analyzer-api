@@ -1445,6 +1445,22 @@ class LivePlayerLine(BaseModel):
     minutes_left: float = Field(description="His minutes still to come")
 
 
+class LiveQuarterSide(BaseModel):
+    pro_team_id: int
+    pregame: list[int] = Field(description="Our points for Q1-Q4 before tip-off (the pre-game box's quarters)")
+    real: list[int] = Field(description="Real points of each regulation quarter started; the one in progress last")
+    live: list[float] = Field(
+        description="Q1-Q4 now: real for quarters played, real so far plus the rest for the one in progress, "
+        "our number moved by the margin so far for the rest"
+    )
+
+
+class LiveQuarters(BaseModel):
+    period: int = Field(description="1-4, 5+ in overtime")
+    away: LiveQuarterSide
+    home: LiveQuarterSide
+
+
 class LiveLines(BaseModel):
     league_id: int
     season: int
@@ -1459,6 +1475,9 @@ class LiveLines(BaseModel):
     most_within: float = Field(description="8 in 10 land within this")
     lines: list[LivePlayerLine] = Field(
         description="Each player who has played and had a line at tip-off; empty unless the game is in progress"
+    )
+    quarters: LiveQuarters | None = Field(
+        default=None, description="Each side's quarters, real and to come; none without Our call or ESPN's linescores"
     )
 
 
