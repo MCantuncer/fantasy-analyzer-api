@@ -2519,6 +2519,12 @@ class LostBet(BaseModel):
     piece: str | None
     points: float | None
     text: str
+    alone: float | None = Field(None, description="Game bets: our call's chance on its own, before the book blend")
+    fair: float | None = Field(None, description="Game bets: the book's own chance, its cut taken out")
+    book_closer: bool | None = Field(
+        None,
+        description="Game bets: the book's number sat nearer the result than ours (winner: it favoured the other team)",
+    )
 
 
 class LostNight(BaseModel):
@@ -2528,6 +2534,9 @@ class LostNight(BaseModel):
     won: int
     expected: float = Field(description="Wins our chances added up to")
     lost: list[LostBet]
+    game_bets: list[list[float]] = Field(
+        default_factory=list, description="Each settled game bet: [our chance alone, the book's, won 1/0]"
+    )
 
 
 class CauseCount(BaseModel):
@@ -2544,12 +2553,25 @@ class CauseRepeat(BaseModel):
     candidate: bool = Field(description="Came back often enough to go to the signal search (tested blind first)")
 
 
+class BookCheck(BaseModel):
+    bets: int = Field(description="Settled game bets read")
+    ours: float | None = Field(description="Log loss on our chance alone (lower is better)")
+    book: float | None = Field(description="Log loss on the book's own chance")
+    blend: float | None = Field(description="Log loss on the blend the page uses (BOOK_WEIGHT)")
+    best_weight: float | None = Field(description="The book weight that would have read these bets best")
+
+
 class LostLog(BaseModel):
     season: int
     nights: list[LostNight] = Field(description="Newest first")
     lost: int
     causes: list[CauseCount]
     repeats: list[CauseRepeat] = Field(description="Causes that are not luck, most frequent first")
+    gems: list[CauseRepeat] = Field(
+        default_factory=list,
+        description="Lost game bets where the book was nearer the result than we were, by what we missed",
+    )
+    book: BookCheck | None = None
 
 
 class BookCompare(BaseModel):
