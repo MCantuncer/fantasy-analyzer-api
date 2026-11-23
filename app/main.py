@@ -23,7 +23,20 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import benched, billing, bookcompare, iddaa, linelog, liveline, lostlog, plans, playchance, pregame, schemas
+from app import (
+    benched,
+    billing,
+    bookcompare,
+    iddaa,
+    linelog,
+    liveline,
+    lostlog,
+    plans,
+    playchance,
+    pregame,
+    quarters,
+    schemas,
+)
 from app import errors as error_reports
 from app.accounts import (
     PASSWORD_MIN,
@@ -398,6 +411,7 @@ def create_app(
     # Quarter and clock from ESPN's scoreboard, by date; refreshed as often as live scores.
     app.state.clocks = TTLCache(LIVE_SCORES_TTL)
     app.state.game_kinds = TTLCache(GAME_KINDS_TTL, max_items=400)  # a finished day's game kinds never change
+    app.state.quarter_days = TTLCache(GAME_KINDS_TTL, max_items=400)  # a finished day's quarters, the same
     # Who is on the floor in each game in progress, from ESPN's box scores; as fresh as the clocks.
     app.state.on_court = TTLCache(LIVE_SCORES_TTL)
     app.state.lineups = TTLCache(LINEUP_TTL)
@@ -3366,8 +3380,9 @@ def create_app(
             except EspnError:  # the league's own players still make a box
                 deep = []
         model = CategoryModel(league)
+        shapes = await season_quarters(sched, game.day)
 
-        def side(team: int, call: int, parts: dict[str, float]) -> schemas.PregameSide:
+        def side(team: int, call: int, parts: dict[str, float], other: float) -> schemas.PregameSide:
             lines = preview.side_lines(
                 model,
                 box,
@@ -3382,6 +3397,8 @@ def create_app(
             b = s.team(game.home if team == game.away else game.away)
             tl = lines.team_line
             raw = sum(parts.values())
+            opponent = game.home if team == game.away else game.away
+            q = quarters.quarter_line(season, shapes, team, opponent, raw, other)
             return schemas.PregameSide(
                 pro_team_id=team,
                 abbrev=sched.teams.get(team, ("", ""))[0] or PRO_TEAM_ABBREV.get(team, ""),
@@ -3416,6 +3433,14 @@ def create_app(
                 team_line=schemas.PregameTeamLine(**vars(tl))
                 if tl is not None
                 else schemas.PregameTeamLine(shown=0, rest=0, total=0, call=round(raw, 1), gap=0),
+                quarters=schemas.PregameQuarters(
+                    points=list(q.points),
+                    raw=list(q.raw),
+                    league=list(q.league),
+                    favourite=list(q.favourite),
+                    shape=list(q.shape),
+                    games=q.games,
+                ),
             )
 
         ruled = await ruled_out(season, game.day)
@@ -3436,8 +3461,8 @@ def create_app(
                 margin=mg.points,
                 margin_raw=mg.raw,
                 terms=[schemas.PregameTerm(kind=t.kind, points=t.points, raw=t.raw) for t in mg.terms],
-                away=side(game.away, c.away, away_parts),
-                home=side(game.home, c.home, home_parts),
+                away=side(game.away, c.away, away_parts, sum(home_parts.values())),
+                home=side(game.home, c.home, home_parts, sum(away_parts.values())),
             )
 
         out = await run_in_threadpool(build)
@@ -4340,6 +4365,29 @@ def create_app(
             if nxt and (opp := nxt.away if nxt.home == team_id else nxt.home) in sched.teams
             else None,
         )
+
+    async def season_quarters(sched: Schedule, before: int) -> quarters.Shapes:
+        """Every team's quarters this season before ``before`` (a schedule day), from ESPN's scoreboard: each
+        settled day read once and kept. A day that can't be read is left out and tried again next time."""
+        gate = asyncio.Semaphore(6)  # a cold server reads a few days at a time
+
+        async def one(day: int) -> list[quarters.QuarterGame]:
+            when = sched.date_of(day)
+            if when is None:
+                return []
+            got = app.state.quarter_days.get(when)
+            if got is None:
+                async with gate:
+                    got = await quarters.fetch_quarters(when, app.state.clock_transport)
+                if got is None:
+                    return []
+                if settled(sched, day, app.state.now()):  # kept once every game that day is over
+                    app.state.quarter_days.set(when, got)
+            return got
+
+        days = [d for d in sorted(sched.games) if d < before and sched.games[d]]
+        found = await asyncio.gather(*(one(d) for d in days))
+        return quarters.shapes(g for day in found for g in day)
 
     async def day_kinds(day_date) -> dict[int, GameKind]:
         """Each game's kind on a finished day, read from ESPN's scoreboard once and kept (it never changes)."""

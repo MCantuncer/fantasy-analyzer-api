@@ -14469,6 +14469,66 @@
         ],
         "title": "PregamePlayer"
       },
+      "PregameQuarters": {
+        "properties": {
+          "points": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Points",
+            "description": "Whole points in Q1-Q4; they add up to the rounded sum of raw"
+          },
+          "raw": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Raw",
+            "description": "Q1-Q4 before rounding; their sum runs about a point under the call (overtime)"
+          },
+          "league": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "League",
+            "description": "The call x the league's share of a game's points in each quarter"
+          },
+          "favourite": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Favourite",
+            "description": "The favourite's fast start and fourth-quarter fade: + for the favourite early, - late"
+          },
+          "shape": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Shape",
+            "description": "The team's own quarter shape and the opponent's allowed shape, this season and last"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games",
+            "description": "This season's games read for the team's shape (0: last season's alone)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "points",
+          "raw",
+          "league",
+          "favourite",
+          "shape",
+          "games"
+        ],
+        "title": "PregameQuarters",
+        "description": "One side's points by quarter before tip-off (app/quarters.py): Our call cut into four quarters."
+      },
       "PregameRequest": {
         "properties": {
           "league_id": {
@@ -14559,6 +14619,17 @@
           },
           "team_line": {
             "$ref": "#/components/schemas/PregameTeamLine"
+          },
+          "quarters": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PregameQuarters"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Points by quarter; None without a call"
           }
         },
         "type": "object",
