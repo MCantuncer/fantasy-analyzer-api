@@ -29,6 +29,8 @@ class Clock:
     teams: frozenset[str]  # the two team abbreviations, a fallback when ids don't match
     period: int = 0  # 1-4, 5+ for overtime; 0 before tip-off
     seconds: float | None = None  # left in the period; None when ESPN's clock can't be read
+    # Points by period so far, away then home (the period in progress included); None when not given.
+    linescores: tuple[tuple[float, ...], tuple[float, ...]] | None = None
 
 
 def clock_seconds(display_clock: str) -> float | None:
@@ -70,6 +72,19 @@ def clock_label(period: int, display_clock: str, detail: str) -> str | None:
     return f"{period_name(period)} {display_clock}"
 
 
+def parse_linescores(comp: dict) -> tuple[tuple[float, ...], tuple[float, ...]] | None:
+    """Away and home points by period from a scoreboard competition, or None when either is missing."""
+    sides: dict[str, tuple[float, ...]] = {}
+    try:
+        for c in comp.get("competitors") or []:
+            sides[c["homeAway"]] = tuple(float(x["value"]) for x in c.get("linescores") or [])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not sides.get("away") or not sides.get("home"):
+        return None
+    return sides["away"], sides["home"]
+
+
 def parse_scoreboard(raw: dict) -> dict[int, Clock]:
     out: dict[int, Clock] = {}
     for event in raw.get("events") or []:
@@ -88,7 +103,14 @@ def parse_scoreboard(raw: dict) -> dict[int, Clock]:
             teams = frozenset(c["team"]["abbreviation"].upper() for c in comp.get("competitors") or [])
             period = int(status.get("period") or 0)
             seconds = clock_seconds(str(status.get("displayClock") or ""))
-            out[int(event["id"])] = Clock(state=state, label=label, teams=teams, period=period, seconds=seconds)
+            out[int(event["id"])] = Clock(
+                state=state,
+                label=label,
+                teams=teams,
+                period=period,
+                seconds=seconds,
+                linescores=parse_linescores(comp),
+            )
         except (KeyError, TypeError, ValueError):
             continue
     return out

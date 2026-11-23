@@ -20,6 +20,15 @@ and a team's quarter is off by about 4.7 points on average.
 
 This season's quarters come from ESPN's public scoreboard, one read per finished day, kept. When the
 scoreboard can't be read, a team's shape is last season's alone.
+
+Once a game is on (live_quarters, Can 2026-11-23): quarters played are the real ones, and each quarter
+still to come is the pre-game number plus GIVE_BACK x how far the team's margin so far runs past the
+margin we called, per quarter played. A team ahead of our call gives back about 6.5% of that extra
+margin in each quarter left. On the same five seasons, at the end of each quarter, it lowered the
+squared miss of every quarter to come in every season (0.3-0.8%, season left out and earlier seasons
+only; scripts/quarter_backtest.py). Tested and not kept: the night's scoring pace (both teams'
+points so far against the call; fails 2024-25), cut-offs for leads or deficits past 10 (each fails a
+season) and a weight per quarter to come (fails 2022-23).
 """
 
 from __future__ import annotations
@@ -42,6 +51,8 @@ OWN_SHAPE = 0.433  # x the call x the team's share of its points in a quarter ab
 OPP_SHAPE = 0.213  # x the call x the opponent's share of points allowed in a quarter above the league's
 PRIOR_KEEP = 0.5  # of last season's shape kept into this one
 PRIOR_GAMES = 30.0  # games of it a team starts the season with
+GIVE_BACK = -0.0648  # x (margin so far - called margin so far) per quarter played, in each quarter to come
+QUARTER_SECONDS = 720.0
 
 Four = tuple[float, float, float, float]
 
@@ -235,3 +246,35 @@ def whole(values: list[float]) -> list[int]:
     for i in range(left):
         floors[order[i % len(order)]] += 1
     return floors
+
+
+def live_quarters(
+    pre: list[float],
+    pre_opponent: list[float],
+    real: list[float],
+    real_opponent: list[float],
+    period: int,
+    seconds: float | None,
+) -> list[float]:
+    """A side's four quarters during a game: the real ones played, the one in progress as its real points
+    so far plus the rest of it, and the pre-game number (``pre``, raw) for the rest, each moved by
+    GIVE_BACK x the side's margin past the called one per quarter played. ``real`` holds the points of
+    each period started (the one in progress last); ``seconds`` are left in it. In overtime, or past it,
+    the four are the real ones."""
+    real = [*real, *([0.0] * QUARTERS)][:QUARTERS]
+    real_opponent = [*real_opponent, *([0.0] * QUARTERS)][:QUARTERS]
+    if period > QUARTERS or period <= 0:
+        return [float(x) for x in real] if period > QUARTERS else list(pre)
+    cur = period - 1
+    left = min(1.0, max(0.0, (seconds if seconds is not None else QUARTER_SECONDS) / QUARTER_SECONDS))
+    played = cur + 1 - left  # quarters played, in quarters
+    if played <= 0:
+        return list(pre)
+    had = sum(pre[:cur]) + pre[cur] * (1 - left)
+    had_opponent = sum(pre_opponent[:cur]) + pre_opponent[cur] * (1 - left)
+    past = (sum(real[: cur + 1]) - sum(real_opponent[: cur + 1])) - (had - had_opponent)
+    move = GIVE_BACK * past / played
+    out = [float(x) for x in real[:cur]]
+    out.append(real[cur] + (pre[cur] + move) * left)
+    out += [pre[k] + move for k in range(cur + 1, QUARTERS)]
+    return out

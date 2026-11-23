@@ -10539,6 +10539,17 @@
             "type": "array",
             "title": "Lines",
             "description": "Each player who has played and had a line at tip-off; empty unless the game is in progress"
+          },
+          "quarters": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LiveQuarters"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Each side's quarters, real and to come; none without Our call or ESPN's linescores"
           }
         },
         "type": "object",
@@ -10618,6 +10629,68 @@
           "minutes_left"
         ],
         "title": "LivePlayerLine"
+      },
+      "LiveQuarterSide": {
+        "properties": {
+          "pro_team_id": {
+            "type": "integer",
+            "title": "Pro Team Id"
+          },
+          "pregame": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Pregame",
+            "description": "Our points for Q1-Q4 before tip-off (the pre-game box's quarters)"
+          },
+          "real": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Real",
+            "description": "Real points of each regulation quarter started; the one in progress last"
+          },
+          "live": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Live",
+            "description": "Q1-Q4 now: real for quarters played, real so far plus the rest for the one in progress, our number moved by the margin so far for the rest"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pro_team_id",
+          "pregame",
+          "real",
+          "live"
+        ],
+        "title": "LiveQuarterSide"
+      },
+      "LiveQuarters": {
+        "properties": {
+          "period": {
+            "type": "integer",
+            "title": "Period",
+            "description": "1-4, 5+ in overtime"
+          },
+          "away": {
+            "$ref": "#/components/schemas/LiveQuarterSide"
+          },
+          "home": {
+            "$ref": "#/components/schemas/LiveQuarterSide"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period",
+          "away",
+          "home"
+        ],
+        "title": "LiveQuarters"
       },
       "LossReason": {
         "properties": {
