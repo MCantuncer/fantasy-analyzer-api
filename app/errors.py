@@ -185,9 +185,7 @@ class PostgresErrorStore:
     def __init__(self, url: str):
         from app.db import connector
 
-        self._connect = connector(url)
-        with self._connect() as conn:
-            conn.execute(SCHEMA)
+        self._connect = connector(url, SCHEMA)  # tables made on first use
 
     def record(self, o: Occurrence) -> None:
         with self._connect() as conn:

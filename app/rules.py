@@ -92,9 +92,7 @@ class PostgresRuleStore:
     def __init__(self, url: str):
         from app.db import connector
 
-        self._connect = connector(url)
-        with self._connect() as conn:
-            conn.execute(SCHEMA)
+        self._connect = connector(url, SCHEMA)  # tables made on first use
 
     def add(self, r: Rule) -> Rule:
         with self._connect() as conn:

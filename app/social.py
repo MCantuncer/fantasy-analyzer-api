@@ -219,9 +219,7 @@ class PostgresSocialStore:
     def __init__(self, url: str):
         from app.db import connector
 
-        self._connect = connector(url)
-        with self._connect() as conn:
-            conn.execute(SCHEMA)
+        self._connect = connector(url, SCHEMA)  # tables made on first use
 
     def add_post(self, league_id: int, season: int, team_id: int, target: str | None, body: str) -> Post:
         with self._connect() as conn:
