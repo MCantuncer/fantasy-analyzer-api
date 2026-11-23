@@ -1414,6 +1414,36 @@ class PregameBox(BaseModel):
     home: PregameSide
 
 
+class LivePlayerLine(BaseModel):
+    player_id: int
+    name: str
+    pro_team_id: int
+    pts: int = Field(description="Points so far")
+    minutes: int = Field(description="Minutes so far")
+    line_pts: float = Field(description="His points line at tip-off")
+    line_minutes: float = Field(description="His minutes line at tip-off")
+    final: float = Field(description="Where his points land at the end of regulation, from here")
+    rest: float = Field(description="Points still to come")
+    minutes_left: float = Field(description="His minutes still to come")
+
+
+class LiveLines(BaseModel):
+    league_id: int
+    season: int
+    day: int
+    game_id: int
+    status: Literal["scheduled", "live", "final"]
+    clock: str | None = Field(default=None, description="Q4 2:31, Half; none unless the game is in progress")
+    elapsed: float | None = Field(
+        default=None, description="Regulation minutes played (48 in overtime); none when ESPN's clock can't be read"
+    )
+    half_within: float = Field(description="Half of final points land within this of the live line, at this point")
+    most_within: float = Field(description="8 in 10 land within this")
+    lines: list[LivePlayerLine] = Field(
+        description="Each player who has played and had a line at tip-off; empty unless the game is in progress"
+    )
+
+
 class NewsRequest(BaseModel):
     league_id: int | None = Field(default=None, gt=0, description="Tag each player with his fantasy team here")
     season: int | None = Field(default=None, description="ESPN season year, e.g. 2027 for 2026-27")

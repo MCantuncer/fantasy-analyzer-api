@@ -580,6 +580,16 @@
             },
             "description": "Unauthorized"
           },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Payment Required"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -647,6 +657,16 @@
             },
             "description": "Unauthorized"
           },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Payment Required"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -713,6 +733,16 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Payment Required"
           },
           "422": {
             "description": "Validation Error",
@@ -890,6 +920,383 @@
               }
             },
             "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/gift-pro": {
+      "post": {
+        "summary": "Gift Pro",
+        "description": "Admins only: give an account Pro for a number of days (friends, testers), or end the gift.",
+        "operationId": "gift_pro_api_admin_gift_pro_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GiftProRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GiftProResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/config": {
+      "get": {
+        "summary": "Billing Config",
+        "description": "What the site needs to open Paddle's checkout; nothing secret.",
+        "operationId": "billing_config_api_billing_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingConfig"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/checkout": {
+      "post": {
+        "summary": "Billing Checkout",
+        "description": "A Paddle transaction for Pro, tagged with this account: the site opens the checkout on it.",
+        "operationId": "billing_checkout_api_billing_checkout_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutStart"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/sync": {
+      "post": {
+        "summary": "Billing Sync",
+        "description": "Right after checkout: read the subscription from Paddle so Pro opens before the webhook lands.",
+        "operationId": "billing_sync_api_billing_sync_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BillingSyncRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/portal": {
+      "post": {
+        "summary": "Billing Portal",
+        "description": "Paddle's customer portal for this account: change the card, see invoices, cancel.",
+        "operationId": "billing_portal_api_billing_portal_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingPortal"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           },
           "422": {
             "description": "Validation Error",
@@ -3775,6 +4182,16 @@
             },
             "description": "Unauthorized"
           },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Payment Required"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -3794,6 +4211,125 @@
               }
             },
             "description": "Conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/scores/live-lines": {
+      "post": {
+        "summary": "Score Live Lines",
+        "description": "A game in progress: where each player's points land at the end of regulation (app/liveline.py),\nfrom his line at tip-off (the line log) and his points, minutes and team margin so far. Players\nwithout a saved tip-off line are left out. Follows the live scores' minute-long cache.",
+        "operationId": "score_live_lines_api_scores_live_lines_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-espn-s2",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-S2"
+            }
+          },
+          {
+            "name": "x-espn-swid",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Espn-Swid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PregameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveLines"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Payment Required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "description": "Validation Error",
@@ -4789,6 +5325,16 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Payment Required"
           },
           "404": {
             "content": {
@@ -5787,6 +6333,89 @@
         ],
         "title": "Beneficiary"
       },
+      "BillingConfig": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "Paddle is set up: checkout can open"
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "sandbox",
+                  "production"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          },
+          "client_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Token",
+            "description": "Paddle.js client-side token (public)"
+          },
+          "prices": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "month",
+                "year"
+              ]
+            },
+            "type": "object",
+            "title": "Prices",
+            "description": "Paddle price id by billing interval, for localized price previews"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "BillingConfig"
+      },
+      "BillingPortal": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Paddle's customer portal for this account: card, invoices, cancel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "BillingPortal"
+      },
+      "BillingSyncRequest": {
+        "properties": {
+          "transaction_id": {
+            "type": "string",
+            "pattern": "^txn_[a-z0-9]{10,64}$",
+            "title": "Transaction Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "transaction_id"
+        ],
+        "title": "BillingSyncRequest"
+      },
       "BookCompare": {
         "properties": {
           "season": {
@@ -6608,6 +7237,35 @@
           "evidence"
         ],
         "title": "CheckVerdict"
+      },
+      "CheckoutRequest": {
+        "properties": {
+          "interval": {
+            "type": "string",
+            "enum": [
+              "month",
+              "year"
+            ],
+            "title": "Interval",
+            "default": "year"
+          }
+        },
+        "type": "object",
+        "title": "CheckoutRequest"
+      },
+      "CheckoutStart": {
+        "properties": {
+          "transaction_id": {
+            "type": "string",
+            "title": "Transaction Id",
+            "description": "Open Paddle's checkout on this transaction (Paddle.Checkout.open)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "transaction_id"
+        ],
+        "title": "CheckoutStart"
       },
       "ClientError": {
         "properties": {
@@ -8544,7 +9202,8 @@
                 "type": "null"
               }
             ],
-            "description": "Our call for the score; None before the box is built"
+            "description": "Our call for the score; None before the box is built. Pro",
+            "pro_feature": "game_calls"
           }
         },
         "type": "object",
@@ -8849,6 +9508,55 @@
           "fta"
         ],
         "title": "GameStats"
+      },
+      "GiftProRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email"
+          },
+          "days": {
+            "type": "integer",
+            "maximum": 366.0,
+            "minimum": 0.0,
+            "title": "Days",
+            "description": "Days of Pro from now; 0 ends a gift"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "days"
+        ],
+        "title": "GiftProRequest"
+      },
+      "GiftProResult": {
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until",
+            "description": "When the gift ends, UTC ISO 8601; None: no gift"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "until"
+        ],
+        "title": "GiftProResult"
       },
       "GoogleSignIn": {
         "properties": {
@@ -9763,6 +10471,154 @@
         ],
         "title": "LinkedTeam"
       },
+      "LiveLines": {
+        "properties": {
+          "league_id": {
+            "type": "integer",
+            "title": "League Id"
+          },
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "live",
+              "final"
+            ],
+            "title": "Status"
+          },
+          "clock": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clock",
+            "description": "Q4 2:31, Half; none unless the game is in progress"
+          },
+          "elapsed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsed",
+            "description": "Regulation minutes played (48 in overtime); none when ESPN's clock can't be read"
+          },
+          "half_within": {
+            "type": "number",
+            "title": "Half Within",
+            "description": "Half of final points land within this of the live line, at this point"
+          },
+          "most_within": {
+            "type": "number",
+            "title": "Most Within",
+            "description": "8 in 10 land within this"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/LivePlayerLine"
+            },
+            "type": "array",
+            "title": "Lines",
+            "description": "Each player who has played and had a line at tip-off; empty unless the game is in progress"
+          }
+        },
+        "type": "object",
+        "required": [
+          "league_id",
+          "season",
+          "day",
+          "game_id",
+          "status",
+          "half_within",
+          "most_within",
+          "lines"
+        ],
+        "title": "LiveLines"
+      },
+      "LivePlayerLine": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "pro_team_id": {
+            "type": "integer",
+            "title": "Pro Team Id"
+          },
+          "pts": {
+            "type": "integer",
+            "title": "Pts",
+            "description": "Points so far"
+          },
+          "minutes": {
+            "type": "integer",
+            "title": "Minutes",
+            "description": "Minutes so far"
+          },
+          "line_pts": {
+            "type": "number",
+            "title": "Line Pts",
+            "description": "His points line at tip-off"
+          },
+          "line_minutes": {
+            "type": "number",
+            "title": "Line Minutes",
+            "description": "His minutes line at tip-off"
+          },
+          "final": {
+            "type": "number",
+            "title": "Final",
+            "description": "Where his points land at the end of regulation, from here"
+          },
+          "rest": {
+            "type": "number",
+            "title": "Rest",
+            "description": "Points still to come"
+          },
+          "minutes_left": {
+            "type": "number",
+            "title": "Minutes Left",
+            "description": "His minutes still to come"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "name",
+          "pro_team_id",
+          "pts",
+          "minutes",
+          "line_pts",
+          "line_minutes",
+          "final",
+          "rest",
+          "minutes_left"
+        ],
+        "title": "LivePlayerLine"
+      },
       "LossReason": {
         "properties": {
           "cause": {
@@ -10339,6 +11195,96 @@
             "type": "boolean",
             "title": "Admin",
             "description": "An admin account (users.user_type = 'admin'): can read error reports and usage",
+            "default": false
+          },
+          "plan": {
+            "type": "string",
+            "enum": [
+              "free",
+              "pro"
+            ],
+            "title": "Plan",
+            "description": "The account's plan (app/plans.py)",
+            "default": "free"
+          },
+          "features": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "next_game",
+                "game_calls",
+                "pregame",
+                "estimates",
+                "sportsbook",
+                "match_form"
+              ]
+            },
+            "type": "array",
+            "title": "Features",
+            "description": "Pro features the API serves this account now. Every feature while plans are not enforced; the site locks a spot from this list only"
+          },
+          "trial_ends": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trial Ends",
+            "description": "End of a free trial, UTC ISO 8601"
+          },
+          "renews_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Renews At",
+            "description": "Next charge of a renewing subscription, UTC ISO 8601"
+          },
+          "ends_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends At",
+            "description": "When Pro stops: cancelled at period end, or a gift's last moment; UTC ISO 8601"
+          },
+          "gifted": {
+            "type": "boolean",
+            "title": "Gifted",
+            "description": "Pro gifted by an admin rather than paid for",
+            "default": false
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "month",
+                  "year"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval",
+            "description": "How a paid plan bills"
+          },
+          "payment_due": {
+            "type": "boolean",
+            "title": "Payment Due",
+            "description": "The last renewal failed: Pro holds a few days while the card is retried",
             "default": false
           }
         },
@@ -12477,7 +13423,8 @@
                 "type": "null"
               }
             ],
-            "description": "His line for his next game, as FA Targets shows it; none while he is out or when this league doesn't list him"
+            "description": "His line for his next game, as FA Targets shows it; none while he is out or when this league doesn't list him. Pro",
+            "pro_feature": "next_game"
           }
         },
         "type": "object",
@@ -13101,7 +14048,8 @@
                 "type": "null"
               }
             ],
-            "description": "His line for his next game; none while he is out"
+            "description": "His line for his next game; none while he is out. Pro",
+            "pro_feature": "next_game"
           }
         },
         "type": "object",
