@@ -18,6 +18,8 @@ assists, 1.0-1.7% for steals, 1.0-1.6% for blocks, 1.6-2.6% for threes, 1.4-2.3%
     last game against how often he has started lately (a new starter plays up to about 2 more minutes,
     a benched one up to about 2 fewer); games he just missed, and his first three games back;
     and his regular teammates' minutes lately against their usual (a coach shortening his bench);
+  * his shots lately for his turnovers: shooting more a minute over his last FORM_GAMES games than his
+    line says, he turns it over more too (2026-11-23, every season both ways and on 2014-15..2020-21);
   * the opponent's defense in each stat: what the players it faced made against what they usually
     make per minute (DEFENSE_PRIOR_GAMES of league average to start). Raw "points allowed" is half
     as good, and splitting it by guards, wings and bigs, or by his own mix of shots, added nothing;
@@ -177,6 +179,8 @@ MINUTE_KINDS = {
 #   usage_back: shots a game of regulars back from an absence, / 100: his form holds the shots he took for them
 #   home: +0.5 at home, -0.5 away; margin: expected margin / 10; b2b: 1 on a back-to-back
 #   three_luck: the opponent's 3P% allowed over the league's, shrunk (THREE_LUCK_GAMES): 0.02 = 2 points
+#   shots_form: his shots a minute (FGA + 0.44 FTA) over his last FORM_GAMES games against his line's,
+#     -1..2: turnovers come with the ball, so a player shooting more lately turns it over more too
 RATE_WEIGHTS: dict[int, dict[str, float]] = {
     PTS: {"form": 0.7683, "opp": 1.0751, "usage_out": 0.1212, "vac": 0.2043, "usage_back": -0.15},
     REB: {"form": 0.8233, "opp": 0.8943, "freed": 0.5},
@@ -192,7 +196,7 @@ RATE_WEIGHTS: dict[int, dict[str, float]] = {
     STL: {"form": 0.9928, "opp": 0.7837, "b2b": -0.0343},
     BLK: {"opp": 0.893, "margin": 0.0576, "form": 0.1027, "freed": 0.5},
     TPM: {"form": 0.6247, "form_fast": 0.2113, "opp": 0.6939, "three_luck": -1.56},
-    TO: {"form": 0.7926, "opp": 0.8042, "usage_out": 0.2392, "usage_back": -0.2},
+    TO: {"form": 0.7926, "opp": 0.8042, "usage_out": 0.2392, "usage_back": -0.2, "shots_form": 0.38},
     FGA: {"form": 0.5567, "opp": 1.0615, "usage_out": 0.2991},
     FTA: {"opp": 0.9368},
 }
@@ -838,9 +842,26 @@ def minute_signals(
 
 
 def rate_signal(
-    name: str, stat: int, rate: float, m: GameContext, out: list[Teammate], back: Sequence[Teammate] = ()
+    name: str,
+    stat: int,
+    rate: float,
+    m: GameContext,
+    out: list[Teammate],
+    back: Sequence[Teammate] = (),
+    line_rates: dict[int, float] | None = None,
 ) -> float:
-    """One per-minute signal of RATE_WEIGHTS for a stat whose line makes ``rate`` a minute."""
+    """One per-minute signal of RATE_WEIGHTS for a stat whose line makes ``rate`` a minute
+    (``line_rates``: his line's rate a minute in every stat, for signals that read other stats)."""
+    if name == "shots_form":
+        f = m.form
+        if f is None or not line_rates:
+            return 0.0
+        line_shots = line_rates.get(FGA, 0.0) + USAGE_FTA * line_rates.get(FTA, 0.0)
+        if line_shots <= 0:
+            return 0.0
+        shots = f.rate.get(FGA, 0.0) + USAGE_FTA * f.rate.get(FTA, 0.0)
+        lo, hi = FORM_RANGE
+        return min(max(shots / line_shots - 1, lo), hi)
     if name == "usage_back":
         return sum(t.usage for t in back if t.chance >= 1) / 100
     if name == "form":
@@ -923,6 +944,7 @@ def apply(
     kinds = {
         "form": "form",
         "form_fast": "form",
+        "shots_form": "form",
         "opp": "opponent",
         "three_luck": "opponent",
         "usage_out": "teammates_out",
@@ -946,7 +968,7 @@ def apply(
         base = rate[k] * new_minutes
         total = RATE_LEVEL[k]
         for name, w in weights.items():
-            change = base * w * rate_signal(name, k, rate[k], m, out, back)
+            change = base * w * rate_signal(name, k, rate[k], m, out, back, rate)
             total += change
             if abs(change) > 1e-6:
                 reason(kinds[name]).add(k, change)
