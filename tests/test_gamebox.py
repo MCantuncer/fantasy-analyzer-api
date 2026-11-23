@@ -256,6 +256,18 @@ def test_recent_form_is_decayed_and_shrunk_by_what_his_line_expects():
     assert gamebox._form(_form(), PTS, 20 / 30) == 0.0
 
 
+def test_shooting_more_lately_brings_more_turnovers():
+    # 16 shots in 30 minutes on his line; 20 a game over his last games: 25% more, turnovers follow.
+    rate = {k: v / 30 for k, v in LINE.items()} | {FGA: 20.0 / 30}
+    new, usual, reasons = gamebox.apply(LINE, _ctx(form=_form(rate=rate)), [])
+    base = 2.0 / 30.0 * (30.0 + gamebox.MINUTES_LEVEL)
+    assert new[TO] - usual[TO] == pytest.approx(base * gamebox.RATE_WEIGHTS[TO]["shots_form"] * 0.25)
+    assert next(r for r in reasons if r.kind == "form").stats[TO] > 0
+    # Shooting at his line's rate, or no games: nothing.
+    assert gamebox.rate_signal("shots_form", TO, 2 / 30, _ctx(form=_form()), [], line_rates={FGA: 16 / 30}) == 0.0
+    assert gamebox.rate_signal("shots_form", TO, 2 / 30, _ctx(), [], line_rates={FGA: 16 / 30}) == 0.0
+
+
 def test_decayed_sums_weigh_recent_games_more():
     rows = [GameRow(11, 100 + d, d, 1, _line(30, pts=p)) for d, p in ((1, 10.0), (2, 20.0), (3, 30.0))]
     box = gamebox.build(2027, rows, PRIOR, SCHEDULE)
