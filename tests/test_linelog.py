@@ -124,7 +124,10 @@ def _app(recorded):
     fake = WatchedEspn(recorded, schedule=pro_schedule)
     store = MemoryStore()
     app = create_app(
-        EspnClient(transport=httpx.MockTransport(fake.handler)), store=store, accounts=MemoryAccountStore()
+        EspnClient(transport=httpx.MockTransport(fake.handler)),
+        store=store,
+        accounts=MemoryAccountStore(),
+        clock_transport=httpx.MockTransport(lambda _: httpx.Response(503)),  # no live ESPN scoreboard in tests
     )
     # The recorded ESPN answers have no team game logs: a league box from the calendar alone.
     box = gamebox.Box(2027, {}, {}, {}, schedule=gamebox.parse_schedule(pro_schedule), scores=gamescore.build([]))

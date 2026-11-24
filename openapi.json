@@ -6985,6 +6985,17 @@
           "cut": {
             "$ref": "#/components/schemas/BookCut",
             "description": "Where the book takes its cut (comparison only)"
+          },
+          "quarters": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuarterRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The quarter and first-half picks' record over the same nights (app/quarterbook.py)"
           }
         },
         "type": "object",
@@ -7556,6 +7567,14 @@
             "type": "array",
             "title": "Estimates",
             "description": "Our line for every player expected to play 10+ minutes, most points first"
+          },
+          "quarters": {
+            "items": {
+              "$ref": "#/components/schemas/QuarterBet"
+            },
+            "type": "array",
+            "title": "Quarters",
+            "description": "iddaa's quarter and first-half bets beside our quarter numbers (app/quarterbook.py); shown and kept on record only, not in Kupons"
           }
         },
         "type": "object",
@@ -14994,6 +15013,261 @@
           "close"
         ],
         "title": "ProjectedCategory"
+      },
+      "QuarterBet": {
+        "properties": {
+          "market": {
+            "type": "string",
+            "enum": [
+              "q_total",
+              "q_winner",
+              "h1_total",
+              "h1_margin",
+              "h1_home",
+              "h1_away"
+            ],
+            "title": "Market",
+            "description": "Quarter total or winner (three-way), first-half total, home handicap or home/away points"
+          },
+          "period": {
+            "type": "integer",
+            "title": "Period",
+            "description": "The quarter, 1-4; 0 for the first half"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line",
+            "description": "iddaa's main line (the home handicap for h1_margin); none for a winner"
+          },
+          "ours": {
+            "type": "number",
+            "title": "Ours",
+            "description": "Our number: points, or the home margin for winners and handicaps"
+          },
+          "sides": {
+            "items": {
+              "$ref": "#/components/schemas/QuarterSide"
+            },
+            "type": "array",
+            "title": "Sides"
+          },
+          "pick": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pick",
+            "description": "The side our number leans to; none when the book doesn't price it over 1.33"
+          },
+          "edge": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edge",
+            "description": "The pick's value: our chance x its price, less 1"
+          },
+          "actual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual",
+            "description": "What happened: points, or the home margin; none before the final"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result",
+            "description": "The side that won (push on a whole line hit exactly)"
+          },
+          "hit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hit",
+            "description": "Whether our pick won; none before the final or on a push"
+          }
+        },
+        "type": "object",
+        "required": [
+          "market",
+          "period",
+          "line",
+          "ours",
+          "sides",
+          "pick",
+          "edge",
+          "actual",
+          "result",
+          "hit"
+        ],
+        "title": "QuarterBet"
+      },
+      "QuarterRecord": {
+        "properties": {
+          "all": {
+            "$ref": "#/components/schemas/QuarterRecordSums",
+            "description": "Every settled quarter and first-half pick"
+          },
+          "edge": {
+            "$ref": "#/components/schemas/QuarterRecordSums",
+            "description": "Only the picks where our chance x the price was over 1"
+          },
+          "by_market": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/QuarterRecordPart"
+            },
+            "type": "object",
+            "title": "By Market"
+          }
+        },
+        "type": "object",
+        "required": [
+          "all",
+          "edge"
+        ],
+        "title": "QuarterRecord"
+      },
+      "QuarterRecordPart": {
+        "properties": {
+          "all": {
+            "$ref": "#/components/schemas/QuarterRecordSums"
+          },
+          "edge": {
+            "$ref": "#/components/schemas/QuarterRecordSums"
+          }
+        },
+        "type": "object",
+        "required": [
+          "all",
+          "edge"
+        ],
+        "title": "QuarterRecordPart"
+      },
+      "QuarterRecordSums": {
+        "properties": {
+          "bets": {
+            "type": "integer",
+            "title": "Bets"
+          },
+          "won": {
+            "type": "integer",
+            "title": "Won"
+          },
+          "ours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours",
+            "description": "Our average chance for these picks"
+          },
+          "book": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book",
+            "description": "The book's average chance for them, cut taken out"
+          },
+          "returned": {
+            "type": "number",
+            "title": "Returned",
+            "description": "Units back less units staked, one unit a pick at the book's price"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bets",
+          "won",
+          "ours",
+          "book",
+          "returned"
+        ],
+        "title": "QuarterRecordSums"
+      },
+      "QuarterSide": {
+        "properties": {
+          "side": {
+            "type": "string",
+            "enum": [
+              "under",
+              "over",
+              "home",
+              "away",
+              "tie"
+            ],
+            "title": "Side"
+          },
+          "odd": {
+            "type": "number",
+            "title": "Odd",
+            "description": "iddaa's price"
+          },
+          "ours": {
+            "type": "number",
+            "title": "Ours",
+            "description": "Our chance this side wins (from our quarter numbers and their measured miss)"
+          },
+          "book": {
+            "type": "number",
+            "title": "Book",
+            "description": "The book's chance, its cut taken out"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "Our chance x the price, less 1: over 0 is an edge"
+          }
+        },
+        "type": "object",
+        "required": [
+          "side",
+          "odd",
+          "ours",
+          "book",
+          "value"
+        ],
+        "title": "QuarterSide"
       },
       "ReactRequest": {
         "properties": {

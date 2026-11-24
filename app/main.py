@@ -34,6 +34,7 @@ from app import (
     plans,
     playchance,
     pregame,
+    quarterbook,
     quarters,
     schemas,
 )
@@ -424,6 +425,7 @@ def create_app(
     app.state.clocks = TTLCache(LIVE_SCORES_TTL)
     app.state.game_kinds = TTLCache(GAME_KINDS_TTL, max_items=400)  # a finished day's game kinds never change
     app.state.quarter_days = TTLCache(GAME_KINDS_TTL, max_items=400)  # a finished day's quarters, the same
+    app.state.quarter_today = TTLCache(LIVE_SCORES_TTL)  # a day still being played: re-read once a minute at most
     # Who is on the floor in each game in progress, from ESPN's box scores; as fresh as the clocks.
     app.state.on_court = TTLCache(LIVE_SCORES_TTL)
     app.state.live_fouls = TTLCache(LIVE_SCORES_TTL)  # (ESPN game id,) -> GameFouls, or False when unreadable
@@ -1016,7 +1018,9 @@ def create_app(
             got = await compare_night(season, day)
             if got is not None:
                 nights.append(got)
-        return schemas.BookRecord(season=season, **await run_in_threadpool(bookcompare.record, nights))
+        rec = await run_in_threadpool(bookcompare.record, nights)
+        q = quarterbook.record([g for n in nights for g in n["games"]])
+        return schemas.BookRecord(season=season, **rec, quarters=schemas.QuarterRecord(**q))
 
     @app.post("/api/book-compare/lost", response_model=schemas.LostLog, responses=PRO_ONLY)
     async def lost_log(
@@ -1061,6 +1065,9 @@ def create_app(
             except Exception:
                 logging.getLogger(__name__).warning("book record: no results for day %s", day, exc_info=True)
         got = await run_in_threadpool(bookcompare.compare_day, book, lines, played, {})
+        q = await quarter_bets(season, day, book)
+        for g in got["games"]:
+            g["quarters"] = q.get(g["game_id"], [])
         if explain and played is not None:  # why each settled row landed where it did (app/lostlog.py)
             box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
             out = await ruled_out(season, day)
@@ -1103,6 +1110,9 @@ def create_app(
                     c = box.call(day, g["away"], g["home"], out)
                     g["ours"] = [c.away, c.home, round(c.chance, 3)]
         got = await run_in_threadpool(bookcompare.compare_day, book, lines, played, names)
+        q = await quarter_bets(season, day, book) if day else {}
+        for g in got["games"]:
+            g["quarters"] = q.get(g["game_id"], [])
         if played is not None and day:
             out_at_tip = await ruled_out(season, day)
             await run_in_threadpool(
@@ -1130,6 +1140,7 @@ def create_app(
                 ],
                 players=[schemas.ComparePlayer(**{**p, "team": ab(p["team"])}) for p in g["players"]],
                 estimates=[schemas.CompareEstimate(**{**e, "team": ab(e["team"])}) for e in g["estimates"]],
+                quarters=[schemas.QuarterBet(**b) for b in g["quarters"]],
             )
             for g in got["games"]
         ]
@@ -4462,28 +4473,62 @@ def create_app(
             else None,
         )
 
+    async def day_quarters(sched: Schedule, day: int, gate: asyncio.Semaphore | None = None) -> list:
+        """One day's finished games by quarter (quarters.QuarterGame), from ESPN's scoreboard; kept once
+        every game that day is over. Empty when it can't be read (tried again next time)."""
+        when = sched.date_of(day)
+        if when is None:
+            return []
+        got = app.state.quarter_days.get(when) or app.state.quarter_today.get((when,))
+        if got is None:
+            if gate is None:
+                got = await quarters.fetch_quarters(when, app.state.clock_transport)
+            else:
+                async with gate:
+                    got = await quarters.fetch_quarters(when, app.state.clock_transport)
+            if got is None:
+                return []
+            if settled(sched, day, app.state.now()):  # kept once every game that day is over
+                app.state.quarter_days.set(when, got)
+            else:
+                app.state.quarter_today.set((when,), got)
+        return got
+
     async def season_quarters(sched: Schedule, before: int) -> quarters.Shapes:
         """Every team's quarters this season before ``before`` (a schedule day), from ESPN's scoreboard: each
         settled day read once and kept. A day that can't be read is left out and tried again next time."""
         gate = asyncio.Semaphore(6)  # a cold server reads a few days at a time
-
-        async def one(day: int) -> list[quarters.QuarterGame]:
-            when = sched.date_of(day)
-            if when is None:
-                return []
-            got = app.state.quarter_days.get(when)
-            if got is None:
-                async with gate:
-                    got = await quarters.fetch_quarters(when, app.state.clock_transport)
-                if got is None:
-                    return []
-                if settled(sched, day, app.state.now()):  # kept once every game that day is over
-                    app.state.quarter_days.set(when, got)
-            return got
-
         days = [d for d in sorted(sched.games) if d < before and sched.games[d]]
-        found = await asyncio.gather(*(one(d) for d in days))
+        found = await asyncio.gather(*(day_quarters(sched, d, gate) for d in days))
         return quarters.shapes(g for day in found for g in day)
+
+    async def quarter_bets(season: int, day: int, book: dict | None) -> dict[int, list[dict]]:
+        """Each saved game's quarter and first-half bets (app/quarterbook.py): our quarters from the call
+        kept at the book's look and the season's shapes before that day, results from ESPN's quarters.
+        Empty when the schedule or shapes can't be read."""
+        games = (book or {}).get("games") or {}
+        if not games:
+            return {}
+        try:
+            sched = await score_calendar(season)
+            shapes = await season_quarters(sched, day)
+            now, when = app.state.now(), sched.date_of(day)
+            started = any(g.start <= now for g in sched.games.get(day, [])) or (when is not None and when < now.date())
+            finished = {g.game_id: g for g in await day_quarters(sched, day)} if started else {}
+        except Exception:
+            logging.getLogger(__name__).warning("quarter bets: no quarters for day %s", day, exc_info=True)
+            return {}
+        out = {}
+        for gid, g in games.items():
+            ours = g.get("ours")
+            if not ours:
+                continue
+            a = quarters.quarter_line(season, shapes, g["away"], g["home"], ours[0], ours[1])
+            h = quarters.quarter_line(season, shapes, g["home"], g["away"], ours[1], ours[0])
+            done = finished.get(int(gid))
+            actual = (list(done.away_points), list(done.home_points)) if done else None
+            out[int(gid)] = quarterbook.bets(g.get("board"), g["away"], g["home"], (list(a.raw), list(h.raw)), actual)
+        return out
 
     async def day_kinds(day_date) -> dict[int, GameKind]:
         """Each game's kind on a finished day, read from ESPN's scoreboard once and kept (it never changes)."""

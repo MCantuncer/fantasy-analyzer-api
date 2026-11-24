@@ -2320,6 +2320,9 @@ class BookRecord(BaseModel):
     calibration: list[RecordBucket]
     series: list[RecordNight] = Field(default_factory=list, description="One line per night, oldest first")
     cut: BookCut = Field(default_factory=BookCut, description="Where the book takes its cut (comparison only)")
+    quarters: QuarterRecord | None = Field(
+        default=None, description="The quarter and first-half picks' record over the same nights (app/quarterbook.py)"
+    )
 
 
 class BookPlayer(BaseModel):
@@ -2459,6 +2462,48 @@ class CompareEstimate(BaseModel):
     actual: dict[str, float] | None = Field(description="What he did, by stat, once his game is final")
 
 
+class QuarterSide(BaseModel):
+    side: Literal["under", "over", "home", "away", "tie"]
+    odd: float = Field(description="iddaa's price")
+    ours: float = Field(description="Our chance this side wins (from our quarter numbers and their measured miss)")
+    book: float = Field(description="The book's chance, its cut taken out")
+    value: float = Field(description="Our chance x the price, less 1: over 0 is an edge")
+
+
+class QuarterBet(BaseModel):
+    market: Literal["q_total", "q_winner", "h1_total", "h1_margin", "h1_home", "h1_away"] = Field(
+        description="Quarter total or winner (three-way), first-half total, home handicap or home/away points"
+    )
+    period: int = Field(description="The quarter, 1-4; 0 for the first half")
+    line: float | None = Field(description="iddaa's main line (the home handicap for h1_margin); none for a winner")
+    ours: float = Field(description="Our number: points, or the home margin for winners and handicaps")
+    sides: list[QuarterSide]
+    pick: str | None = Field(description="The side our number leans to; none when the book doesn't price it over 1.33")
+    edge: float | None = Field(description="The pick's value: our chance x its price, less 1")
+    actual: float | None = Field(description="What happened: points, or the home margin; none before the final")
+    result: str | None = Field(description="The side that won (push on a whole line hit exactly)")
+    hit: bool | None = Field(description="Whether our pick won; none before the final or on a push")
+
+
+class QuarterRecordSums(BaseModel):
+    bets: int
+    won: int
+    ours: float | None = Field(description="Our average chance for these picks")
+    book: float | None = Field(description="The book's average chance for them, cut taken out")
+    returned: float = Field(description="Units back less units staked, one unit a pick at the book's price")
+
+
+class QuarterRecordPart(BaseModel):
+    all: QuarterRecordSums
+    edge: QuarterRecordSums
+
+
+class QuarterRecord(BaseModel):
+    all: QuarterRecordSums = Field(description="Every settled quarter and first-half pick")
+    edge: QuarterRecordSums = Field(description="Only the picks where our chance x the price was over 1")
+    by_market: dict[str, QuarterRecordPart] = Field(default_factory=dict)
+
+
 class CompareGame(BaseModel):
     game_id: int
     away: str
@@ -2472,6 +2517,11 @@ class CompareGame(BaseModel):
     players: list[ComparePlayer]
     estimates: list[CompareEstimate] = Field(
         default_factory=list, description="Our line for every player expected to play 10+ minutes, most points first"
+    )
+    quarters: list[QuarterBet] = Field(
+        default_factory=list,
+        description="iddaa's quarter and first-half bets beside our quarter numbers (app/quarterbook.py); "
+        "shown and kept on record only, not in Kupons",
     )
 
 
