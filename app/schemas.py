@@ -2366,6 +2366,43 @@ class BookLines(BaseModel):
     games: list[BookGame]
 
 
+class LineupWatch(BaseModel):
+    checked: str | None = Field(description="The last time the watch read nba.com's lineups")
+    ok: bool | None = Field(description="Whether that read worked; None before the first")
+    error: str | None
+    teams: int = Field(description="Teams nba.com listed then")
+
+
+class LineupPlayer(BaseModel):
+    nba_id: int | None = Field(description="nba.com's person id")
+    name: str
+    position: str | None = None
+
+
+class LineupLook(BaseModel):
+    at: str = Field(description="When the watch first saw this five (and inactive list)")
+    status: str | None = Field(description="nba.com's lineupStatus: Expected, Confirmed, or Mixed")
+    starters: list[LineupPlayer]
+    inactive: list[LineupPlayer] = Field(description="Players nba.com marks inactive (once confirmed)")
+
+
+class LineupTeam(BaseModel):
+    team: str
+    game: str | None = Field(description="nba.com's game id")
+    tip: str
+    checked: str = Field(description="The last look before tip-off")
+    confirmed_at: str | None = Field(description="The first look that saw the five Confirmed")
+    looks: list[LineupLook] = Field(description="Every change seen, oldest first")
+
+
+class LineupLog(BaseModel):
+    season: int
+    day: int | None
+    days: list[int] = Field(description="Days with saved starting fives")
+    look: LineupWatch
+    teams: list[LineupTeam]
+
+
 class CompareRow(BaseModel):
     """One number of ours beside iddaa's and the result. ✓ (``*_hit``) when the result lands within
     the stat's band of that number (app/bookcompare.py BANDS), judged the same for both sides."""

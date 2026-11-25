@@ -37,6 +37,7 @@ from app import (
     quarterbook,
     quarters,
     schemas,
+    startlog,
 )
 from app import errors as error_reports
 from app.accounts import (
@@ -242,6 +243,10 @@ LINE_LOG_FIRST = 60.0  # the first look after a start, and the retry while the l
 # The iddaa log (app/iddaa.py): in the hours before tip-off, iddaa's NBA lines, each game kept as it
 # stood at tip-off, for the admin comparison with ours. Comparison only. 0 turns it off.
 BOOK_LOG_SECONDS = float(os.getenv("BOOK_LOG_SECONDS", "900"))
+# The starting-five log (app/startlog.py): in the last 90 minutes before each game, nba.com's
+# Expected and Confirmed starters, every change kept, to learn how early and how right they are
+# before a starting-five term uses them. Recorded only. 0 turns it off.
+LINEUP_WATCH_SECONDS = float(os.getenv("LINEUP_WATCH_SECONDS", "300"))
 # Where a player's minutes and points sit in a line log row: [team, *linelog.STATS].
 LINE_MINUTES = 1 + [name for name, _ in linelog.STATS].index("minutes")
 LINE_PTS = 1 + [name for name, _ in linelog.STATS].index("pts")
@@ -472,6 +477,8 @@ def create_app(
     app.state.line_log_league_id = env_int("LINE_LOG_LEAGUE_ID")
     app.state.book_log = {"checked": None, "ok": None, "error": None, "games": 0, "matched": 0}
     app.state.iddaa_transport = None  # tests answer for iddaa
+    app.state.lineup_log = {"checked": None, "ok": None, "error": None, "teams": 0}
+    app.state.lineup_transport = None  # tests answer for nba.com
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
     app.add_middleware(
@@ -981,6 +988,40 @@ def create_app(
             )
         return schemas.BookLines(
             season=season, day=day, days=days, look=schemas.BookLook(**app.state.book_log), games=games
+        )
+
+    @app.post("/api/admin/lineups", response_model=schemas.LineupLog, responses={403: {"model": schemas.ErrorBody}})
+    async def admin_lineups(
+        body: schemas.BookLinesRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.LineupLog:
+        """Admins only: each team's starting five for one NBA day as nba.com listed it before tip-off,
+        every change the watch saw (app/startlog.py), and how its last read of nba.com went."""
+        await admin_user(authorization)
+        season = body.season or current_season(app.state.now())
+        days = await run_in_threadpool(app.state.store.lineup_days, season)
+        day = body.day or (days[-1] if days else None)
+        record = await run_in_threadpool(app.state.store.get_lineups, season, day) if day else None
+        teams = [
+            schemas.LineupTeam(
+                team=PRO_TEAM_ABBREV.get(int(team), ""),
+                game=t.get("game"),
+                tip=t["tip"],
+                checked=t["checked"],
+                confirmed_at=t.get("confirmed_at"),
+                looks=[
+                    schemas.LineupLook(
+                        at=lk["at"],
+                        status=lk["status"],
+                        starters=[schemas.LineupPlayer(nba_id=p[0], name=p[1], position=p[2]) for p in lk["starters"]],
+                        inactive=[schemas.LineupPlayer(nba_id=p[0], name=p[1]) for p in lk["inactive"]],
+                    )
+                    for lk in t.get("looks") or []
+                ],
+            )
+            for team, t in sorted(((record or {}).get("teams") or {}).items(), key=lambda kv: (kv[1]["tip"], kv[0]))
+        ]
+        return schemas.LineupLog(
+            season=season, day=day, days=days, look=schemas.LineupWatch(**app.state.lineup_log), teams=teams
         )
 
     @app.post(
@@ -2051,6 +2092,46 @@ def create_app(
                 logging.getLogger(__name__).warning("iddaa log watch failed", exc_info=True)
             await asyncio.sleep(BOOK_LOG_SECONDS)
 
+    async def lineup_sweep() -> list[int]:
+        """One look at nba.com's starting fives: the days it wrote (none when no game tips off within
+        startlog.LEAD). How the read went is kept in app.state.lineup_log for the admin read, so a
+        host nba.com refuses shows up there."""
+        now = app.state.now()
+        season = current_season(now)
+        raw = await pro_schedule(season)
+        if raw is None:
+            return []
+        sched = parse_schedule(raw)
+        days = startlog.days_to_watch(sched, now)
+        status = app.state.lineup_log
+        written = []
+        for day in days:
+            when = sched.date_of(day)
+            if when is None:
+                continue
+            status["checked"] = now.isoformat(timespec="seconds")
+            try:
+                listed = startlog.parse(await startlog.fetch(when, app.state.lineup_transport))
+            except Exception as exc:  # refused, not there yet or changed: say so and look again next time
+                status.update(ok=False, error=f"{type(exc).__name__}: {exc}"[:300])
+                raise
+            record = await run_in_threadpool(app.state.store.get_lineups, season, day)
+            record = startlog.update(record, sched, day, listed, now)
+            await run_in_threadpool(app.state.store.save_lineups, season, day, record)
+            status.update(ok=True, error=None, teams=len(listed))
+            written.append(day)
+        return written
+
+    app.state.lineup_sweep = lineup_sweep
+
+    async def watch_lineups() -> None:
+        while True:
+            await asyncio.sleep(LINEUP_WATCH_SECONDS)
+            try:
+                await lineup_sweep()
+            except Exception:
+                logging.getLogger(__name__).warning("lineup watch failed", exc_info=True)
+
     async def sat_sweep() -> list[int]:
         """One look for finished nights whose box scores haven't been read for who sat out and why
         (app/benched.py): the nights it saved. A night ESPN can't give in full is tried again next time."""
@@ -2144,6 +2225,7 @@ def create_app(
         box_watch = asyncio.create_task(watch_box()) if BOX_WATCH_SECONDS > 0 else None
         line_watch = asyncio.create_task(watch_line_log()) if LINE_LOG_SECONDS > 0 else None
         book_watch = asyncio.create_task(watch_book_log()) if BOOK_LOG_SECONDS > 0 else None
+        lineup_watch = asyncio.create_task(watch_lineups()) if LINEUP_WATCH_SECONDS > 0 else None
         usage_flush = asyncio.create_task(flush_usage_every_minute())
         quiet_flush = asyncio.create_task(save_quiet_writes_every_minute())
         try:
@@ -2152,7 +2234,7 @@ def create_app(
             quiet_flush.cancel()
             with suppress(Exception):  # the watches' last looks, on a deploy or restart
                 await save_quiet_writes(force=True)
-            for task in (watch, news_watch, pregame_watch, box_watch, line_watch, book_watch):
+            for task in (watch, news_watch, pregame_watch, box_watch, line_watch, book_watch, lineup_watch):
                 if task is not None:
                     task.cancel()
             usage_flush.cancel()

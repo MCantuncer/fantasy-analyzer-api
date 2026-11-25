@@ -459,6 +459,73 @@
         }
       }
     },
+    "/api/admin/lineups": {
+      "post": {
+        "summary": "Admin Lineups",
+        "description": "Admins only: each team's starting five for one NBA day as nba.com listed it before tip-off,\nevery change the watch saw (app/startlog.py), and how its last read of nba.com went.",
+        "operationId": "admin_lineups_api_admin_lineups_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookLinesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LineupLog"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/book-compare": {
       "post": {
         "summary": "Admin Book Compare",
@@ -10376,6 +10443,133 @@
         ],
         "title": "LineupDay"
       },
+      "LineupLog": {
+        "properties": {
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day"
+          },
+          "days": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Days",
+            "description": "Days with saved starting fives"
+          },
+          "look": {
+            "$ref": "#/components/schemas/LineupWatch"
+          },
+          "teams": {
+            "items": {
+              "$ref": "#/components/schemas/LineupTeam"
+            },
+            "type": "array",
+            "title": "Teams"
+          }
+        },
+        "type": "object",
+        "required": [
+          "season",
+          "day",
+          "days",
+          "look",
+          "teams"
+        ],
+        "title": "LineupLog"
+      },
+      "LineupLook": {
+        "properties": {
+          "at": {
+            "type": "string",
+            "title": "At",
+            "description": "When the watch first saw this five (and inactive list)"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status",
+            "description": "nba.com's lineupStatus: Expected, Confirmed, or Mixed"
+          },
+          "starters": {
+            "items": {
+              "$ref": "#/components/schemas/LineupPlayer"
+            },
+            "type": "array",
+            "title": "Starters"
+          },
+          "inactive": {
+            "items": {
+              "$ref": "#/components/schemas/LineupPlayer"
+            },
+            "type": "array",
+            "title": "Inactive",
+            "description": "Players nba.com marks inactive (once confirmed)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "at",
+          "status",
+          "starters",
+          "inactive"
+        ],
+        "title": "LineupLook"
+      },
+      "LineupPlayer": {
+        "properties": {
+          "nba_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nba Id",
+            "description": "nba.com's person id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nba_id",
+          "name"
+        ],
+        "title": "LineupPlayer"
+      },
       "LineupRequest": {
         "properties": {
           "league_id": {
@@ -10527,6 +10721,117 @@
           "injury_status"
         ],
         "title": "LineupSpot"
+      },
+      "LineupTeam": {
+        "properties": {
+          "team": {
+            "type": "string",
+            "title": "Team"
+          },
+          "game": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Game",
+            "description": "nba.com's game id"
+          },
+          "tip": {
+            "type": "string",
+            "title": "Tip"
+          },
+          "checked": {
+            "type": "string",
+            "title": "Checked",
+            "description": "The last look before tip-off"
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed At",
+            "description": "The first look that saw the five Confirmed"
+          },
+          "looks": {
+            "items": {
+              "$ref": "#/components/schemas/LineupLook"
+            },
+            "type": "array",
+            "title": "Looks",
+            "description": "Every change seen, oldest first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "team",
+          "game",
+          "tip",
+          "checked",
+          "confirmed_at",
+          "looks"
+        ],
+        "title": "LineupTeam"
+      },
+      "LineupWatch": {
+        "properties": {
+          "checked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked",
+            "description": "The last time the watch read nba.com's lineups"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ok",
+            "description": "Whether that read worked; None before the first"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "teams": {
+            "type": "integer",
+            "title": "Teams",
+            "description": "Teams nba.com listed then"
+          }
+        },
+        "type": "object",
+        "required": [
+          "checked",
+          "ok",
+          "error",
+          "teams"
+        ],
+        "title": "LineupWatch"
       },
       "LinkedTeam": {
         "properties": {
