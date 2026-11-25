@@ -166,6 +166,18 @@ class QuietStore:
         self.flush()
         return self._inner.book_line_days(season)
 
+    # --- starting fives before tip-off (app/startlog.py) ----------------------------------------
+
+    def get_lineups(self, season: int, day: int) -> dict | None:
+        return self._get(("lineups", season, day), lambda: self._inner.get_lineups(season, day))
+
+    def save_lineups(self, season: int, day: int, body: dict) -> None:
+        self._put(("lineups", season, day), body, "save_lineups", (season, day, body))
+
+    def lineup_days(self, season: int) -> list[int]:
+        self.flush()
+        return self._inner.lineup_days(season)
+
     # --- who sat out (app/benched.py) -----------------------------------------------------------
 
     def sat_out(self, season: int, since: int) -> dict[int, dict]:

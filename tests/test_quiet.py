@@ -139,3 +139,13 @@ def test_its_own_saves_dont_keep_the_database_awake(setup, monkeypatch):
     store.save_pregame(2027, 30, {"v": 2})
     clock.t += 60
     assert not store.due()
+
+
+def test_the_starting_fives_wait_in_memory_and_a_day_list_saves_them_first(setup):
+    store, db, _, _ = setup
+    assert store.get_lineups(2027, 37) is None
+    store.save_lineups(2027, 37, {"teams": {"9": {"looks": []}}})
+    assert store.get_lineups(2027, 37) == {"teams": {"9": {"looks": []}}}
+    assert db.calls == ["get_lineups"]
+    assert store.lineup_days(2027) == [37]  # the admin read sees the waiting night
+    assert db.calls[1:] == ["save_lineups", "lineup_days"]

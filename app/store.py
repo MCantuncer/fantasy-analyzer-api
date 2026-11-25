@@ -69,6 +69,15 @@ create table if not exists book_lines (
     saved_at timestamptz not null default now(),
     primary key (season, day)
 );
+-- Each team's starting five as nba.com listed it before tip-off, every change seen (app/startlog.py),
+-- one row per NBA day. Recorded only: nothing reads it into the model yet.
+create table if not exists lineup_looks (
+    season int not null,
+    day int not null,
+    body jsonb not null,
+    saved_at timestamptz not null default now(),
+    primary key (season, day)
+);
 -- Who did not play each night and ESPN's reason (app/benched.py), per NBA day. Final once saved.
 create table if not exists sat_out (
     season int not null,
@@ -162,6 +171,9 @@ class Store(Protocol):
     def get_book_lines(self, season: int, day: int) -> dict | None: ...
     def save_book_lines(self, season: int, day: int, body: dict) -> None: ...
     def book_line_days(self, season: int) -> list[int]: ...
+    def get_lineups(self, season: int, day: int) -> dict | None: ...
+    def save_lineups(self, season: int, day: int, body: dict) -> None: ...
+    def lineup_days(self, season: int) -> list[int]: ...
     def sat_out(self, season: int, since: int) -> dict[int, dict]: ...
     def save_sat_out(self, season: int, day: int, body: dict) -> None: ...
     def get_recap(self, league_id: int, season: int, period: int) -> dict | None: ...
@@ -188,6 +200,7 @@ class MemoryStore:
         self.pregame: dict[tuple[int, int], dict] = {}
         self.lines: dict[tuple[int, int], tuple[bool, dict]] = {}
         self.book: dict[tuple[int, int], dict] = {}
+        self.lineups: dict[tuple[int, int], dict] = {}
         self.sat: dict[tuple[int, int], dict] = {}
         self.recaps: dict[tuple[int, int, int], dict] = {}
         self.news: dict[str, dict] = {}
@@ -244,6 +257,15 @@ class MemoryStore:
 
     def book_line_days(self, season: int) -> list[int]:
         return sorted(d for s, d in self.book if s == season)
+
+    def get_lineups(self, season: int, day: int) -> dict | None:
+        return self.lineups.get((season, day))
+
+    def save_lineups(self, season: int, day: int, body: dict) -> None:
+        self.lineups[(season, day)] = body
+
+    def lineup_days(self, season: int) -> list[int]:
+        return sorted(d for s, d in self.lineups if s == season)
 
     def sat_out(self, season: int, since: int) -> dict[int, dict]:
         """day -> who did not play and why, for the saved nights of a season from day ``since`` on."""
@@ -409,6 +431,24 @@ class PostgresStore:
     def book_line_days(self, season: int) -> list[int]:
         with self._connect() as conn:
             rows = conn.execute("select day from book_lines where season=%s order by day", (season,)).fetchall()
+        return [day for (day,) in rows]
+
+    def get_lineups(self, season: int, day: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("select body from lineup_looks where season=%s and day=%s", (season, day)).fetchone()
+        return row[0] if row else None
+
+    def save_lineups(self, season: int, day: int, body: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "insert into lineup_looks (season, day, body) values (%s, %s, %s) "
+                "on conflict (season, day) do update set body = excluded.body, saved_at = now()",
+                (season, day, json.dumps(body, separators=(",", ":"))),
+            )
+
+    def lineup_days(self, season: int) -> list[int]:
+        with self._connect() as conn:
+            rows = conn.execute("select day from lineup_looks where season=%s order by day", (season,)).fetchall()
         return [day for (day,) in rows]
 
     def sat_out(self, season: int, since: int) -> dict[int, dict]:
