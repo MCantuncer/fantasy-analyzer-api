@@ -38,6 +38,7 @@ from app import (
     quarters,
     schemas,
     startlog,
+    tunings,
 )
 from app import errors as error_reports
 from app.accounts import (
@@ -1022,6 +1023,84 @@ def create_app(
         ]
         return schemas.LineupLog(
             season=season, day=day, days=days, look=schemas.LineupWatch(**app.state.lineup_log), teams=teams
+        )
+
+    @app.post("/api/admin/tunings", response_model=schemas.TuningLog, responses={403: {"model": schemas.ErrorBody}})
+    async def admin_tunings(
+        body: schemas.TuningsRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.TuningLog:
+        """Admins only: the other ways to call each game (app/tunings.py), scored over the latest saved
+        nights against what happened, with the latest night's games. Recorded only: no tuning moves
+        Our call."""
+        await admin_user(authorization)
+        season = body.season or current_season(app.state.now())
+        days = await run_in_threadpool(app.state.store.tuning_days, season)
+        read = days[-body.nights :]
+        box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
+        scores = tunings.finals(box) if box is not None else {}
+        scored: list[dict] = []
+        moved: list[dict] = []
+        latest: list[schemas.TuningGame] = []
+        for day in reversed(read):
+            record = await run_in_threadpool(app.state.store.get_tunings, season, day) or {}
+            lines = await run_in_threadpool(app.state.store.get_player_lines, season, day) or {}
+            for gid, g in (record.get("games") or {}).items():
+                pts = scores.get(int(gid), {})
+                final = (pts[g["away"]], pts[g["home"]]) if g["away"] in pts and g["home"] in pts else None
+                settled = tunings.settle_game(g, final) if final else {}
+                if final:
+                    scored.append(settled)
+                    moved.extend(tunings.settle_players(g, lines.get("lines") or {}, lines.get("results") or {}))
+                if day == read[-1]:
+                    latest.append(tuning_game(int(gid), day, g, final, settled))
+        return schemas.TuningLog(
+            season=season,
+            days=days,
+            settled=len(scored),
+            scores=[tuning_score(x) for x in tunings.summary(scored, moved)],
+            games=sorted(latest, key=lambda x: (x.tip, x.game_id)),
+        )
+
+    def tuning_score(item: dict) -> schemas.TuningScore:
+        players = item.pop("players", None)
+        return schemas.TuningScore(
+            **item,
+            players=schemas.TuningPlayers(stats=list(tunings.PLAYER_STATS), **players) if players else None,
+        )
+
+    def tuning_game(
+        gid: int, day: int, g: dict, final: tuple[float, float] | None, settled: dict
+    ) -> schemas.TuningGame:
+        abbrev = PRO_TEAM_ABBREV.get
+        return schemas.TuningGame(
+            game_id=gid,
+            day=day,
+            away=abbrev(g["away"], ""),
+            home=abbrev(g["home"], ""),
+            tip=g["tip"],
+            checked=g["checked"],
+            fives=list(g.get("fives") or [None, None]),
+            out_espn=g["out"]["espn"],
+            out_nba=g["out"]["nba"],
+            unmatched=g["out"]["unmatched"],
+            stack=(g.get("stack") or {}).get("team"),
+            final=list(final) if final else None,
+            calls=[
+                schemas.TuningCall(
+                    tuning=name, away=a, home=h, home_chance=p, hit=settled[name]["hit"] if name in settled else None
+                )
+                for name, (a, h, p) in g["calls"].items()
+            ],
+            players=[
+                schemas.TuningMovedPlayer(
+                    player_id=int(pid),
+                    team=abbrev(team, ""),
+                    starts=bool(starts),
+                    start_share=share,
+                    line=dict(zip(tunings.PLAYER_STATS, line, strict=True)),
+                )
+                for pid, (team, starts, share, *line) in (g.get("players") or {}).items()
+            ],
         )
 
     @app.post(
@@ -2124,6 +2203,53 @@ def create_app(
 
     app.state.lineup_sweep = lineup_sweep
 
+    async def tuning_sweep() -> list[int]:
+        """One look for the tunings (app/tunings.py): every game tipping off within startlog.LEAD gets
+        each tuning's call, from what the other watches saved (ESPN's OUT tags, nba.com's fives, iddaa,
+        the line log). Recorded only. The days it wrote; none while the league box is building."""
+        now = app.state.now()
+        season = current_season(now)
+        raw = await pro_schedule(season)
+        if raw is None:
+            return []
+        sched = parse_schedule(raw)
+        days = startlog.days_to_watch(sched, now)
+        if not days:
+            return []
+        box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
+        if box is None or box.scores is None:
+            start_game_box(season)
+            return []
+        names: dict[str, list[tuple[int, int]]] = {}
+        league_id = app.state.line_log_league_id or app.state.sample_league_id
+        if league_id is not None:
+            try:
+                league = await load_league(league_id, season, None, with_fa=True)
+                pool = [*(p for t in league.teams for p in t.roster), *league.free_agents]
+                names = tunings.name_index((p.id, p.pro_team_id, p.name) for p in pool)
+            except Exception:  # without names nba.com's lists can't be matched; the rest still runs
+                logging.getLogger(__name__).warning("tunings: league names unreadable", exc_info=True)
+        book_days = await run_in_threadpool(app.state.store.book_line_days, season)
+        written = []
+        for day in days:
+            past = {}
+            for d in [d for d in book_days if d < day][-2 * tunings.SLUMP_GAMES :]:
+                past[d] = await run_in_threadpool(app.state.store.get_book_lines, season, d) or {}
+            out = await ruled_out(season, day)
+            looks = await run_in_threadpool(app.state.store.get_lineups, season, day)
+            book = await run_in_threadpool(app.state.store.get_book_lines, season, day)
+            lines = await run_in_threadpool(app.state.store.get_player_lines, season, day)
+            waiting = [g for g in sched.games.get(day, []) if now < g.start <= now + startlog.LEAD]
+            inputs = await run_in_threadpool(tunings.gather, box, season, waiting, out, looks, book, lines, names, past)
+            if not inputs:
+                continue
+            record = await run_in_threadpool(app.state.store.get_tunings, season, day)
+            await run_in_threadpool(app.state.store.save_tunings, season, day, tunings.update(record, inputs, now))
+            written.append(day)
+        return written
+
+    app.state.tuning_sweep = tuning_sweep
+
     async def watch_lineups() -> None:
         while True:
             await asyncio.sleep(LINEUP_WATCH_SECONDS)
@@ -2131,6 +2257,10 @@ def create_app(
                 await lineup_sweep()
             except Exception:
                 logging.getLogger(__name__).warning("lineup watch failed", exc_info=True)
+            try:  # after the fives, so each look of the tunings sees the newest
+                await tuning_sweep()
+            except Exception:
+                logging.getLogger(__name__).warning("tunings watch failed", exc_info=True)
 
     async def sat_sweep() -> list[int]:
         """One look for finished nights whose box scores haven't been read for who sat out and why

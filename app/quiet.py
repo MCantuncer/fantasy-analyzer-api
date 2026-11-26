@@ -178,6 +178,18 @@ class QuietStore:
         self.flush()
         return self._inner.lineup_days(season)
 
+    # --- other ways to call each game (app/tunings.py) -----------------------------------------
+
+    def get_tunings(self, season: int, day: int) -> dict | None:
+        return self._get(("tunings", season, day), lambda: self._inner.get_tunings(season, day))
+
+    def save_tunings(self, season: int, day: int, body: dict) -> None:
+        self._put(("tunings", season, day), body, "save_tunings", (season, day, body))
+
+    def tuning_days(self, season: int) -> list[int]:
+        self.flush()
+        return self._inner.tuning_days(season)
+
     # --- who sat out (app/benched.py) -----------------------------------------------------------
 
     def sat_out(self, season: int, since: int) -> dict[int, dict]:
