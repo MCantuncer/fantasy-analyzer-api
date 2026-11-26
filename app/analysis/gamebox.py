@@ -326,6 +326,8 @@ class Box:
     team_games: list[gamescore.TeamGame] = field(default_factory=list, repr=False)  # for calls on past days
     score_start: gamescore.SeasonEnd | None = field(default=None, repr=False)
     lineups: lineupcall.Lineups | None = field(default=None, repr=False)  # who played, for who plays tonight
+    # team -> (day, how concentrated its finishing was that game: finishing_spread), in day order
+    finishing: dict[int, list[tuple[int, float]]] = field(default_factory=dict, repr=False)
     _day_scores: dict[int, gamescore.Scores] = field(default_factory=dict, repr=False, compare=False)
     _gaps: dict[int, float | None] = field(default_factory=dict, repr=False, compare=False)
     _rotations: dict[tuple[int, int], tuple[tuple[int, float], ...]] = field(
@@ -647,7 +649,25 @@ def build(
         score_start=score_start,
         sat=sat or {},
         lineups=lineupcall.build(rows, prior, PTS, MINUTES),
+        finishing=finishing_spread(rows),
     )
+
+
+def finishing_spread(rows: list[GameRow]) -> dict[int, list[tuple[int, float]]]:
+    """Each team's games in day order, with how concentrated its finishing was: the sum over its players
+    of (his share of the team's FGA + 0.44 FTA + TO) squared. One player doing everything gives 1, ten
+    equal players 0.1; NBA teams sit around 0.12-0.17, and the "one-man shows" at the top of that."""
+    use: dict[tuple[int, int], list[float]] = defaultdict(list)
+    days: dict[tuple[int, int], int] = {}
+    for r in rows:
+        use[(r.game, r.team)].append(r.line.get(FGA, 0.0) + USAGE_FTA * r.line.get(FTA, 0.0) + r.line.get(TO, 0.0))
+        days[(r.game, r.team)] = r.day
+    out: dict[int, list[tuple[int, float]]] = defaultdict(list)
+    for (game, team), u in use.items():
+        total = sum(u)
+        if total > 0:
+            out[team].append((days[(game, team)], sum((x / total) ** 2 for x in u)))
+    return {t: sorted(v) for t, v in out.items()}
 
 
 @dataclass(frozen=True)

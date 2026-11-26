@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -196,6 +197,31 @@ def test_crazy_one_believes_the_story_beliefs_and_nothing_else():
     a, h, p = made["crazy_one"]
     assert h - a == pytest.approx((109.3 - 111.1) + 4.0, abs=0.11) and a + h == pytest.approx(220.4, abs=0.11)
     assert p > 0.5 > made["ours_alone"][2]
+
+
+def test_two_one_man_shows_make_crazy_one_believe_in_a_lower_total_not_a_winner():
+    heavy = tunings.TeamForm("HOU", 9, 18, one_man=True)
+    spread = tunings.TeamForm("ATL", 9, 18)
+    assert ["one_man", "", -1.0] in tunings.beliefs(2027, heavy, replace(heavy, code="DAL"), 0.0, None)
+    assert tunings.beliefs(2027, heavy, spread, 0.0, None) == []  # it takes two
+
+    made, _ = tunings.calls(inputs(beliefs=(["one_man", "", -1.0], ["rivalry", "OKC", 3.0])))
+    a, h, p = made["crazy_one"]
+    assert a + h == pytest.approx(220.4 - 1.0, abs=0.11)  # the total moves
+    assert h - a == pytest.approx((109.3 - 111.1) + 3.0, abs=0.11)  # the margin only by the rivalry
+
+
+def test_the_one_man_shows_are_the_leagues_most_concentrated_finishers_with_enough_games():
+    class B:
+        finishing = {
+            t: [(d, 0.12 + 0.002 * t + (0.05 if d == 40 else 0.0)) for d in range(1, 41)] for t in range(1, 31)
+        }
+
+    b = B()
+    b.finishing[31] = [(d, 0.4) for d in range(1, 6)]  # five games only: doesn't count yet
+    tops = tunings.one_man_shows(b, 40)
+    assert tops == set(range(21, 31)) and len(tops) == tunings.ONE_MAN_TOP
+    assert tunings.one_man_shows(b, 5) == set()  # nobody has 10 games before day 5
 
 
 def test_crazy_ones_record_counts_its_bold_calls_and_leads_only_on_a_clear_edge():
