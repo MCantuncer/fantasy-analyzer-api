@@ -38,6 +38,7 @@ from app import (
     quarters,
     schemas,
     startlog,
+    styles,
     tunings,
 )
 from app import errors as error_reports
@@ -418,6 +419,10 @@ def create_app(
     app.state.overviews = TTLCache(120)
     app.state.tx_recent = TTLCache(60)
     app.state.tx_past = TTLCache(6 * 3600, max_items=4096)
+    # Manager styles: a finished day's lineup summary, and the built report per league for half an hour.
+    app.state.style_days = TTLCache(24 * 3600, max_items=4096)
+    app.state.style_reports = TTLCache(30 * 60, max_items=64)
+    app.state.style_fetches = asyncio.Semaphore(4)  # day pages are ~1 MB each: a few at a time
     app.state.players = TTLCache(24 * 3600, max_items=20000)
     app.state.post_times = defaultdict(deque)
     app.state.schedules = TTLCache(SCHEDULE_TTL)
@@ -3190,6 +3195,137 @@ def create_app(
             mvp=mvp,
             pulse=pulse,
             my_team_id=seat.team_id if seat else None,
+        )
+
+    async def style_day(
+        league_id: int, season: int, day: int, current: int, slots: dict[int, int], creds: EspnCredentials | None
+    ) -> styles.DaySummary:
+        # A finished day's lineups never change; only its small summary is kept, never the 1 MB page.
+        key = (league_id, season, credentials_key(creds), day)
+        cached = app.state.style_days.get(key) if day < current else None
+        if cached is not None:
+            return cached
+        async with app.state.style_fetches:
+            raw = await app.state.espn.rosters_on_day(season, league_id, day, creds)
+        summary = await run_in_threadpool(styles.summarize_day, raw, day, slots, season)
+        del raw
+        if day < current:
+            app.state.style_days.set(key, summary)
+        return summary
+
+    @app.post(
+        "/api/manager-styles",
+        response_model=schemas.ManagerStyles,
+        responses={401: {"model": schemas.ErrorBody}},
+    )
+    async def manager_styles(
+        body: schemas.LeagueRequest,
+        authorization: str | None = Header(default=None),
+        x_espn_s2: str | None = Header(default=None),
+        x_espn_swid: str | None = Header(default=None),
+    ) -> schemas.ManagerStyles:
+        """How each manager plays, from what they did this season; plus your win path and this week's read."""
+        user = await current_user(authorization)
+        creds = read_credentials(x_espn_s2, x_espn_swid)
+        season = body.season or current_season()
+        seat = await seat_for(user, body.league_id, season)
+        key = (body.league_id, season, credentials_key(creds))
+        built = app.state.style_reports.get(key)
+        if built is None:
+            raw = app.state.overviews.get(key)
+            if raw is None:
+                raw = await app.state.espn.overview(season, body.league_id, creds)
+                app.state.overviews.set(key, raw)
+            status = raw.get("status") or {}
+            settings = raw.get("settings") or {}
+            current = int(status.get("latestScoringPeriod") or raw.get("scoringPeriodId") or 1)
+            first = int(status.get("firstScoringPeriod") or 1)
+            period = int(status.get("currentMatchupPeriod") or 1)
+            slots = styles.starter_slots(settings)
+            days = range(first, current)
+            summaries = await asyncio.gather(
+                *(style_day(body.league_id, season, d, current, slots, creds) for d in days)
+            )
+            moves = await asyncio.gather(
+                *(period_transactions(body.league_id, season, p, current, creds) for p in range(0, current + 1))
+            )
+            rows, med = await run_in_threadpool(
+                styles.build_styles,
+                raw.get("teams") or [],
+                raw.get("schedule") or [],
+                settings,
+                list(summaries),
+                [t for day in moves for t in day],
+                current,
+                period,
+            )
+            built = (raw, rows, med, period, len(days))
+            app.state.style_reports.set(key, built)
+        raw, rows, med, period, n_days = built
+
+        def record(t: dict) -> str:
+            r = (t.get("record") or {}).get("overall") or {}
+            return f"{r.get('wins', 0)}-{r.get('losses', 0)}" + (f"-{r['ties']}" if r.get("ties") else "")
+
+        info = {int(t["id"]): t for t in raw.get("teams") or []}
+        my_id = seat.team_id if seat else None
+        out_rows = []
+        for r in rows:
+            t = info.get(r.team_id, {})
+            out_rows.append(
+                schemas.ManagerStyleRow(
+                    **{k: v for k, v in vars(r).items() if k != "categories"},
+                    abbrev=t.get("abbrev", ""),
+                    name=t.get("name") or f"{t.get('location', '')} {t.get('nickname', '')}".strip(),
+                    record=record(t),
+                    mine=r.team_id == my_id,
+                    categories=[schemas.StyleCategory(cat=c.cat, won=c.won, weeks=c.weeks) for c in r.categories],
+                )
+            )
+        path = matchup = None
+        me = next((r for r in rows if r.team_id == my_id), None)
+        if me is not None:
+            wp = styles.win_path(me)
+            path = schemas.WinPathOut(**vars(wp))
+            cats = styles.scoring_cats(raw.get("settings") or {})
+            for m in raw.get("schedule") or []:
+                if int(m.get("matchupPeriodId") or 0) != period or "home" not in m or "away" not in m:
+                    continue
+                sides = {int(m["home"]["teamId"]): m["home"], int(m["away"]["teamId"]): m["away"]}
+                if my_id not in sides:
+                    continue
+                opp_id = next(t for t in sides if t != my_id)
+                them = next((r for r in rows if r.team_id == opp_id), None)
+                if them is None:
+                    break
+
+                def scores(side: dict) -> dict:
+                    return (side.get("cumulativeScore") or {}).get("scoreByStat") or {}
+
+                mine, theirs = scores(sides[my_id]), scores(sides[opp_id])
+                live = {
+                    cat: (mine[sid].get("score"), theirs[sid].get("score"))
+                    for sid, cat in cats.items()
+                    if sid in mine and sid in theirs
+                }
+                calls = styles.matchup_calls(me, them, live)
+                matchup = schemas.MatchupRead(
+                    opponent_id=opp_id,
+                    matchup_period=period,
+                    calls=[schemas.MatchupCall(**vars(c)) for c in calls],
+                )
+                break
+        weeks = max((c.weeks for r in rows for c in r.categories), default=0)
+        return schemas.ManagerStyles(
+            league_id=body.league_id,
+            season=season,
+            weeks=weeks,
+            days=n_days,
+            medians=schemas.StyleMedians(**vars(med)),
+            teams=out_rows,
+            my_team_id=my_id,
+            win_path=path,
+            matchup=matchup,
         )
 
     @app.post(
