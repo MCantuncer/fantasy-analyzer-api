@@ -140,15 +140,25 @@ def test_matchup_calls():
         "FT%": (0.760, 0.774),
         "REB": (54, 67),
     }
-    calls = {c.cat: c for c in styles.matchup_calls(me, them, live)}
+    live["STL"] = (9, 11)
+    live["3PM"] = (24, 22)
+    calls = {c.cat: c for c in styles.matchup_calls(me, them, live, days=2.5)}
+    # Four leads are held, whatever the season says about them.
+    assert {c for c, x in calls.items() if x.call == "hold"} == {"TO", "FG%", "PTS", "3PM"}
+    assert calls["TO"].status == "ahead"  # fewer turnovers lead
+    # A majority (5) needs one more, plus a spare: the two cheapest, both categories they rarely win.
     assert calls["BLK"].call == "flip"  # tied, and they never win it
-    assert calls["TO"].call == "hold" and calls["TO"].status == "ahead"  # fewer turnovers lead
-    assert calls["FG%"].call == "hold"
-    assert calls["PTS"].call == "bonus"  # ahead in a category the path lets go
-    assert calls["AST"].call == "fight"
-    assert calls["FT%"].call == "fight"  # their stronghold, but close and on my path
-    assert calls["REB"].call == "let_go"
-    assert calls["STL"].status == "not_started"
+    assert calls["REB"].call == "flip"  # 13 back is about half a day here, and they lose REB 4 weeks in 5
+    assert {c for c, x in calls.items() if x.call == "let_go"} == {"FT%", "STL", "AST"}
+
+
+def test_matchup_calls_before_any_stats_follow_the_season():
+    me = _style(
+        1, {"FG%": 1, "BLK": 1, "AST": 0.6, "TO": 0.6, "FT%": 0.6, "REB": 0.2, "STL": 0.2, "3PM": 0.2, "PTS": 0}
+    )
+    them = _style(2, {c: 0.5 for c in ("FG%", "BLK", "AST", "TO", "FT%", "REB", "STL", "3PM", "PTS")})
+    calls = {c.cat: c.call for c in styles.matchup_calls(me, them, {})}
+    assert calls["FG%"] == "hold" and calls["AST"] == "fight" and calls["PTS"] == "let_go"
 
 
 def test_labels():

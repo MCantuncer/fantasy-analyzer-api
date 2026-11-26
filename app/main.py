@@ -3308,7 +3308,8 @@ def create_app(
                     for sid, cat in cats.items()
                     if sid in mine and sid in theirs
                 }
-                calls = styles.matchup_calls(me, them, live)
+                played = len(sides[my_id].get("pointsByScoringPeriod") or {})
+                calls = styles.matchup_calls(me, them, live, days=max(1.0, played - 0.5))
                 matchup = schemas.MatchupRead(
                     opponent_id=opp_id,
                     matchup_period=period,

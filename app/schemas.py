@@ -2881,7 +2881,7 @@ class MatchupCall(BaseModel):
     mine: float | None
     theirs: float | None
     status: Literal["ahead", "behind", "tied", "not_started"]
-    call: Literal["flip", "hold", "fight", "bonus", "let_go"]
+    call: Literal["flip", "hold", "fight", "let_go"]
     their_share: float = Field(description="share of finished weeks the opponent won this category")
 
 

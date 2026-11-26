@@ -40,9 +40,9 @@ LOW_VOLUME_SHARE = 0.9
 CLOSED_DECLINES = 2
 # The win path aims at this many categories a week: a majority of nine.
 PATH_TARGET = 5
-# A live category is "close" under this share of the bigger total (counting) or this gap (percentages).
-CLOSE_SHARE = 0.08
-CLOSE_PCT = 0.015
+# Weekly calls: about how far one day moves a team's FG% or FT%, and categories chased beyond a bare majority.
+PCT_DAY = 0.02
+SPARE_CATS = 1
 CHASE_MIN_GAMES = 3
 CHASE_MIN_POOL_GAMES = 5
 # Season per-game line keys kept from a day page: the nine categories plus attempts.
@@ -414,44 +414,72 @@ class CategoryCall:
     mine: float | None
     theirs: float | None
     status: str  # ahead / behind / tied / not_started
-    call: str  # flip / hold / fight / bonus / let_go
+    call: str  # flip / hold / fight / let_go
     their_share: float  # how often they win this category
 
 
-def _status(cat: str, mine: float | None, theirs: float | None) -> tuple[str, bool]:
-    if mine is None or theirs is None:
-        return "not_started", True
-    lower_wins = cat == "TO"
-    if mine == theirs:
-        return "tied", True
-    ahead = mine < theirs if lower_wins else mine > theirs
+def _behind_by(cat: str, mine: float, theirs: float, days: float) -> float:
+    """How far behind, in days of the two teams' own pace this week (0 when tied or ahead).
+
+    A percentage is measured against PCT_DAY, about what one day can move it.
+    """
+    gap = (mine - theirs) if cat == "TO" else (theirs - mine)
+    if gap <= 0:
+        return 0.0
     if cat.endswith("%"):
-        close = abs(mine - theirs) < CLOSE_PCT
-    else:
-        close = abs(mine - theirs) <= CLOSE_SHARE * max(abs(mine), abs(theirs), 1.0)
-    return ("ahead" if ahead else "behind"), close
+        return gap / PCT_DAY
+    per_day = (abs(mine) + abs(theirs)) / 2 / max(days, 1.0)
+    return gap / per_day if per_day else float("inf")
 
 
-def matchup_calls(me: ManagerStyle, them: ManagerStyle, live: dict[str, tuple[float, float]]) -> list[CategoryCall]:
-    """Category by category: flip the cheap ones, hold your leads, don't chase what they always win."""
+def matchup_calls(
+    me: ManagerStyle, them: ManagerStyle, live: dict[str, tuple[float, float]], days: float = 1.0
+) -> list[CategoryCall]:
+    """This week's cheapest way to a majority of the categories.
+
+    Hold every lead. Rank the rest by how far behind you are (in days of this week's
+    pace), cheaper where this opponent usually loses the category, and go after the
+    cheapest ones until a majority plus a spare; let the rest go. A category the
+    opponent wins in 20% of weeks or less is a flip. Before any stats (a Monday
+    morning) the season decides: lock = hold, swing = fight, let go = let go.
+    """
     path = win_path(me)
     share = {r.cat: r.share for r in them.categories}
-    out = []
-    for r in me.categories:
-        mine, theirs = live.get(r.cat, (None, None))
-        status, close = _status(r.cat, mine, theirs)
-        their = share.get(r.cat, 0.5)
-        if status in ("tied", "behind") and close and their <= GIVES_SHARE:
-            call = "flip"  # close, and they almost never win it: the cheapest category this week
-        elif status == "ahead" and r.cat in path.let_go:
-            call = "bonus"  # take it if it comes, don't spend moves on it
-        elif status == "ahead" and (r.cat in path.lock or their <= GIVES_SHARE or not close):
-            call = "hold"
-        elif r.cat in path.let_go:
-            call = "let_go"
-        elif their >= WINS_SHARE and r.cat not in path.lock and not close:
-            call = "let_go"  # their stronghold and not within reach
+    cats = [r.cat for r in me.categories]
+    majority = len(cats) // 2 + 1
+    calls: dict[str, str] = {}
+    status: dict[str, str] = {}
+    cost: dict[str, float] = {}
+    for cat in cats:
+        mine, theirs = live.get(cat, (None, None))
+        if mine is None or theirs is None:
+            status[cat] = "not_started"
+            calls[cat] = "hold" if cat in path.lock else "let_go" if cat in path.let_go else "fight"
+            continue
+        if mine == theirs:
+            status[cat] = "tied"
         else:
-            call = "fight"
-        out.append(CategoryCall(r.cat, mine, theirs, status, call, round(their, 2)))
-    return out
+            ahead = mine < theirs if cat == "TO" else mine > theirs
+            status[cat] = "ahead" if ahead else "behind"
+        if status[cat] == "ahead":
+            calls[cat] = "hold"
+        else:
+            cost[cat] = _behind_by(cat, mine, theirs, days) * (0.5 + share.get(cat, 0.5))
+    if cost:
+        need = max(0, majority - sum(1 for c in calls.values() if c == "hold")) + SPARE_CATS
+        for i, cat in enumerate(sorted(cost, key=lambda c: (cost[c], c))):
+            if i < need:
+                calls[cat] = "flip" if share.get(cat, 0.5) <= GIVES_SHARE else "fight"
+            else:
+                calls[cat] = "let_go"
+    return [
+        CategoryCall(
+            cat,
+            live.get(cat, (None, None))[0],
+            live.get(cat, (None, None))[1],
+            status[cat],
+            calls[cat],
+            round(share.get(cat, 0.5), 2),
+        )
+        for cat in cats
+    ]
