@@ -68,7 +68,7 @@ def test_calls_blend_live_with_the_book_and_shift_the_book_for_the_stack():
     assert made["rivalry"][1] - made["rivalry"][0] == pytest.approx(tunings.margin_of(fair + 0.12), abs=0.11)
 
     alone, none = tunings.calls(inputs())
-    assert none is None and set(alone) == {"live", "ours_alone"}  # no price: no book, no stack
+    assert none is None and set(alone) == {"live", "ours_alone", "crazy_one"}  # no price: no book, no stack
     assert alone["live"][2] == alone["ours_alone"][2]
 
 
@@ -94,7 +94,7 @@ def test_a_look_after_tip_off_keeps_the_last_one_before_it():
     before = tunings.update(None, [(9, inputs(book=BOOK))], TIP - timedelta(minutes=20))
     g = before["games"]["9"]
     assert g["checked"] == (TIP - timedelta(minutes=20)).isoformat(timespec="seconds")
-    assert set(g["calls"]) == {"live", "ours_alone", "book"} and g["stack"] is None
+    assert set(g["calls"]) == {"live", "ours_alone", "crazy_one", "book"} and g["stack"] is None
     after = tunings.update(before, [(9, inputs(live_call=(90.0, 140.0)))], TIP + timedelta(minutes=1))
     assert after == before
 
@@ -147,7 +147,7 @@ def test_the_watch_records_tunings_before_tip_off_and_admins_read_them_scored(re
     store.save_book_lines(2027, day, {"games": {str(game.id): BOOK}})
     assert asyncio.run(app.state.tuning_sweep()) == [day]
     rec = store.get_tunings(2027, day)["games"][str(game.id)]
-    assert set(rec["calls"]) == {"live", "ours_alone", "book"}
+    assert set(rec["calls"]) == {"live", "ours_alone", "crazy_one", "book"}
     assert rec["fives"] == [None, None] and rec["players"] == {}  # nba.com not read yet: nothing moves
 
     assert signed_in(app, team_id=None).post("/api/admin/tunings", json={"season": 2027}).status_code == 403
@@ -170,3 +170,61 @@ def test_the_watch_records_tunings_before_tip_off_and_admins_read_them_scored(re
     assert scores["live"]["games"] == 1 and scores["book"]["hits"] == 1  # the book had the home side
     played = next(g for g in got["games"] if g["game_id"] == game.id)
     assert played["final"] == [100.0, 120.0] and all(c["hit"] is not None for c in played["calls"])
+
+
+def test_crazy_one_believes_the_story_beliefs_and_nothing_else():
+    okc = form("OKC", 8, 16, SLUMP)  # fallen contender in a slump, lost its last 2
+    minn = form("MIN", 13, 18, [(True, 0.5)] * 5, stars={7})
+    got = tunings.beliefs(2027, minn, okc, -1.8, tunings.stack(2027, minn, okc, set()))
+    assert [b[:2] for b in got] == [["rivalry", "OKC"], ["slump", "OKC"]]
+    p_okc = 1 - gamescore.win_chance(1.8)
+    assert got[0][2] == pytest.approx(tunings.margin_of(p_okc + 0.12) - tunings.margin_of(p_okc), abs=0.01)
+    assert 3.5 < got[0][2] < 4.5  # +12 wins per 100 near a coin flip: about 4 points
+    assert got[1][2] == tunings.SLUMP_MARGIN
+
+    # A favourite on a 3-game losing streak bounces; a big favourite more. Tankers sink late.
+    cold = form("BOS", 10, 18, [(True, 0.6), (True, 0.6), (False, 0.6), (False, 0.6), (False, 0.6)])
+    assert ["bounce", "BOS", 0.65] in tunings.beliefs(2027, form("ATL", 9, 18), cold, 3.0, None)
+    assert ["bounce", "BOS", 2.1] in tunings.beliefs(2027, form("ATL", 9, 18), cold, 7.0, None)
+    underdog = tunings.beliefs(2027, form("ATL", 9, 18), cold, -1.0, None)
+    assert not [b for b in underdog if b[0] == "bounce"]  # an underdog's streak is no story
+    assert underdog == [["slump", "BOS", 0.5]]  # .683 last season, 10-18 now and cold
+    tank = form("WSH", 15, 60)
+    assert tunings.beliefs(2027, tank, form("ATL", 30, 60), 0.0, None) == [["tank", "WSH", -1.5]]
+
+    made, _ = tunings.calls(inputs(beliefs=(["rivalry", "OKC", 3.0], ["tank", "MIN", -1.0])))
+    a, h, p = made["crazy_one"]
+    assert h - a == pytest.approx((109.3 - 111.1) + 4.0, abs=0.11) and a + h == pytest.approx(220.4, abs=0.11)
+    assert p > 0.5 > made["ours_alone"][2]
+
+
+def test_crazy_ones_record_counts_its_bold_calls_and_leads_only_on_a_clear_edge():
+    def game(ours_margin: float, crazy_chance: float) -> dict:
+        return {"calls": {"live": [110.0, 110.0 + ours_margin, 0.5], "crazy_one": [0.0, 0.0, crazy_chance]}}
+
+    # Our call leaned away by 10 (home 21%); Crazy One backed home a little or a lot, home won each time.
+    wins = [(game(-10.0, c), (100.0, 110.0)) for c in (0.55, 0.6, 0.52, 0.58, 0.56, 0.61)]
+    rec = tunings.crazy_record(wins)
+    assert rec["games"] == 6 and rec["crazy_hits"] == 6 and rec["ours_hits"] == 0
+    assert rec["edge_low"] > 0 and rec["leading"] is True
+    assert len(rec["bold"]) == 6 and all(hit for _, _, hit in rec["bold"])
+
+    rec = tunings.crazy_record([*wins, *((game(-10.0, 0.9), (110.0, 100.0)) for _ in range(3))])
+    assert rec["crazy_hits"] == 6 and rec["leading"] is False  # three loud misses: the range crosses zero
+    assert tunings.crazy_record([])["edge"] is None
+
+
+def test_crazy_ones_world_reads_the_days_calls_for_anyone_with_estimates(recorded):
+    app, store, sched = _app(recorded)
+    app.state.line_log_league_id = LEAGUE_ID
+    day = min(d for d, gs in sched.games.items() if gs and d >= 3)
+    game = sched.games[day][0]
+    app.state.now = lambda: game.start - timedelta(minutes=45)
+    assert asyncio.run(app.state.tuning_sweep()) == [day]
+    admin = boss(app)
+    got = admin.post("/api/crazy-one", json={"season": 2027}).json()
+    assert got["day"] == day and got["record"]["games"] == 0 and got["record"]["leading"] is False
+    first = got["games"][0]
+    assert {"ours", "crazy", "beliefs", "swing"} <= set(first) and first["final"] is None
+    swings = [abs(g["swing"]) for g in got["games"]]
+    assert swings == sorted(swings, reverse=True)
