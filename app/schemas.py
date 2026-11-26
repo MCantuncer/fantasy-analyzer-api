@@ -2826,3 +2826,78 @@ class UsageReport(BaseModel):
     verified_teams: int
     followed_leagues: int
     days: list[UsageDay] = Field(description="Most recent first; days with nothing are left out")
+
+
+class StyleCategory(BaseModel):
+    cat: str
+    won: float = Field(description="weeks won, a tie counts half")
+    weeks: int
+
+
+class ManagerStyleRow(BaseModel):
+    team_id: int
+    abbrev: str
+    name: str
+    record: str
+    mine: bool = False
+    activity: Literal["waiver_hawk", "streamer", "steady_hands", "draft_loyalist", "set_and_forget"]
+    lineup: Literal["sharp", "steady", "leaks_starts", "low_volume"]
+    door: Literal["open", "closed", "unknown"]
+    adds: int
+    adds_per_week: float
+    quick_drops: int = Field(description="adds dropped again within a week")
+    faab_spent: int
+    bids_lost: int
+    starts_per_week: float
+    start_share: float = Field(description="games started / the most the best lineup could have started")
+    missed_starts: int
+    lineup_moves_per_week: float
+    ir_moves: int
+    trades: int
+    declined: int
+    categories: list[StyleCategory]
+    wins: list[str] = Field(description="categories won in 80%+ of finished weeks")
+    gives_away: list[str] = Field(description="categories won in 20% or less of finished weeks")
+    chases: list[str] = Field(description="categories their pickups brought, against the players they dropped")
+
+
+class StyleMedians(BaseModel):
+    adds_per_week: float
+    starts_per_week: float
+    lineup_moves_per_week: float
+    start_share: float
+
+
+class WinPathOut(BaseModel):
+    lock: list[str]
+    swing: list[str]
+    let_go: list[str]
+    adds_bring: list[str]
+    adds_should_bring: list[str]
+
+
+class MatchupCall(BaseModel):
+    cat: str
+    mine: float | None
+    theirs: float | None
+    status: Literal["ahead", "behind", "tied", "not_started"]
+    call: Literal["flip", "hold", "fight", "let_go"]
+    their_share: float = Field(description="share of finished weeks the opponent won this category")
+
+
+class MatchupRead(BaseModel):
+    opponent_id: int
+    matchup_period: int
+    calls: list[MatchupCall]
+
+
+class ManagerStyles(BaseModel):
+    league_id: int
+    season: int
+    weeks: int = Field(description="finished matchup weeks the categories are read from")
+    days: int = Field(description="days of lineups and moves read")
+    medians: StyleMedians
+    teams: list[ManagerStyleRow]
+    my_team_id: int | None = None
+    win_path: WinPathOut | None = None
+    matchup: MatchupRead | None = None
