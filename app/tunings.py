@@ -33,7 +33,9 @@ A day's record (JSON keys as strings):
         "calls": {tuning: [away points, home points, home chance]},
         "beliefs": [[belief, team code, points toward that team]],   what moved Crazy One's call; team
                                                                      code "" for the game's total
-        "players": {player: [team, starts, start share, *PLAYER_STATS]}}}}     ours_alone's moved lines
+        "players": {player: [team, starts, start share, *PLAYER_STATS]},     ours_alone's moved lines
+        "booms": [[player, team, name, stat, line, bar, ours, crazy, [[belief, value, push]]]]}}}
+                                                                     Crazy One's boom calls (app/booms.py)
 
 Live's player lines are the line log's (app/linelog.py); only the lines ours_alone moves are kept here.
 """
@@ -46,7 +48,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from statistics import NormalDist
 
-from app import iddaa
+from app import booms, iddaa
 from app.analysis import gamescore
 from app.analysis.gamebox import Box
 from app.espn.parse import PRO_TEAM_ABBREV
@@ -279,6 +281,7 @@ class GameInputs:
     lines: dict[int, tuple[int, dict[str, float]]] | None = None  # player -> (team, Live's line by stat)
     share: dict[int, float] | None = None  # player -> his start share lately
     beliefs: tuple[list, ...] = ()  # Crazy One's (beliefs()), [belief, team code, points toward it]
+    booms: tuple[list, ...] = ()  # Crazy One's boom calls (app/booms.py game_calls)
 
 
 def moved_lines(g: GameInputs) -> dict[str, list]:
@@ -352,6 +355,7 @@ def update(record: dict | None, day_games: Iterable[tuple[int, GameInputs]], now
             "calls": made,
             "beliefs": [list(b) for b in g.beliefs],
             "players": moved_lines(g),
+            "booms": [list(b) for b in g.booms],
         }
     return out
 
@@ -522,10 +526,11 @@ def gather(
     lines: dict | None,
     names: dict[str, list[tuple[int, int]]],
     past_books: dict[int, dict],
+    who: dict[int, str] | None = None,
 ) -> list[tuple[int, GameInputs]]:
     """Each game's inputs from what the other watches saved: ESPN's OUT tags (``out_espn``), nba.com's
     fives (``looks``, app/startlog.py), iddaa (``book``, app/iddaa.py), Live's player lines (``lines``,
-    app/linelog.py) and the league's players by name (``names``)."""
+    app/linelog.py) and the league's players by name (``names``) and by id (``who``)."""
     index = {name: i for i, (name, _) in enumerate(LINE_STATS)}
     live_lines = {
         int(pid): (row[0], {s: row[1 + index[s]] for s in PLAYER_STATS})
@@ -586,6 +591,14 @@ def gather(
                     lines={p: v for p, v in live_lines.items() if v[0] in teams},
                     share=share,
                     beliefs=tuple(believed),
+                    booms=tuple(
+                        booms.game_calls(
+                            {p: v for p, v in live_lines.items() if v[0] in teams},
+                            box.form,
+                            who or {},
+                            out_espn | out_nba,
+                        )
+                    ),
                 ),
             )
         )

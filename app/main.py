@@ -27,6 +27,7 @@ from app import (
     benched,
     billing,
     bookcompare,
+    booms,
     iddaa,
     linelog,
     liveline,
@@ -1087,8 +1088,24 @@ def create_app(
 
         finished: list[tuple[dict, tuple[float, float]]] = []
         shown: list[schemas.CrazyGame] = []
+        stat_col = {name: i for i, (name, _) in enumerate(linelog.STATS)}
+        boom_nights: list[tuple[int, list[tuple[dict, list, float | None, bool | None]]]] = []
+        shown_booms: list[tuple[dict, list, float | None, bool | None]] = []
         for d in days[-body.nights :] + ([day] if day is not None and day not in days[-body.nights :] else []):
             record = await run_in_threadpool(app.state.store.get_tunings, season, d) or {}
+            night = [(gid, g) for gid, g in (record.get("games") or {}).items() if g.get("booms")]
+            if night:
+                results = (await run_in_threadpool(app.state.store.get_player_lines, season, d) or {}).get(
+                    "results"
+                ) or {}
+                games_of = dict(night)
+                called = [
+                    ({**games_of[gid], "gid": gid, "day": d}, b, *booms.outcome(b, results, stat_col))
+                    for gid, b in booms.night_picks(night)
+                ]
+                boom_nights.append((d, called))
+                if d == day:
+                    shown_booms = called
             for gid, g in (record.get("games") or {}).items():
                 g = {**g, "gid": gid, "day": d}
                 crazy, ours = (g.get("calls") or {}).get(tunings.CRAZY_ONE), tunings.ours_of(g)
@@ -1131,12 +1148,56 @@ def create_app(
             )
             for g, swing, hit in sorted(rec.pop("bold"), key=lambda x: (-x[0]["day"], x[0]["tip"]))
         ]
+        settled = [(d, [c for c in called if c[3] is not None]) for d, called in boom_nights]
+        settled = [(d, called) for d, called in settled if called]
+        boom_rec = booms.record([[(b[6], hit) for _, b, _, hit in called] for _, called in settled])
+
+        def boom_call(g: dict, b: list, got: float | None, hit: bool | None) -> schemas.CrazyBoom:
+            pid, team, name, stat, line, bar, ours, crazy, why = b
+            home = team == g["home"]
+            return schemas.CrazyBoom(
+                game_id=int(g["gid"]),
+                day=g["day"],
+                player=pid,
+                name=name,
+                team=abbrev(team, ""),
+                opponent=abbrev(g["away"] if home else g["home"], ""),
+                home=home,
+                tip=g["tip"],
+                stat=stat,
+                line=line,
+                bar=bar,
+                ours=ours,
+                crazy=crazy,
+                beliefs=[schemas.CrazyBoomBelief(belief=k, value=v, push=p) for k, v, p in why],
+                got=got,
+                boom=hit,
+            )
+
         return schemas.CrazyOne(
             season=season,
             day=day,
             days=days,
             games=sorted(shown, key=lambda x: (-abs(x.swing), x.tip)),
             record=schemas.CrazyRecord(**rec, bold=bold),
+            booms=[boom_call(*c) for c in shown_booms],
+            boom_record=schemas.CrazyBoomRecord(
+                **boom_rec,
+                by_night=[
+                    schemas.CrazyBoomNight(
+                        day=d,
+                        caught=sum(bool(hit) for *_, hit in called),
+                        expected=round(sum(b[6] for _, b, _, _ in called), 2),
+                        picks=[
+                            schemas.CrazyBoomPick(
+                                player=b[0], name=b[2], team=abbrev(b[1], ""), stat=b[3], ours=b[6], boom=bool(hit)
+                            )
+                            for _, b, _, hit in called
+                        ],
+                    )
+                    for d, called in reversed(settled)
+                ],
+            ),
         )
 
     def tuning_score(item: dict) -> schemas.TuningScore:
@@ -2299,12 +2360,14 @@ def create_app(
             start_game_box(season)
             return []
         names: dict[str, list[tuple[int, int]]] = {}
+        who: dict[int, str] = {}
         league_id = app.state.line_log_league_id or app.state.sample_league_id
         if league_id is not None:
             try:
                 league = await load_league(league_id, season, None, with_fa=True)
                 pool = [*(p for t in league.teams for p in t.roster), *league.free_agents]
                 names = tunings.name_index((p.id, p.pro_team_id, p.name) for p in pool)
+                who = {p.id: p.name for p in pool}
             except Exception:  # without names nba.com's lists can't be matched; the rest still runs
                 logging.getLogger(__name__).warning("tunings: league names unreadable", exc_info=True)
         book_days = await run_in_threadpool(app.state.store.book_line_days, season)
@@ -2318,7 +2381,9 @@ def create_app(
             book = await run_in_threadpool(app.state.store.get_book_lines, season, day)
             lines = await run_in_threadpool(app.state.store.get_player_lines, season, day)
             waiting = [g for g in sched.games.get(day, []) if now < g.start <= now + startlog.LEAD]
-            inputs = await run_in_threadpool(tunings.gather, box, season, waiting, out, looks, book, lines, names, past)
+            inputs = await run_in_threadpool(
+                tunings.gather, box, season, waiting, out, looks, book, lines, names, past, who
+            )
             if not inputs:
                 continue
             record = await run_in_threadpool(app.state.store.get_tunings, season, day)

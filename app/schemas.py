@@ -2527,6 +2527,66 @@ class CrazyRecord(BaseModel):
     bold: list[CrazyBold] = Field(description="Its calls 10+ points of win chance from Our call, newest first")
 
 
+class CrazyBoomBelief(BaseModel):
+    belief: Literal["hot", "swings", "minutes", "done_it"] = Field(
+        description="hot hand, wild swings, minutes rollercoaster, done it lately (app/booms.py)"
+    )
+    value: float = Field(
+        description="What he did: hot, points a game over his last 3; swings, his points' spread over his "
+        "last 10; minutes, his minutes' spread; done_it, his best rebound game of his last 10"
+    )
+    push: float = Field(description="Boom chance it adds to Crazy One's")
+
+
+class CrazyBoom(BaseModel):
+    """One of Crazy One's boom calls: a player he thinks can go way over his line tonight."""
+
+    game_id: int
+    day: int
+    player: int
+    name: str
+    team: str
+    opponent: str
+    home: bool
+    tip: str
+    stat: Literal["pts", "reb"]
+    line: float = Field(description="Our line (Live's, as the line log saved it)")
+    bar: int = Field(description="What counts as a boom: points 1.5x and 8 over, rebounds 1.6x and 5 over")
+    ours: float = Field(description="Our chance he gets to the bar")
+    crazy: float = Field(description="Crazy One's chance")
+    beliefs: list[CrazyBoomBelief]
+    got: float | None = Field(default=None, description="What he got; None until settled or if he didn't play")
+    boom: bool | None = None
+
+
+class CrazyBoomPick(BaseModel):
+    player: int
+    name: str
+    team: str
+    stat: Literal["pts", "reb"]
+    ours: float
+    boom: bool
+
+
+class CrazyBoomNight(BaseModel):
+    day: int
+    caught: int
+    expected: float = Field(description="Booms Our chance expected of the same calls")
+    picks: list[CrazyBoomPick]
+
+
+class CrazyBoomRecord(BaseModel):
+    nights: int = Field(description="Settled nights")
+    picks: int
+    caught: int = Field(description="Calls that boomed")
+    expected: float = Field(description="Booms Our chance expected of the same calls")
+    edge: float | None = Field(default=None, description="Booms caught over expected, a night")
+    edge_low: float | None = Field(default=None, description="95% range, low end")
+    edge_high: float | None = None
+    leading: bool = Field(description="True only when the whole range is above zero")
+    by_night: list[CrazyBoomNight] = Field(description="Settled nights, newest first")
+
+
 class CrazyOne(BaseModel):
     """Crazy One: a persona that believes what the data backs on average but not every season.
     Never Our call."""
@@ -2536,6 +2596,10 @@ class CrazyOne(BaseModel):
     days: list[int] = Field(description="Days with Crazy One's calls")
     games: list[CrazyGame] = Field(description="The day's games, biggest disagreement with Our call first")
     record: CrazyRecord
+    booms: list[CrazyBoom] = Field(
+        default_factory=list, description="The day's boom calls: top 5 points and top 5 rebounds by Crazy One's chance"
+    )
+    boom_record: CrazyBoomRecord | None = None
 
 
 class CompareRow(BaseModel):

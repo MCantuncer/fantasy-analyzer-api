@@ -124,6 +124,7 @@ ROTATION_RECENT = 3
 ROTATION_REGULAR = 12.0
 ROTATION_GAMES = 6
 ROTATION_WINDOW, ROTATION_PLAYED = 5, 4
+BOOM_WINDOW = 10  # Form.last: the games Crazy One's boom calls read (app/booms.py)
 # Who was missing in his last games. His minutes lately already hold the games a teammate sat:
 BACK_SHARE = -0.058  # per minute of regulars back from an absence, x (1 - his minutes / BENCH_MINUTES)
 OLD_OUT_SHARE = -0.049  # per minute of teammates ruled out who already missed a game, x the same
@@ -295,6 +296,9 @@ class Form:
     minutes_recent: float | None = None  # a game over his last ROTATION_RECENT games
     days: tuple[int, ...] = ()  # the days of his last ROTATION_WINDOW games
     games: int = 0  # games played this season
+    # his last BOOM_WINDOW games this season, oldest first: (minutes, points, rebounds); Crazy One's boom
+    # calls (app/booms.py) read how much they swing
+    last: tuple[tuple[float, float, float], ...] = ()
 
 
 Carry = dict[float, list[float]]  # half-life -> [weight, then _DECAY_ROW], decayed to the end of a season
@@ -571,6 +575,7 @@ def build(
             minutes_recent=sum(r.line[MINUTES] for r in games[-ROTATION_RECENT:]) / len(games[-ROTATION_RECENT:]),
             days=tuple(r.day for r in games[-ROTATION_WINDOW:]),
             games=len(games),
+            last=tuple((r.line[MINUTES], r.line[PTS], r.line[REB]) for r in games[-BOOM_WINDOW:]),
         )
     # Defense: what all its opponents made over what they usually make, with DEFENSE_PRIOR_GAMES
     # average team games blended in.
