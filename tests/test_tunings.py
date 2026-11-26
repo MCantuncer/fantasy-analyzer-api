@@ -254,3 +254,4 @@ def test_crazy_ones_world_reads_the_days_calls_for_anyone_with_estimates(recorde
     assert {"ours", "crazy", "beliefs", "swing"} <= set(first) and first["final"] is None
     swings = [abs(g["swing"]) for g in got["games"]]
     assert swings == sorted(swings, reverse=True)
+
