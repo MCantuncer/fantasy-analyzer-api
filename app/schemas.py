@@ -2403,6 +2403,76 @@ class LineupLog(BaseModel):
     teams: list[LineupTeam]
 
 
+class TuningsRequest(BaseModel):
+    season: int | None = Field(default=None, description="ESPN season (the year it ends); the current one when unset")
+    nights: int = Field(default=30, ge=1, le=200, description="How many of the latest saved nights to score")
+
+
+class TuningPlayers(BaseModel):
+    lines: int = Field(description="Player lines ours_alone moved that have a result")
+    stats: list[str] = Field(description="The stats below, in order")
+    tuned_miss: list[float] = Field(description="Average |result - moved line| per stat")
+    live_miss: list[float] = Field(description="Average |result - Live's line| per stat, same players")
+
+
+class TuningScore(BaseModel):
+    """One tuning over the settled games (app/tunings.py summary)."""
+
+    tuning: str = Field(description="live, ours_alone, book or rivalry")
+    games: int
+    hits: int | None = Field(default=None, description="Winners called right")
+    loss: float | None = Field(default=None, description="Average log loss of its home win chance (lower is better)")
+    brier: float | None = None
+    margin_miss: float | None = Field(default=None, description="Average |final margin - its margin|")
+    total_miss: float | None = Field(default=None, description="Average |final total - its total|")
+    edge: float | None = Field(default=None, description="Live's log loss less its own, a game (+: better than Live)")
+    edge_low: float | None = Field(default=None, description="95% range of the edge, low end")
+    edge_high: float | None = None
+    leading: bool | None = Field(default=None, description="True only when the whole range is above zero")
+    players: TuningPlayers | None = None
+
+
+class TuningCall(BaseModel):
+    tuning: str
+    away: float = Field(description="Its points for the away team")
+    home: float
+    home_chance: float
+    hit: bool | None = Field(default=None, description="Winner right, once final")
+
+
+class TuningMovedPlayer(BaseModel):
+    player_id: int
+    team: str
+    starts: bool = Field(description="nba.com lists him in tonight's five")
+    start_share: float | None = Field(description="How often he started lately")
+    line: dict[str, float] = Field(description="ours_alone's line: minutes, pts, reb, ast, three_pm")
+
+
+class TuningGame(BaseModel):
+    game_id: int
+    day: int
+    away: str
+    home: str
+    tip: str
+    checked: str = Field(description="The last look before tip-off")
+    fives: list[str | None] = Field(description="nba.com's lineup status, away then home")
+    out_espn: list[int]
+    out_nba: list[int]
+    unmatched: list[str] = Field(description="nba.com's inactive names we couldn't find in the league")
+    stack: str | None = Field(default=None, description="The team the rivalry stack backs, when it fires")
+    final: list[float] | None = Field(default=None, description="Away and home points, once final")
+    calls: list[TuningCall]
+    players: list[TuningMovedPlayer]
+
+
+class TuningLog(BaseModel):
+    season: int
+    days: list[int] = Field(description="Days with saved tunings")
+    settled: int = Field(description="Final games scored")
+    scores: list[TuningScore]
+    games: list[TuningGame] = Field(description="The latest night's games, newest night first")
+
+
 class CompareRow(BaseModel):
     """One number of ours beside iddaa's and the result. ✓ (``*_hit``) when the result lands within
     the stat's band of that number (app/bookcompare.py BANDS), judged the same for both sides."""

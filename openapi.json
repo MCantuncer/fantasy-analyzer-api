@@ -526,6 +526,73 @@
         }
       }
     },
+    "/api/admin/tunings": {
+      "post": {
+        "summary": "Admin Tunings",
+        "description": "Admins only: the other ways to call each game (app/tunings.py), scored over the latest saved\nnights against what happened, with the latest night's games. Recorded only: no tuning moves\nOur call.",
+        "operationId": "admin_tunings_api_admin_tunings_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TuningsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TuningLog"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/book-compare": {
       "post": {
         "summary": "Admin Book Compare",
@@ -2568,7 +2635,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           }
         }
       }
@@ -3387,7 +3454,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           }
         }
       }
@@ -3830,7 +3897,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           }
         }
       }
@@ -19794,6 +19861,464 @@
           "percent_change"
         ],
         "title": "TrendingPlayer"
+      },
+      "TuningCall": {
+        "properties": {
+          "tuning": {
+            "type": "string",
+            "title": "Tuning"
+          },
+          "away": {
+            "type": "number",
+            "title": "Away",
+            "description": "Its points for the away team"
+          },
+          "home": {
+            "type": "number",
+            "title": "Home"
+          },
+          "home_chance": {
+            "type": "number",
+            "title": "Home Chance"
+          },
+          "hit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hit",
+            "description": "Winner right, once final"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tuning",
+          "away",
+          "home",
+          "home_chance"
+        ],
+        "title": "TuningCall"
+      },
+      "TuningGame": {
+        "properties": {
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id"
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "away": {
+            "type": "string",
+            "title": "Away"
+          },
+          "home": {
+            "type": "string",
+            "title": "Home"
+          },
+          "tip": {
+            "type": "string",
+            "title": "Tip"
+          },
+          "checked": {
+            "type": "string",
+            "title": "Checked",
+            "description": "The last look before tip-off"
+          },
+          "fives": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Fives",
+            "description": "nba.com's lineup status, away then home"
+          },
+          "out_espn": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Out Espn"
+          },
+          "out_nba": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Out Nba"
+          },
+          "unmatched": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unmatched",
+            "description": "nba.com's inactive names we couldn't find in the league"
+          },
+          "stack": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stack",
+            "description": "The team the rivalry stack backs, when it fires"
+          },
+          "final": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final",
+            "description": "Away and home points, once final"
+          },
+          "calls": {
+            "items": {
+              "$ref": "#/components/schemas/TuningCall"
+            },
+            "type": "array",
+            "title": "Calls"
+          },
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/TuningMovedPlayer"
+            },
+            "type": "array",
+            "title": "Players"
+          }
+        },
+        "type": "object",
+        "required": [
+          "game_id",
+          "day",
+          "away",
+          "home",
+          "tip",
+          "checked",
+          "fives",
+          "out_espn",
+          "out_nba",
+          "unmatched",
+          "calls",
+          "players"
+        ],
+        "title": "TuningGame"
+      },
+      "TuningLog": {
+        "properties": {
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "days": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Days",
+            "description": "Days with saved tunings"
+          },
+          "settled": {
+            "type": "integer",
+            "title": "Settled",
+            "description": "Final games scored"
+          },
+          "scores": {
+            "items": {
+              "$ref": "#/components/schemas/TuningScore"
+            },
+            "type": "array",
+            "title": "Scores"
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/TuningGame"
+            },
+            "type": "array",
+            "title": "Games",
+            "description": "The latest night's games, newest night first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "season",
+          "days",
+          "settled",
+          "scores",
+          "games"
+        ],
+        "title": "TuningLog"
+      },
+      "TuningMovedPlayer": {
+        "properties": {
+          "player_id": {
+            "type": "integer",
+            "title": "Player Id"
+          },
+          "team": {
+            "type": "string",
+            "title": "Team"
+          },
+          "starts": {
+            "type": "boolean",
+            "title": "Starts",
+            "description": "nba.com lists him in tonight's five"
+          },
+          "start_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Share",
+            "description": "How often he started lately"
+          },
+          "line": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Line",
+            "description": "ours_alone's line: minutes, pts, reb, ast, three_pm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "player_id",
+          "team",
+          "starts",
+          "start_share",
+          "line"
+        ],
+        "title": "TuningMovedPlayer"
+      },
+      "TuningPlayers": {
+        "properties": {
+          "lines": {
+            "type": "integer",
+            "title": "Lines",
+            "description": "Player lines ours_alone moved that have a result"
+          },
+          "stats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Stats",
+            "description": "The stats below, in order"
+          },
+          "tuned_miss": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Tuned Miss",
+            "description": "Average |result - moved line| per stat"
+          },
+          "live_miss": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Live Miss",
+            "description": "Average |result - Live's line| per stat, same players"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lines",
+          "stats",
+          "tuned_miss",
+          "live_miss"
+        ],
+        "title": "TuningPlayers"
+      },
+      "TuningScore": {
+        "properties": {
+          "tuning": {
+            "type": "string",
+            "title": "Tuning",
+            "description": "live, ours_alone, book or rivalry"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games"
+          },
+          "hits": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hits",
+            "description": "Winners called right"
+          },
+          "loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loss",
+            "description": "Average log loss of its home win chance (lower is better)"
+          },
+          "brier": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brier"
+          },
+          "margin_miss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Miss",
+            "description": "Average |final margin - its margin|"
+          },
+          "total_miss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Miss",
+            "description": "Average |final total - its total|"
+          },
+          "edge": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edge",
+            "description": "Live's log loss less its own, a game (+: better than Live)"
+          },
+          "edge_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edge Low",
+            "description": "95% range of the edge, low end"
+          },
+          "edge_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edge High"
+          },
+          "leading": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leading",
+            "description": "True only when the whole range is above zero"
+          },
+          "players": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TuningPlayers"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "tuning",
+          "games"
+        ],
+        "title": "TuningScore",
+        "description": "One tuning over the settled games (app/tunings.py summary)."
+      },
+      "TuningsRequest": {
+        "properties": {
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season (the year it ends); the current one when unset"
+          },
+          "nights": {
+            "type": "integer",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Nights",
+            "description": "How many of the latest saved nights to score",
+            "default": 30
+          }
+        },
+        "type": "object",
+        "title": "TuningsRequest"
       },
       "UsageDay": {
         "properties": {
