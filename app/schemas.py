@@ -2473,6 +2473,71 @@ class TuningLog(BaseModel):
     games: list[TuningGame] = Field(description="The latest night's games, newest night first")
 
 
+class CrazyOneRequest(BaseModel):
+    season: int | None = Field(default=None, description="ESPN season (the year it ends); the current one when unset")
+    day: int | None = Field(default=None, ge=1, description="NBA day; the latest with Crazy One's calls when unset")
+    nights: int = Field(default=60, ge=1, le=200, description="Nights its record counts")
+
+
+class CrazyCall(BaseModel):
+    away: float = Field(description="Points for the away team")
+    home: float
+    home_chance: float
+
+
+class CrazyBelief(BaseModel):
+    belief: str = Field(description="rivalry, bounce, slump or tank")
+    team: str = Field(description="The team it leans toward (or away from, for tank)")
+    points: float = Field(description="Margin points it moves toward that team (- away from it)")
+
+
+class CrazyGame(BaseModel):
+    game_id: int
+    day: int
+    away: str
+    home: str
+    tip: str
+    final: list[float] | None = Field(default=None, description="Away and home points, once final")
+    ours: CrazyCall = Field(description="Our call as Scores shows it (ESPN's OUT tags, no book)")
+    crazy: CrazyCall = Field(description="Crazy One's call")
+    book_home_chance: float | None = Field(default=None, description="iddaa's home chance, margin out")
+    swing: float = Field(description="Crazy One's home chance less Our call's")
+    beliefs: list[CrazyBelief]
+    crazy_hit: bool | None = None
+    ours_hit: bool | None = None
+
+
+class CrazyBold(BaseModel):
+    game_id: int
+    day: int
+    away: str
+    home: str
+    swing: float = Field(description="Crazy One's home chance less Our call's")
+    hit: bool = Field(description="Crazy One's winner was right")
+
+
+class CrazyRecord(BaseModel):
+    games: int = Field(description="Final games it called")
+    crazy_hits: int
+    ours_hits: int = Field(description="Our call's winners right on the same games")
+    edge: float | None = Field(default=None, description="Our call's log loss less its own, a game (+: better)")
+    edge_low: float | None = Field(default=None, description="95% range, low end")
+    edge_high: float | None = None
+    leading: bool = Field(description="True only when the whole range is above zero")
+    bold: list[CrazyBold] = Field(description="Its calls 10+ points of win chance from Our call, newest first")
+
+
+class CrazyOne(BaseModel):
+    """Crazy One: a persona that believes what the data backs on average but not every season.
+    Never Our call."""
+
+    season: int
+    day: int | None
+    days: list[int] = Field(description="Days with Crazy One's calls")
+    games: list[CrazyGame] = Field(description="The day's games, biggest disagreement with Our call first")
+    record: CrazyRecord
+
+
 class CompareRow(BaseModel):
     """One number of ours beside iddaa's and the result. ✓ (``*_hit``) when the result lands within
     the stat's band of that number (app/bookcompare.py BANDS), judged the same for both sides."""

@@ -593,6 +593,83 @@
         }
       }
     },
+    "/api/crazy-one": {
+      "post": {
+        "summary": "Crazy One",
+        "description": "Crazy One's world (the Our Estimates page's door): its call for each game of a day beside Our\ncall, the beliefs that moved it, and its record against Our call on final games, misses\nincluded. A persona's numbers (app/tunings.py STORY): never Our call, never in the Kupons.",
+        "operationId": "crazy_one_api_crazy_one_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CrazyOneRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrazyOne"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Payment Required"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/book-compare": {
       "post": {
         "summary": "Admin Book Compare",
@@ -8346,6 +8423,364 @@
           "book_miss"
         ],
         "title": "CompareTally"
+      },
+      "CrazyBelief": {
+        "properties": {
+          "belief": {
+            "type": "string",
+            "title": "Belief",
+            "description": "rivalry, bounce, slump or tank"
+          },
+          "team": {
+            "type": "string",
+            "title": "Team",
+            "description": "The team it leans toward (or away from, for tank)"
+          },
+          "points": {
+            "type": "number",
+            "title": "Points",
+            "description": "Margin points it moves toward that team (- away from it)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "belief",
+          "team",
+          "points"
+        ],
+        "title": "CrazyBelief"
+      },
+      "CrazyBold": {
+        "properties": {
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id"
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "away": {
+            "type": "string",
+            "title": "Away"
+          },
+          "home": {
+            "type": "string",
+            "title": "Home"
+          },
+          "swing": {
+            "type": "number",
+            "title": "Swing",
+            "description": "Crazy One's home chance less Our call's"
+          },
+          "hit": {
+            "type": "boolean",
+            "title": "Hit",
+            "description": "Crazy One's winner was right"
+          }
+        },
+        "type": "object",
+        "required": [
+          "game_id",
+          "day",
+          "away",
+          "home",
+          "swing",
+          "hit"
+        ],
+        "title": "CrazyBold"
+      },
+      "CrazyCall": {
+        "properties": {
+          "away": {
+            "type": "number",
+            "title": "Away",
+            "description": "Points for the away team"
+          },
+          "home": {
+            "type": "number",
+            "title": "Home"
+          },
+          "home_chance": {
+            "type": "number",
+            "title": "Home Chance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "away",
+          "home",
+          "home_chance"
+        ],
+        "title": "CrazyCall"
+      },
+      "CrazyGame": {
+        "properties": {
+          "game_id": {
+            "type": "integer",
+            "title": "Game Id"
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day"
+          },
+          "away": {
+            "type": "string",
+            "title": "Away"
+          },
+          "home": {
+            "type": "string",
+            "title": "Home"
+          },
+          "tip": {
+            "type": "string",
+            "title": "Tip"
+          },
+          "final": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final",
+            "description": "Away and home points, once final"
+          },
+          "ours": {
+            "$ref": "#/components/schemas/CrazyCall",
+            "description": "Our call as Scores shows it (ESPN's OUT tags, no book)"
+          },
+          "crazy": {
+            "$ref": "#/components/schemas/CrazyCall",
+            "description": "Crazy One's call"
+          },
+          "book_home_chance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book Home Chance",
+            "description": "iddaa's home chance, margin out"
+          },
+          "swing": {
+            "type": "number",
+            "title": "Swing",
+            "description": "Crazy One's home chance less Our call's"
+          },
+          "beliefs": {
+            "items": {
+              "$ref": "#/components/schemas/CrazyBelief"
+            },
+            "type": "array",
+            "title": "Beliefs"
+          },
+          "crazy_hit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crazy Hit"
+          },
+          "ours_hit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ours Hit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "game_id",
+          "day",
+          "away",
+          "home",
+          "tip",
+          "ours",
+          "crazy",
+          "swing",
+          "beliefs"
+        ],
+        "title": "CrazyGame"
+      },
+      "CrazyOne": {
+        "properties": {
+          "season": {
+            "type": "integer",
+            "title": "Season"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day"
+          },
+          "days": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Days",
+            "description": "Days with Crazy One's calls"
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/CrazyGame"
+            },
+            "type": "array",
+            "title": "Games",
+            "description": "The day's games, biggest disagreement with Our call first"
+          },
+          "record": {
+            "$ref": "#/components/schemas/CrazyRecord"
+          }
+        },
+        "type": "object",
+        "required": [
+          "season",
+          "day",
+          "days",
+          "games",
+          "record"
+        ],
+        "title": "CrazyOne",
+        "description": "Crazy One: a persona that believes what the data backs on average but not every season.\nNever Our call."
+      },
+      "CrazyOneRequest": {
+        "properties": {
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season",
+            "description": "ESPN season (the year it ends); the current one when unset"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day",
+            "description": "NBA day; the latest with Crazy One's calls when unset"
+          },
+          "nights": {
+            "type": "integer",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Nights",
+            "description": "Nights its record counts",
+            "default": 60
+          }
+        },
+        "type": "object",
+        "title": "CrazyOneRequest"
+      },
+      "CrazyRecord": {
+        "properties": {
+          "games": {
+            "type": "integer",
+            "title": "Games",
+            "description": "Final games it called"
+          },
+          "crazy_hits": {
+            "type": "integer",
+            "title": "Crazy Hits"
+          },
+          "ours_hits": {
+            "type": "integer",
+            "title": "Ours Hits",
+            "description": "Our call's winners right on the same games"
+          },
+          "edge": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edge",
+            "description": "Our call's log loss less its own, a game (+: better)"
+          },
+          "edge_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edge Low",
+            "description": "95% range, low end"
+          },
+          "edge_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edge High"
+          },
+          "leading": {
+            "type": "boolean",
+            "title": "Leading",
+            "description": "True only when the whole range is above zero"
+          },
+          "bold": {
+            "items": {
+              "$ref": "#/components/schemas/CrazyBold"
+            },
+            "type": "array",
+            "title": "Bold",
+            "description": "Its calls 10+ points of win chance from Our call, newest first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "games",
+          "crazy_hits",
+          "ours_hits",
+          "leading",
+          "bold"
+        ],
+        "title": "CrazyRecord"
       },
       "CrowdedDay": {
         "properties": {

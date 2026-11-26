@@ -16,6 +16,10 @@ The tunings (TUNINGS):
     book        iddaa's own numbers, margin taken out: the price everyone else is betting into
     rivalry     the book plus the "rivalry stack" (STACK_EDGE) for a fallen contender in a slump
                 against a recent playoff foe; recorded only on games where the stack fires
+    crazy_one   Crazy One, a persona that believes what fans believe and the data backs on average but
+                not in every season (STORY): Our call (ESPN's OUT tags, no book) moved by the rivalry
+                stack, a favourite bouncing back after a losing streak, a fallen contender in a slump
+                and late-season tankers. Shown only in its own world, never as Our call
 
 A day's record (JSON keys as strings):
 
@@ -26,6 +30,7 @@ A day's record (JSON keys as strings):
         "book": [home chance, home margin, total] | None,            fair chance; margin = home minus away
         "stack": {"team": team, "edge": +wins per game, "star_out": bool} | None,
         "calls": {tuning: [away points, home points, home chance]},
+        "beliefs": [[belief, team code, points toward that team]],   what moved Crazy One's call
         "players": {player: [team, starts, start share, *PLAYER_STATS]}}}}     ours_alone's moved lines
 
 Live's player lines are the line log's (app/linelog.py); only the lines ours_alone moves are kept here.
@@ -47,8 +52,8 @@ from app.linelog import STATS as LINE_STATS
 from app.lostlog import BOOK_WEIGHT, blend_chance
 from app.scores import ScheduledGame
 
-LIVE, OURS_ALONE, BOOK, RIVALRY = "live", "ours_alone", "book", "rivalry"
-TUNINGS = (LIVE, OURS_ALONE, BOOK, RIVALRY)
+LIVE, OURS_ALONE, BOOK, RIVALRY, CRAZY_ONE = "live", "ours_alone", "book", "rivalry", "crazy_one"
+TUNINGS = (LIVE, OURS_ALONE, BOOK, RIVALRY, CRAZY_ONE)
 
 # Starting-five minutes (area map dig A, 2026-11-25): a player who starts tonight but usually comes off
 # the bench plays about this many minutes more than his line, times (starts tonight - his start share
@@ -96,6 +101,25 @@ PLAYOFF_SERIES: dict[int, tuple[tuple[str, str], ...]] = {
 }  # fmt: skip
 PLAYOFF_SEASONS = 2
 
+# Crazy One's beliefs, the "Story believer" (Can 2026-11-26). Each makes sense to a fan and paid on
+# average over past seasons, but none held in every season, so the engine doesn't use them. Picked over
+# two other candidates (absences and lineup talent doubled; high totals shrunk) on a replay of 2021-22..
+# 2024-25 against Our call, confirmed on 2025-26 and 2026-27 (/mnt/project-files/crazy-one/replay):
+# winners' log loss +0.08 +0.10 -0.22 +0.10 | +0.21 -0.20 % better; the stack's 27 games 17 right vs 14.
+STACK = "rivalry"  # the rivalry stack (STACK_EDGE), on Our call's chance
+BOUNCE = "bounce"  # a favourite that lost BOUNCE_STREAK+ in a row: +0.65 margin, 6 of 8 seasons
+BOUNCE_STREAK = 3
+BOUNCE_MARGIN = 0.65
+BOUNCE_BIG_FAVOURITE = 6.0  # favoured by this much: BOUNCE_BIG_MARGIN instead
+BOUNCE_BIG_MARGIN = 2.1
+SLUMP = "slump"  # a fallen contender in a slump, against anyone: plays nearer its true level
+SLUMP_MARGIN = 0.5
+TANK = "tank"  # under TANK_PCT after TANK_GAMES games: ran under the book in all of 2021-2025
+TANK_GAMES = 55
+TANK_PCT = 0.35
+TANK_MARGIN = -1.5
+STORY = (STACK, BOUNCE, SLUMP, TANK)
+
 _NORMAL = NormalDist()
 
 
@@ -141,6 +165,36 @@ def stack(season: int, away: TeamForm, home: TeamForm, out: set[int]) -> dict | 
     team, foe = sides[0]
     star_out = bool(foe.stars & out)
     return {"team": team.code, "edge": STACK_EDGE_STAR_OUT if star_out else STACK_EDGE, "star_out": star_out}
+
+
+def losing_streak(t: TeamForm) -> int:
+    """Games lost in a row going into tonight (up to the recent games kept)."""
+    n = 0
+    for won, _ in reversed(t.recent):
+        if won:
+            break
+        n += 1
+    return n
+
+
+def beliefs(season: int, away: TeamForm, home: TeamForm, margin: float, fired: dict | None) -> list[list]:
+    """What Crazy One believes about this game: [belief, team code, points toward that team], from
+    Our call's home ``margin`` (ESPN's OUT tags, no book) and the rivalry stack if it fired."""
+    out: list[list] = []
+    if fired is not None:
+        side_home = fired["team"] == home.code
+        p = gamescore.win_chance(margin)
+        p_home = p if margin >= 0 else 1 - p
+        p_side = p_home if side_home else 1 - p_home
+        out.append([STACK, fired["team"], round(margin_of(p_side + fired["edge"]) - margin_of(p_side), 2)])
+    for t, fav_by in ((away, -margin), (home, margin)):
+        if fav_by > 0 and losing_streak(t) >= BOUNCE_STREAK:
+            out.append([BOUNCE, t.code, BOUNCE_BIG_MARGIN if fav_by >= BOUNCE_BIG_FAVOURITE else BOUNCE_MARGIN])
+        if fallen_and_slumping(season, t):
+            out.append([SLUMP, t.code, SLUMP_MARGIN])
+        if t.played >= TANK_GAMES and t.won / t.played < TANK_PCT:
+            out.append([TANK, t.code, TANK_MARGIN])
+    return out
 
 
 def margin_of(chance: float) -> float:
@@ -192,6 +246,7 @@ class GameInputs:
     stack: dict | None = None
     lines: dict[int, tuple[int, dict[str, float]]] | None = None  # player -> (team, Live's line by stat)
     share: dict[int, float] | None = None  # player -> his start share lately
+    beliefs: tuple[list, ...] = ()  # Crazy One's (beliefs()), [belief, team code, points toward it]
 
 
 def moved_lines(g: GameInputs) -> dict[str, list]:
@@ -225,9 +280,13 @@ def calls(g: GameInputs) -> tuple[dict[str, list[float]], list[float] | None]:
     oa, oh = g.alone_call
     book = book_numbers(g.book)
     ours_live = home_chance(la, lh)
+    home_code = PRO_TEAM_ABBREV.get(g.home)
+    lean = sum(pts if code == home_code else -pts for _, code, pts in g.beliefs)
+    ca, ch = la - lean / 2, lh + lean / 2
     out = {
         LIVE: [round(la, 1), round(lh, 1), round(blend_chance(ours_live, book[0] if book else None, BOOK_WEIGHT), 3)],
         OURS_ALONE: [round(oa, 1), round(oh, 1), round(home_chance(oa, oh), 3)],
+        CRAZY_ONE: [round(ca, 1), round(ch, 1), round(home_chance(ca, ch), 3)],
     }
     if book is not None:
         p, margin, total = book
@@ -258,6 +317,7 @@ def update(record: dict | None, day_games: Iterable[tuple[int, GameInputs]], now
             "book": book,
             "stack": g.stack,
             "calls": made,
+            "beliefs": [list(b) for b in g.beliefs],
             "players": moved_lines(g),
         }
     return out
@@ -462,11 +522,10 @@ def gather(
                     out_nba.add(pid)
         live = _call(box, g.day, g.away, g.home, out_espn)
         alone = _call(box, g.day, g.away, g.home, out_espn | out_nba)
-        fired = None
-        if playoff_foes(season, PRO_TEAM_ABBREV.get(g.away, ""), PRO_TEAM_ABBREV.get(g.home, "")):
-            away_form = team_form(box, g.away, g.day, past_books)
-            home_form = team_form(box, g.home, g.day, past_books)
-            fired = stack(season, away_form, home_form, out_espn | out_nba)
+        away_form = team_form(box, g.away, g.day, past_books)
+        home_form = team_form(box, g.home, g.day, past_books)
+        fired = stack(season, away_form, home_form, out_espn | out_nba)
+        believed = beliefs(season, away_form, home_form, live[1] - live[0], fired)
         share = {
             pid: f.start_share
             for pid, (team, _) in live_lines.items()
@@ -490,6 +549,7 @@ def gather(
                     stack=fired,
                     lines={p: v for p, v in live_lines.items() if v[0] in teams},
                     share=share,
+                    beliefs=tuple(believed),
                 ),
             )
         )
@@ -505,3 +565,45 @@ def _on(box: Box, player: int, teams: tuple[int, int]) -> bool:
     """Is this ruled-out player on one of tonight's two teams (his last team in the box)?"""
     f = box.form.get(player)
     return f is not None and f.team in teams
+
+
+# ---------------------------------------------------------------- Crazy One's world
+
+BOLD = 0.10  # win chance apart from Our call that makes a call "bold"
+
+
+def ours_of(game: dict) -> list[float] | None:
+    """Our call as Scores shows it (ESPN's OUT tags, no book): [away, home, home chance]."""
+    live = (game.get("calls") or {}).get(LIVE)
+    if not live:
+        return None
+    return [live[0], live[1], round(home_chance(live[0], live[1]), 3)]
+
+
+def crazy_record(games: list[tuple[dict, tuple[float, float]]]) -> dict:
+    """Crazy One against Our call on the final games it called: winners right, its edge in log loss a
+    game (Our call's less its own: + it was better) with a 95% range, ``leading`` only when the whole
+    range is above zero, and its bold calls (BOLD+ apart) with how each went."""
+    diffs, bold = [], []
+    crazy_hits = ours_hits = 0
+    for g, (away, home) in games:
+        crazy, ours = (g.get("calls") or {}).get(CRAZY_ONE), ours_of(g)
+        if not crazy or not ours:
+            continue
+        home_won = home > away
+        crazy_hits += (crazy[2] >= 0.5) == home_won
+        ours_hits += (ours[2] >= 0.5) == home_won
+        diffs.append(_loss(ours[2], home_won) - _loss(crazy[2], home_won))
+        if abs(crazy[2] - ours[2]) >= BOLD:
+            bold.append((g, crazy[2] - ours[2], (crazy[2] >= 0.5) == home_won))
+    got = edge_range(diffs)
+    return {
+        "games": len(diffs),
+        "crazy_hits": crazy_hits,
+        "ours_hits": ours_hits,
+        "edge": None if got is None else round(got[0], 4),
+        "edge_low": None if got is None else round(got[1], 4),
+        "edge_high": None if got is None else round(got[2], 4),
+        "leading": got is not None and got[1] > 0,
+        "bold": bold,
+    }

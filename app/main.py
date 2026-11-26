@@ -1061,6 +1061,79 @@ def create_app(
             games=sorted(latest, key=lambda x: (x.tip, x.game_id)),
         )
 
+    @app.post("/api/crazy-one", response_model=schemas.CrazyOne, responses=PRO_ONLY)
+    async def crazy_one(
+        body: schemas.CrazyOneRequest, authorization: str | None = Header(default=None)
+    ) -> schemas.CrazyOne:
+        """Crazy One's world (the Our Estimates page's door): its call for each game of a day beside Our
+        call, the beliefs that moved it, and its record against Our call on final games, misses
+        included. A persona's numbers (app/tunings.py STORY): never Our call, never in the Kupons."""
+        await require_feature(authorization, plans.Feature.ESTIMATES)
+        season = body.season or current_season(app.state.now())
+        days = await run_in_threadpool(app.state.store.tuning_days, season)
+        day = body.day if body.day in days else (days[-1] if days else None)
+        box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
+        scores = tunings.finals(box) if box is not None else {}
+        abbrev = PRO_TEAM_ABBREV.get
+
+        def final_of(g: dict) -> tuple[float, float] | None:
+            pts = scores.get(int(g["gid"]), {})
+            return (pts[g["away"]], pts[g["home"]]) if g["away"] in pts and g["home"] in pts else None
+
+        finished: list[tuple[dict, tuple[float, float]]] = []
+        shown: list[schemas.CrazyGame] = []
+        for d in days[-body.nights :] + ([day] if day is not None and day not in days[-body.nights :] else []):
+            record = await run_in_threadpool(app.state.store.get_tunings, season, d) or {}
+            for gid, g in (record.get("games") or {}).items():
+                g = {**g, "gid": gid, "day": d}
+                crazy, ours = (g.get("calls") or {}).get(tunings.CRAZY_ONE), tunings.ours_of(g)
+                if not crazy or not ours:
+                    continue
+                final = final_of(g)
+                if final is not None:
+                    finished.append((g, final))
+                if d != day:
+                    continue
+                home_won = None if final is None else final[1] > final[0]
+                shown.append(
+                    schemas.CrazyGame(
+                        game_id=int(gid),
+                        day=d,
+                        away=abbrev(g["away"], ""),
+                        home=abbrev(g["home"], ""),
+                        tip=g["tip"],
+                        final=list(final) if final else None,
+                        ours=schemas.CrazyCall(away=ours[0], home=ours[1], home_chance=ours[2]),
+                        crazy=schemas.CrazyCall(away=crazy[0], home=crazy[1], home_chance=crazy[2]),
+                        book_home_chance=(g.get("book") or [None])[0],
+                        swing=round(crazy[2] - ours[2], 3),
+                        beliefs=[
+                            schemas.CrazyBelief(belief=b, team=t, points=pts) for b, t, pts in g.get("beliefs") or []
+                        ],
+                        crazy_hit=None if home_won is None else (crazy[2] >= 0.5) == home_won,
+                        ours_hit=None if home_won is None else (ours[2] >= 0.5) == home_won,
+                    )
+                )
+        rec = tunings.crazy_record(finished)
+        bold = [
+            schemas.CrazyBold(
+                game_id=int(g["gid"]),
+                day=g["day"],
+                away=abbrev(g["away"], ""),
+                home=abbrev(g["home"], ""),
+                swing=round(swing, 3),
+                hit=hit,
+            )
+            for g, swing, hit in sorted(rec.pop("bold"), key=lambda x: (-x[0]["day"], x[0]["tip"]))
+        ]
+        return schemas.CrazyOne(
+            season=season,
+            day=day,
+            days=days,
+            games=sorted(shown, key=lambda x: (-abs(x.swing), x.tip)),
+            record=schemas.CrazyRecord(**rec, bold=bold),
+        )
+
     def tuning_score(item: dict) -> schemas.TuningScore:
         players = item.pop("players", None)
         return schemas.TuningScore(
