@@ -18,8 +18,9 @@ The tunings (TUNINGS):
                 against a recent playoff foe; recorded only on games where the stack fires
     crazy_one   Crazy One, a persona that believes what fans believe and the data backs on average but
                 not in every season (STORY): Our call (ESPN's OUT tags, no book) moved by the rivalry
-                stack, a favourite bouncing back after a losing streak, a fallen contender in a slump
-                and late-season tankers. Shown only in its own world, never as Our call
+                stack, a favourite bouncing back after a losing streak, a fallen contender in a slump,
+                late-season tankers, and two "one-man shows" meeting (the total, not the winner).
+                Shown only in its own world, never as Our call
 
 A day's record (JSON keys as strings):
 
@@ -30,7 +31,8 @@ A day's record (JSON keys as strings):
         "book": [home chance, home margin, total] | None,            fair chance; margin = home minus away
         "stack": {"team": team, "edge": +wins per game, "star_out": bool} | None,
         "calls": {tuning: [away points, home points, home chance]},
-        "beliefs": [[belief, team code, points toward that team]],   what moved Crazy One's call
+        "beliefs": [[belief, team code, points toward that team]],   what moved Crazy One's call; team
+                                                                     code "" for the game's total
         "players": {player: [team, starts, start share, *PLAYER_STATS]}}}}     ours_alone's moved lines
 
 Live's player lines are the line log's (app/linelog.py); only the lines ours_alone moves are kept here.
@@ -40,7 +42,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from statistics import NormalDist
 
@@ -118,7 +120,19 @@ TANK = "tank"  # under TANK_PCT after TANK_GAMES games: ran under the book in al
 TANK_GAMES = 55
 TANK_PCT = 0.35
 TANK_MARGIN = -1.5
-STORY = (STACK, BOUNCE, SLUMP, TANK)
+# Two "one-man shows" (possession map, Can 2026-11-26, /mnt/project-files/possession-map): when both teams
+# run their finishing (FGA + 0.44 FTA + TO) through few players, both in the league's ONE_MAN_TOP that day,
+# the game ran under Our call's total in 4 of 5 seasons 2022-2026 (about -1 to -2.7 more than other
+# games; over in 2021-22), and the third quarter under the quarter estimate in all six 2021-2026
+# (-0.1 to -1.8): neither the stars nor their teammates get the usual lift after halftime, as if the
+# defenses load up on the one man. Not every season on the total, so the engine doesn't use it.
+ONE_MAN = "one_man"
+ONE_MAN_TOP = 10  # of the 30 teams, by finishing concentration this season (gamebox.finishing_spread)
+ONE_MAN_GAMES = 10  # games this season before a team's concentration counts
+ONE_MAN_HALF_LIFE = 20.0  # games, as the engine's team ratings
+ONE_MAN_TOTAL = -1.0  # points off the game's total
+TOTAL = ""  # a belief's team code when it moves the game's total, not the winner
+STORY = (STACK, BOUNCE, SLUMP, TANK, ONE_MAN)
 
 _NORMAL = NormalDist()
 
@@ -132,6 +146,7 @@ class TeamForm:
     played: int
     recent: tuple[tuple[bool, float], ...] = ()  # its last games: (won, the chance it was given), oldest first
     stars: frozenset[int] = frozenset()  # its STAR_PPG+ players this season
+    one_man: bool = False  # among the league's ONE_MAN_TOP one-man shows (one_man_shows)
 
 
 def playoff_foes(season: int, a: str, b: str) -> bool:
@@ -179,7 +194,8 @@ def losing_streak(t: TeamForm) -> int:
 
 def beliefs(season: int, away: TeamForm, home: TeamForm, margin: float, fired: dict | None) -> list[list]:
     """What Crazy One believes about this game: [belief, team code, points toward that team], from
-    Our call's home ``margin`` (ESPN's OUT tags, no book) and the rivalry stack if it fired."""
+    Our call's home ``margin`` (ESPN's OUT tags, no book) and the rivalry stack if it fired; a belief
+    about the game's total has team code TOTAL and its points move the total."""
     out: list[list] = []
     if fired is not None:
         side_home = fired["team"] == home.code
@@ -194,7 +210,23 @@ def beliefs(season: int, away: TeamForm, home: TeamForm, margin: float, fired: d
             out.append([SLUMP, t.code, SLUMP_MARGIN])
         if t.played >= TANK_GAMES and t.won / t.played < TANK_PCT:
             out.append([TANK, t.code, TANK_MARGIN])
+    if away.one_man and home.one_man:
+        out.append([ONE_MAN, TOTAL, ONE_MAN_TOTAL])
     return out
+
+
+def one_man_shows(box: Box, day: int) -> set[int]:
+    """The league's ONE_MAN_TOP teams by how concentrated their finishing has been this season before
+    ``day`` (gamebox.finishing_spread, recent games counting most), among teams with ONE_MAN_GAMES+."""
+    decay = 0.5 ** (1 / ONE_MAN_HALF_LIFE)
+    level: dict[int, float] = {}
+    for team, games in box.finishing.items():
+        before = [v for d, v in games if d < day]
+        if len(before) < ONE_MAN_GAMES:
+            continue
+        w = [decay ** (len(before) - 1 - i) for i in range(len(before))]
+        level[team] = sum(x * y for x, y in zip(before, w, strict=True)) / sum(w)
+    return set(sorted(level, key=lambda t: (-level[t], t))[:ONE_MAN_TOP])
 
 
 def margin_of(chance: float) -> float:
@@ -281,8 +313,9 @@ def calls(g: GameInputs) -> tuple[dict[str, list[float]], list[float] | None]:
     book = book_numbers(g.book)
     ours_live = home_chance(la, lh)
     home_code = PRO_TEAM_ABBREV.get(g.home)
-    lean = sum(pts if code == home_code else -pts for _, code, pts in g.beliefs)
-    ca, ch = la - lean / 2, lh + lean / 2
+    lean = sum(pts if code == home_code else -pts for _, code, pts in g.beliefs if code != TOTAL)
+    total = sum(pts for _, code, pts in g.beliefs if code == TOTAL)
+    ca, ch = la - lean / 2 + total / 2, lh + lean / 2 + total / 2
     out = {
         LIVE: [round(la, 1), round(lh, 1), round(blend_chance(ours_live, book[0] if book else None, BOOK_WEIGHT), 3)],
         OURS_ALONE: [round(oa, 1), round(oh, 1), round(home_chance(oa, oh), 3)],
@@ -499,8 +532,11 @@ def gather(
         for pid, row in ((lines or {}).get("lines") or {}).items()
     }
     out = []
+    shows: dict[int, set[int]] = {}
     for g in games:
         teams = (g.away, g.home)
+        if g.day not in shows:
+            shows[g.day] = one_man_shows(box, g.day)
         fives: list[str | None] = []
         starters: set[int] = set()
         out_nba: set[int] = set()
@@ -522,8 +558,8 @@ def gather(
                     out_nba.add(pid)
         live = _call(box, g.day, g.away, g.home, out_espn)
         alone = _call(box, g.day, g.away, g.home, out_espn | out_nba)
-        away_form = team_form(box, g.away, g.day, past_books)
-        home_form = team_form(box, g.home, g.day, past_books)
+        away_form = replace(team_form(box, g.away, g.day, past_books), one_man=g.away in shows[g.day])
+        home_form = replace(team_form(box, g.home, g.day, past_books), one_man=g.home in shows[g.day])
         fired = stack(season, away_form, home_form, out_espn | out_nba)
         believed = beliefs(season, away_form, home_form, live[1] - live[0], fired)
         share = {

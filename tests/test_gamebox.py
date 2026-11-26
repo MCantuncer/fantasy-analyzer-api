@@ -642,3 +642,11 @@ def test_an_opponents_three_point_luck_fades():
     without = gamebox.apply(line, replace(m, opp_three_luck=0.0), [])[2]
     against = next(r for r in reasons if r.kind == "opponent").stats[gamebox.TPM]
     assert against < next(r for r in without if r.kind == "opponent").stats[gamebox.TPM]
+
+
+def test_finishing_spread_is_how_much_of_a_teams_finishing_one_or_two_players_carry():
+    got = gamebox.finishing_spread(_rows())
+    # Team 1: player 11 takes all 16 shots (player 12 none) -> 1.0; team 2: 16 and 6 shots.
+    assert got[1] == [(1, 1.0), (3, 1.0), (4, 1.0)]
+    assert got[2][0][0] == 1 and got[2][0][1] == pytest.approx((16 / 22) ** 2 + (6 / 22) ** 2)
+    assert gamebox.finishing_spread([GameRow(1, 9, 1, 3, _line(10))]) == {}  # no shots, no turnovers: no game

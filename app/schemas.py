@@ -2486,9 +2486,9 @@ class CrazyCall(BaseModel):
 
 
 class CrazyBelief(BaseModel):
-    belief: str = Field(description="rivalry, bounce, slump or tank")
-    team: str = Field(description="The team it leans toward (or away from, for tank)")
-    points: float = Field(description="Margin points it moves toward that team (- away from it)")
+    belief: str = Field(description="rivalry, bounce, slump, tank or one_man")
+    team: str = Field(description="The team it leans toward (or away from, for tank); empty for the game's total")
+    points: float = Field(description="Margin points it moves toward that team (- away from it), or the total's")
 
 
 class CrazyGame(BaseModel):
