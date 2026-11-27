@@ -62,7 +62,12 @@ def test_a_player_s_miss_reads_as_minutes_shots_or_shooting():
     few = lostlog.player_why("pts", 24.0, 12.0, line, {"minutes": 34, "fga": 9, "fgm": 5}, 4)
     assert few["cause"] == "other" and few["text"] == "Took 9 shots in 34 minutes (about 18 expected)"
     cold = lostlog.player_why("pts", 24.0, 12.0, line, {"minutes": 34, "fga": 19, "fgm": 4}, 4)
-    assert cold["cause"] == "luck" and cold["text"] == "Shot 4 of 19"
+    assert cold["cause"] == "luck" and cold["text"] == "Shot 4 of 19 (his usual 50%)"
+    # near his usual rate: the shooting doesn't explain the miss, so it isn't called luck
+    usual = lostlog.player_why("pts", 24.0, 15.0, line, {"minutes": 34, "fga": 16, "fgm": 7, "fta": 1}, 4)
+    assert usual["cause"] == "other" and usual["text"] == "Shot 7 of 16 (his usual 50%)"
+    threes = lostlog.player_why("three_pm", 2.0, 0.0, line, {"minutes": 34}, 4)
+    assert threes["cause"] == "other"  # no three-point attempts in the box to measure luck on
     boards = lostlog.player_why("reb", 6.0, 2.0, line, {"minutes": 33}, 4)
     assert boards["cause"] == "other" and boards["text"] == "2 rebounds in 33 minutes (our line 6.0)"
 
@@ -114,7 +119,7 @@ def test_a_settled_night_carries_a_reason_on_each_row_and_lists_its_lost_bets():
     lostlog.annotate(games, None, 33, set(), our_lines(), day, {PHI: "PHI", MIL: "MIL"})
     [g] = games
     pts = next(p for p in g["players"] if p["name"] == "Joel Embiid" and p["stat"] == "pts")
-    assert pts["why"] == {"cause": "luck", "piece": "shooting", "points": -8.1, "text": "Shot 6 of 15"}
+    assert pts["why"] == {"cause": "luck", "piece": "shooting", "points": -4.2, "text": "Shot 6 of 15 (his usual 50%)"}
     maxey = [p for p in g["players"] if p["name"] == "Tyrese Maxey"]
     assert maxey and all(p["why"] is None for p in maxey)  # he sat: nothing to explain
     assert all(m["why"] is None for m in g["markets"])  # no league box: the game rows wait for it
@@ -122,7 +127,7 @@ def test_a_settled_night_carries_a_reason_on_each_row_and_lists_its_lost_bets():
     n = lostlog.night(games, 33, {PHI: "PHI", MIL: "MIL"})
     assert n["day"] == 33 and n["bets"] >= 1 and n["won"] + len(n["lost"]) == n["bets"]
     embiid = [x for x in n["lost"] if x["bet"].startswith("Joel Embiid")]
-    assert embiid and embiid[0]["cause"] == "luck" and embiid[0]["text"] == "Shot 6 of 15"
+    assert embiid and embiid[0]["cause"] == "luck" and embiid[0]["text"] == "Shot 6 of 15 (his usual 50%)"
     assert embiid[0]["group"] == "pts" and embiid[0]["actual"] == 22.0
 
 
