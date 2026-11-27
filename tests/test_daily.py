@@ -61,12 +61,15 @@ def test_pick_is_a_win_win_between_two_teams(pick):
 
 
 def test_scan_says_where_it_is(pick, scan_steps):
-    stages = [s for s, _ in scan_steps]
-    shares = [f for _, f in scan_steps]
+    # Another test's run in this worker may still hold the one big-run slot (REPORT_LOCK), as it can
+    # on the server: then the scan says it is waiting first, at 0, and starts once the slot is free.
+    steps = scan_steps[1:] if scan_steps and scan_steps[0] == ("Waiting its turn", 0.0) else scan_steps
+    stages = [s for s, _ in steps]
+    shares = [f for _, f in steps]
     assert stages[0] == "Screening deals" and "Simulating the season" in stages
     assert stages.index("Simulating the season") > max(i for i, s in enumerate(stages) if s == "Screening deals")
     assert shares == sorted(shares) and shares[0] == pytest.approx(0.04) and 0.94 <= shares[-1] < 1
-    assert len(scan_steps) >= 45  # a step per pair of teams, so the bar moves steadily
+    assert len(steps) >= 45  # a step per pair of teams, so the bar moves steadily
 
 
 def test_pick_is_an_even_trade(league, pick):
