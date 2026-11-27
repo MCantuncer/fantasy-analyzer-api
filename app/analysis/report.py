@@ -14,7 +14,7 @@ from itertools import chain
 import numpy as np
 
 from app import schemas
-from app.analysis import gamebox, gamescore
+from app.analysis import blackbox, gamebox, gamescore
 from app.analysis.absence import is_out
 from app.analysis.badges import OwnerPremium, badge_refs
 from app.analysis.durability import injury_prone
@@ -212,8 +212,9 @@ def next_game_line(
     the minutes teammates ruled out of it leave him (tonight.py), at the level his games land
     (NEXT_GAME_LEVEL), then the game itself when the league box knows it (gamebox.apply, from
     ``p.game_context``): opponent, his recent games, teammates' shots, home court; then his team's
-    lines held to its expected score (team_sum_gap). ``teammates`` are the players of his NBA team
-    this league knows; none while he is out. ``team_sums`` keeps each team's sum of lines across calls."""
+    lines held to its expected score (team_sum_gap); last, what the trees of blackbox.py expect it to
+    miss by. ``teammates`` are the players of his NBA team this league knows; none while he is out.
+    ``team_sums`` keeps each team's sum of lines across calls."""
     mates = [t for t in teammates if t.id != p.id]
     parts = _game_line(model, p, mates)
     if parts is None:
@@ -222,7 +223,8 @@ def next_game_line(
     m = p.game_context
     if m is None or applied is None:
         return schemas.NextGameLine(**_stats(line))
-    new, usual, found = applied
+    new, usual, found, (out, back, gained) = applied
+    gap = 0.0
     if m.team_score is not None:
         key = (p.pro_team_id, m.day)
         sums = team_sums.get(key) if team_sums is not None else None
@@ -230,7 +232,10 @@ def next_game_line(
             sums = _team_lines(model, [p, *mates], m.day)
             if team_sums is not None:
                 team_sums[key] = sums
-        new = team_adjust(new, team_sum_gap(m.team_score, *sums, m.team_points))
+        gap = team_sum_gap(m.team_score, *sums, m.team_points)
+        new = team_adjust(new, gap)
+    # then what the trees expect the line to miss by (blackbox.py)
+    new = blackbox.adjust(new, blackbox.calls(blackbox.inputs(m, line, new, out, back, gained, gap)))
     fga = new.get(FGA, 0.0)
     pct = new.get(FGM, 0.0) / fga if fga > 0 else FG_SCALE[0]
     reasons = sorted((_reason(r, m, pct, fga) for r in found), key=lambda r: -abs(r.value))
@@ -244,22 +249,29 @@ def next_game_line(
     )
 
 
+GameParts = tuple[
+    dict[int, float],
+    dict[int, float],
+    list[gamebox.Reason],
+    tuple[list[gamebox.Teammate], list[gamebox.Teammate], float],
+]
+
+
 def _game_line(
     model: CategoryModel, p: Player, mates: list[Player]
-) -> tuple[dict[int, float], tuple[dict[int, float], dict[int, float], list[gamebox.Reason]] | None] | None:
+) -> tuple[dict[int, float], GameParts | None] | None:
     """next_game_line before his team's sum: None while he is out or without minutes; else his line and,
-    with a game context, gamebox.apply's (new line, usual line, reasons); None without one."""
+    with a game context, gamebox.apply's (new line, usual line, reasons) and the teammates it took
+    (ruled out, back, the minutes he gains); None without one."""
     if is_out(p):
         return None
     line = model.horizon_line(p, model.league.current_period)
     minutes = line.get(MINUTES, 0.0)
     if minutes <= 0:
         return None
-    gained = 0.0
-    if not p.minute_shifts:  # a measured gain from teammates.py already holds an absence
-        gained = min(minutes_gained(p, mates), MAX_MINUTES - minutes) if minutes < MAX_MINUTES else 0.0
-        if gained:
-            line = with_minutes(line, minutes + gained)
+    gained = _gained(p, mates, minutes)
+    if gained:
+        line = with_minutes(line, minutes + gained)
     line = {k: v * NEXT_GAME_LEVEL.get(k, 1.0) for k, v in line.items()}
     m = p.game_context
     if m is None:
@@ -268,7 +280,14 @@ def _game_line(
     back = [_teammate(t) for t in mates if came_back(t)]
     back += [replace(_teammate(t), chance=c) for t in mates if (c := came_back_tagged(t)) > 0]
     absent = {t.id for t in mates if not t.available}
-    return line, gamebox.apply(line, m, out, gained, back, absent)
+    return line, (*gamebox.apply(line, m, out, gained, back, absent), (out, back, gained))
+
+
+def _gained(p: Player, mates: list[Player], minutes: float) -> float:
+    """Minutes teammates ruled out leave him (tonight.py); none when teammates.py measured a gain already."""
+    if p.minute_shifts or minutes >= MAX_MINUTES:  # a gain measured by teammates.py already holds an absence
+        return 0.0
+    return min(minutes_gained(p, mates), MAX_MINUTES - minutes)
 
 
 # Teammates' lines should add up to their team's expected score (gamescore.py). Their points lines,
