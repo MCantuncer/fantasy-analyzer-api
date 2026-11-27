@@ -644,6 +644,40 @@ def test_an_opponents_three_point_luck_fades():
     assert against < next(r for r in without if r.kind == "opponent").stats[gamebox.TPM]
 
 
+def test_his_own_three_point_luck_comes_back_in_part():
+    # Player 11 made 9 of 30 threes in each of three games (30%), player 21 15 of 30 (50%): league 40%,
+    # so player 11 is 3 threes a game short of it, 0.1 a minute, shrunk by OWN_LUCK_GAMES of no luck.
+    rows = []
+    for game, day in ((101, 1), (102, 3), (103, 4)):
+        for player, team, made in ((11, 1, 9.0), (21, 2, 15.0)):
+            line = _line(30, pts=3 * made)
+            line[gamebox.TPM], line[gamebox.gamescore.TPA] = made, 30.0
+            rows.append(GameRow(player, game, day, team, line))
+    box = gamebox.build(2027, rows, PRIOR, SCHEDULE)
+    shrink = 3 / (3 + gamebox.OWN_LUCK_GAMES)
+    assert box.own_luck[11] == pytest.approx(0.1 * shrink)
+    assert box.own_luck[21] == pytest.approx(-0.1 * shrink)
+    m = gamebox.context(box, 11, 1, 5)
+    assert m.own_three_luck == pytest.approx(0.1 * shrink)
+    # The cold shooter's threes and points come back by the weight's share of the gap, in his form reason.
+    line = _line(30.0, pts=15.0)
+    line[gamebox.TPM] = 3.0
+    off = replace(m, own_three_luck=0.0)
+    plain = gamebox.apply(line, off, [])[0]
+    new, _, reasons = gamebox.apply(line, m, [])
+    luck = 0.1 * shrink * new[MINUTES]
+    assert new[gamebox.TPM] - plain[gamebox.TPM] == pytest.approx(gamebox.OWN_LUCK_TPM * luck)
+    assert new[PTS] - plain[PTS] == pytest.approx(gamebox.OWN_LUCK_PTS * 3 * luck)
+    form = next(r for r in reasons if r.kind == "form").stats[gamebox.TPM]
+    before = [r.stats.get(gamebox.TPM, 0.0) for r in gamebox.apply(line, off, [])[2] if r.kind == "form"]
+    assert form > (before[0] if before else 0.0)
+    # The hot shooter gives some back.
+    hot = gamebox.context(box, 21, 2, 5)
+    assert gamebox.apply(line, hot, [])[0][PTS] < gamebox.apply(line, replace(hot, own_three_luck=0.0), [])[0][PTS]
+    # No threes, no luck.
+    assert gamebox.own_three_luck({}) == {}
+
+
 def test_finishing_spread_is_how_much_of_a_teams_finishing_one_or_two_players_carry():
     got = gamebox.finishing_spread(_rows())
     # Team 1: player 11 takes all 16 shots (player 12 none) -> 1.0; team 2: 16 and 6 shots.
