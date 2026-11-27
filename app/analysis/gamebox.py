@@ -25,6 +25,9 @@ assists, 1.0-1.7% for steals, 1.0-1.6% for blocks, 1.6-2.6% for threes, 1.4-2.3%
     as good, and splitting it by guards, wings and bigs, or by his own mix of shots, added nothing;
     free throws follow the opponent's free throws allowed; threes take back part of the opponent's luck:
     what its opponents shot from three over the league's 3P% mostly doesn't last;
+  * his own three-point luck: threes he made this season against what the league's 3P% gives on his
+    attempts. About half of the gap comes back in points and threes (2026-11-27, every season both
+    ways, 2026-27 so far and 2014-15..2020-21);
   * teammates ruled out: their shots and points a game (more points, assists and turnovers a minute),
     on top of the minutes they leave (tonight.py), and more minutes for bench players;
   * home court (assists, FG%), how much his team is favored (blocks), a back-to-back (steals).
@@ -169,6 +172,14 @@ MINUTE_KINDS = {
     "rotation": "rotation",
 }  # role: part of his usual line, not a reason
 
+# His own three-point luck (2026-11-27): threes the league's 3P% so far gives on his attempts this
+# season less the threes he made, a minute, with OWN_LUCK_GAMES games of no luck blended in. His form
+# keeps too much of a cold or hot spell from three; about half of the gap comes back. Fitted blind on
+# five seasons (scripts/own_three_luck_backtest.py); points take it times 3.
+OWN_LUCK_GAMES = 10.0
+OWN_LUCK_PTS = 0.5
+OWN_LUCK_TPM = 0.4
+
 # Per minute: his line's rate x (1 + sum of weight x signal) + level, per stat.
 #   form: decayed (FORM_DECAY) per minute over his line's rate, -1..2, shrunk; for blocks and shots
 #     his last FORM_GAMES games, unshrunk. form_fast: the same over FAST_DECAY
@@ -180,10 +191,19 @@ MINUTE_KINDS = {
 #   usage_back: shots a game of regulars back from an absence, / 100: his form holds the shots he took for them
 #   home: +0.5 at home, -0.5 away; margin: expected margin / 10; b2b: 1 on a back-to-back
 #   three_luck: the opponent's 3P% allowed over the league's, shrunk (THREE_LUCK_GAMES): 0.02 = 2 points
+#   own_three_luck: threes the league's 3P% gives on his attempts this season less the threes he made,
+#     a minute, shrunk (OWN_LUCK_GAMES), in the stat's units (x3 for points) over his line's rate
 #   shots_form: his shots a minute (FGA + 0.44 FTA) over his last FORM_GAMES games against his line's,
 #     -1..2: turnovers come with the ball, so a player shooting more lately turns it over more too
 RATE_WEIGHTS: dict[int, dict[str, float]] = {
-    PTS: {"form": 0.7683, "opp": 1.0751, "usage_out": 0.1212, "vac": 0.2043, "usage_back": -0.15},
+    PTS: {
+        "form": 0.7683,
+        "opp": 1.0751,
+        "usage_out": 0.1212,
+        "vac": 0.2043,
+        "usage_back": -0.15,
+        "own_three_luck": OWN_LUCK_PTS,
+    },
     REB: {"form": 0.8233, "opp": 0.8943, "freed": 0.5},
     AST: {
         "form": 0.4122,
@@ -196,7 +216,7 @@ RATE_WEIGHTS: dict[int, dict[str, float]] = {
     },
     STL: {"form": 0.9928, "opp": 0.7837, "b2b": -0.0343},
     BLK: {"opp": 0.893, "margin": 0.0576, "form": 0.1027, "freed": 0.5},
-    TPM: {"form": 0.6247, "form_fast": 0.2113, "opp": 0.6939, "three_luck": -1.56},
+    TPM: {"form": 0.6247, "form_fast": 0.2113, "opp": 0.6939, "three_luck": -1.56, "own_three_luck": OWN_LUCK_TPM},
     TO: {"form": 0.7926, "opp": 0.8042, "usage_out": 0.2392, "usage_back": -0.2, "shots_form": 0.38},
     FGA: {"form": 0.5567, "opp": 1.0615, "usage_out": 0.2991},
     FTA: {"opp": 0.9368},
@@ -323,6 +343,7 @@ class Box:
     team_points: dict[int, float] = field(default_factory=dict)  # team -> points a game
     team_made: dict[int, dict[int, float]] = field(default_factory=dict)  # team -> FREED stat -> a game
     three_luck: dict[int, float] = field(default_factory=dict)  # team -> 3P% allowed over the league's, shrunk
+    own_luck: dict[int, float] = field(default_factory=dict)  # player -> threes short of the league's 3P%, a minute
     played: dict[int, list[int]] = field(default_factory=dict)  # team -> days it played, in order
     schedule: dict[int, list[Game]] = field(default_factory=dict)  # team -> its games this season, in order
     sat: dict[int, list[int]] = field(default_factory=dict)  # player -> days he sat by coach's decision
@@ -625,6 +646,7 @@ def build(
             if tried3 > 0:
                 n = len(played[t])
                 three_luck[t] = (made3 / tried3 - league_made / league_tried) * n / (n + THREE_LUCK_GAMES)
+    own_luck = own_three_luck(by_player)
     team_days = {t: sorted(d) for t, d in played.items()}
     # Games back from an absence: walk his games, counting his team's games he missed in between.
     for pid, games in by_player.items():
@@ -647,6 +669,7 @@ def build(
         team_points={t: points_sum[t] / len(played[t]) for t in played},
         team_made={t: {k: v / len(played[t]) for k, v in made_sum[t].items()} for t in played},
         three_luck=three_luck,
+        own_luck=own_luck,
         played=team_days,
         schedule=schedule,
         scores=gamescore.build(games := gamescore.team_games(rows), score_start),
@@ -711,6 +734,7 @@ class GameContext:
     sat_ago: int | None = None  # days since he last sat a game by coach's decision (none: never, or not known)
     rotation: tuple[tuple[int, float], ...] = ()  # his team's regulars but him: (player, recent minutes over usual)
     opp_three_luck: float = 0.0  # the opponent's 3P% allowed over the league's, shrunk (Box.three_luck)
+    own_three_luck: float = 0.0  # his threes short of the league's 3P% a minute this season, shrunk (Box.own_luck)
 
 
 def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
@@ -743,6 +767,7 @@ def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
         sat_ago=game.day - max(sat) if sat else None,
         rotation=tuple(x for x in box.rotation(team, game.day) if x[0] != player),
         opp_three_luck=box.three_luck.get(game.opponent, 0.0),
+        own_three_luck=box.own_luck.get(player, 0.0),
     )
 
 
@@ -898,6 +923,11 @@ def rate_signal(
         return m.defense.get(stat, 0.0)
     if name == "three_luck":
         return m.opp_three_luck
+    if name == "own_three_luck":
+        if rate <= 0 or not m.own_three_luck:
+            return 0.0
+        lo, hi = FORM_RANGE
+        return min(max(m.own_three_luck * (3.0 if stat == PTS else 1.0) / rate, lo), hi)
     if name == "usage_out":
         return sum(t.usage for t in out) / 100
     if name == "vac":
@@ -972,6 +1002,7 @@ def apply(
         "shots_form": "form",
         "opp": "opponent",
         "three_luck": "opponent",
+        "own_three_luck": "form",
         "usage_out": "teammates_out",
         "vac": "teammates_out",
         "freed": "teammates_out",
@@ -1018,6 +1049,31 @@ def apply(
     if "opponent" in reasons:
         reasons["opponent"].detail["team"] = m.opponent
     return new, usual, list(reasons.values())
+
+
+def own_three_luck(by_player: dict[int, list[GameRow]]) -> dict[int, float]:
+    """player -> threes the league's 3P% gives on his attempts this season less the threes he made, a
+    minute, times n / (n + OWN_LUCK_GAMES) for his n games: + when his threes have gone in less often than
+    the league's, so some should come back."""
+    made = tried = 0.0
+    sums: dict[int, list[float]] = {}
+    for pid, games in by_player.items():
+        s = sums[pid] = [0.0, 0.0, 0.0, 0.0]  # made, tried, minutes, games
+        for r in games:
+            s[0] += r.line.get(TPM, 0.0)
+            s[1] += r.line.get(gamescore.TPA, 0.0)
+            s[2] += r.line.get(MINUTES, 0.0)
+            s[3] += 1
+        made += s[0]
+        tried += s[1]
+    if tried <= 0:
+        return {}
+    rate = made / tried
+    return {
+        pid: (s[1] * rate - s[0]) / s[2] * s[3] / (s[3] + OWN_LUCK_GAMES)
+        for pid, s in sums.items()
+        if s[1] > 0 and s[2] > 0
+    }
 
 
 def ft_line_pct(line: dict[int, float]) -> float:
