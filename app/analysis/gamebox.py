@@ -513,12 +513,14 @@ def build(
     score_start: gamescore.SeasonEnd | None = None,
     sat: dict[int, list[int]] | None = None,
     last_lines: dict[int, dict[str, float]] | None = None,
+    misses: blackbox.Misses | None = None,
 ) -> Box:
     """The box from every game row so far: defenses, margins and each player's recent games.
     ``last_season``: carry() of last season's rows, for form that runs across the summer;
     ``score_start``: gamescore.season_end of last season's rows, where teams' scoring starts;
     ``sat``: the days each player sat a game by coach's decision (ESPN's box scores, app/benched.py);
-    ``last_lines``: blackbox.per_game of last season's rows, for the trees."""
+    ``last_lines``: blackbox.per_game of last season's rows, and ``misses``: blackbox.past_misses of the
+    line log's settled nights, for the trees."""
     last_season = last_season or {}
     # League rate a minute, for players without a last season to start from.
     total_min = sum(r.line[MINUTES] for r in rows) or 1.0
@@ -681,7 +683,7 @@ def build(
         sat=sat or {},
         lineups=lineupcall.build(rows, prior, PTS, MINUTES),
         finishing=finishing_spread(rows),
-        history=blackbox.history(rows, last_lines),
+        history=blackbox.history(rows, last_lines, misses),
     )
 
 

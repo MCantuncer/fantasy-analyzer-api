@@ -16,11 +16,16 @@ def test_trees_read_as_lightgbm_does():
     """The shipped trees, read by blackbox.py, give LightGBM's own answers on a sample of real inputs
     (written by scripts/black_box_backtest.py --export with the trees)."""
     sample = json.loads(SAMPLE.read_text())
-    assert set(sample["calls"]) == set(blackbox.models())
+    assert set(sample["calls"]) == set(blackbox.models()) | set(blackbox.with_misses())
+    assert any(x.get("pm_n", 0) >= blackbox.MIN_MISSES for x in sample["inputs"])  # both kinds of trees
+    assert any(x.get("pm_n", 0) < blackbox.MIN_MISSES for x in sample["inputs"])
     for i, x in enumerate(sample["inputs"]):
         got = blackbox.calls(x)
         for cat, want in sample["calls"].items():
-            assert got[cat] == pytest.approx(want[i], abs=1e-9)
+            if want[i] is None or math.isnan(want[i]):
+                assert cat not in got
+            else:
+                assert got[cat] == pytest.approx(want[i], abs=1e-9)
 
 
 def _tree(**kw) -> blackbox.Trees:
@@ -93,8 +98,57 @@ def test_adjust_moves_lines_by_the_calls():
 
 def test_no_trees_no_change(monkeypatch, tmp_path):
     monkeypatch.setattr(blackbox, "MODELS", tmp_path / "missing.json")
-    blackbox.models.cache_clear()
+    for f in (blackbox._raw, blackbox.models, blackbox.with_misses):
+        f.cache_clear()
     try:
-        assert blackbox.calls({"n_MIN": 30.0}) == {}
+        assert blackbox.calls({"n_MIN": 30.0, "pm_n": 9.0}) == {}
     finally:
-        blackbox.models.cache_clear()
+        for f in (blackbox._raw, blackbox.models, blackbox.with_misses):
+            f.cache_clear()
+
+
+def _night(lines: dict, results: dict, engine: dict | None = None) -> dict:
+    """One settled line-log night: lines {pid: [team, *12 stats]}, results {pid: [12 stats] | []}."""
+    rec = {
+        "teams": [],
+        "lines": {str(p): v for p, v in lines.items()},
+        "results": {str(p): v for p, v in results.items()},
+    }
+    if engine is not None:
+        rec["engine"] = {str(p): v for p, v in engine.items()}
+    return rec
+
+
+def _stats(mins: float, pts: float) -> list[float]:
+    return [mins, pts, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+
+def test_past_misses_read_the_engine_line_once_the_trees_are_in(monkeypatch):
+    monkeypatch.setitem(blackbox.TREES_FROM, 2027, 3)
+    records = [
+        (1, _night({11: [1, *_stats(30, 20)]}, {11: _stats(32, 25)})),  # before the trees: the saved line
+        (2, _night({11: [1, *_stats(30, 20)]}, {11: []})),  # did not play: no miss
+        (3, _night({11: [1, *_stats(31, 21)]}, {11: _stats(30, 20)}, engine={11: _stats(30, 18)})),
+        (4, _night({11: [1, *_stats(31, 21)]}, {11: _stats(30, 20)})),  # trees in, no engine line: skipped
+    ]
+    ms = blackbox.past_misses(records, 2027)
+    assert ms.day.tolist() == [1, 3] and ms.player.tolist() == [11, 11]
+    col = {c: i for i, c in enumerate(blackbox.CATS)}
+    assert ms.miss[0][col["MIN"]] == 2 and ms.miss[0][col["PTS"]] == 5
+    assert ms.miss[1][col["PTS"]] == 2  # against the engine's 18, not the saved 21
+
+
+def test_miss_inputs_are_his_own_from_nights_before_the_day(monkeypatch):
+    monkeypatch.setitem(blackbox.TREES_FROM, 2027, 100)
+    records = []
+    for day in range(1, 9):  # 11 beats his points line by the day number, 12 by 1 every night
+        lines = {11: [1, *_stats(30, 20)], 12: [1, *_stats(30, 10)]}
+        records.append((day, _night(lines, {11: _stats(30, 20 + day), 12: _stats(30, 11)})))
+    ms = blackbox.past_misses(records, 2027)
+    x = blackbox.miss_inputs(ms, 11, 7)  # days 1..6 only
+    assert x["pm_n"] == 6
+    assert x["pms_PTS"] == pytest.approx(3.5) and x["pm5_PTS"] == pytest.approx(4)  # days 2..6
+    assert x["pm5_MIN"] == 0
+    assert blackbox.miss_inputs(ms, 12, 7)["pms_PTS"] == 1
+    assert blackbox.miss_inputs(ms, 11, 1) == {"pm_n": 0.0}
+    assert blackbox.miss_inputs(None, 11, 7) == {"pm_n": 0.0}
