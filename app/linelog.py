@@ -6,9 +6,10 @@ be the one anyone could see before the game, so a watch looks at the lines in th
 tip-off and, for each team, keeps its last look before its game starts (as app/pregame.py does for
 injury tags). Once the night has settled, the box build fills in what each player did.
 
-Built to stay small: one row per NBA day (about 300 players), numbers in fixed-order arrays instead
-of keyed objects, ids as JSON keys. A day is 25-35 KB before Postgres compresses it, a season
-about 5 MB. A day's record:
+Built to stay small: one row per NBA day, numbers in fixed-order arrays instead of keyed objects, ids
+as JSON keys. Since 2026-11-27 the league is read with main.LINE_LOG_FREE_AGENTS free agents, so with
+the rosters every NBA player in tonight's games has a line (the black box's team and opponent misses
+need them all); a full night is about 450 players, 60-80 KB before Postgres compresses it. A day's record:
 
     {"teams": {team: [tip, checked]},             ISO times
      "lines": {player: [team, *STATS]},           his line, last look before his team tipped off
@@ -65,7 +66,8 @@ Look = tuple[int, NextGameLine] | tuple[int, NextGameLine, dict[int, float] | No
 
 
 def tonight_lines(league: League) -> dict[int, dict[int, Look]]:
-    """Every player's next-game line in the league's pool (rosters and the free agents it reads), by
+    """Every player's next-game line in the league's pool (rosters and the free agents it reads: for the
+    line log, every NBA player), by
     the day of that game: day -> player -> (NBA team, line, the engine's line before the trees). Players
     out or without a game are left out."""
     pool = [*(p for t in league.teams for p in t.roster), *league.free_agents]
