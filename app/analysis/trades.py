@@ -212,8 +212,11 @@ def keystone_odds(p: float) -> float:
 class Picks:
     """Deals picked so far, within the per-target, per-partner, per-player and shape limits of a list of ``n``.
 
-    One deal per core idea: the same main player each way with the same owner is one idea, whatever
-    else is added to it ("Allen for Avdija" and "Allen + Mitchell for Avdija + George").
+    One deal per idea: deals with the same owner for the same main player that send any of the same
+    players of mine are one idea, whatever else is added to them ("Allen for Avdija" and "Allen +
+    Mitchell for Avdija + George"; "Allen + Spencer for Okongwu" and "Allen + Walter for Okongwu").
+    Which of my players is the main one doesn't matter: on League A (2026-11-27) a hot Cam Spencer
+    was priced above Jarrett Allen, so the two Okongwu deals counted as different ideas.
 
     Used while simulating down the queue: a deal that couldn't make the list isn't simulated.
     """
@@ -226,20 +229,22 @@ class Picks:
         self.per_target: dict[int, int] = {}
         self.per_partner: dict[int, int] = {}
         self.per_give: dict[int, int] = {}
-        self.cores: set[tuple[int, int, int]] = set()
+        # The idea behind each deal picked: (owner, main player I get) -> the players I send in each.
+        self.ideas: dict[tuple[int, int], list[set[int]]] = {}
 
     def _target(self, d: Deal) -> int:
         return max(d.get, key=self.value).id
 
-    def _core(self, d: Deal) -> tuple[int, int, int]:
-        """The idea behind a deal: the owner, the main player I send and the main player I get."""
-        return d.partner_idx, max(d.give, key=self.value).id, self._target(d)
+    def _same_idea(self, d: Deal) -> bool:
+        """Whether a deal picked already is this one with another throw-in or two."""
+        give = {p.id for p in d.give}
+        return any(give & sent for sent in self.ideas.get((d.partner_idx, self._target(d)), []))
 
     def room(self, d: Deal) -> bool:
         if len(d.give) != len(d.get) and self.uneven >= self.uneven_cap:
             return False
         return (
-            self._core(d) not in self.cores
+            not self._same_idea(d)
             and self.per_target.get(self._target(d), 0) < MAX_PER_TARGET
             and self.per_partner.get(d.partner_idx, 0) < MAX_PER_PARTNER
             and all(self.per_give.get(p.id, 0) < MAX_PER_GIVE for p in d.give)
@@ -255,7 +260,7 @@ class Picks:
         self.per_partner[d.partner_idx] = self.per_partner.get(d.partner_idx, 0) + 1
         for p in d.give:
             self.per_give[p.id] = self.per_give.get(p.id, 0) + 1
-        self.cores.add(self._core(d))
+        self.ideas.setdefault((d.partner_idx, t), []).append({p.id for p in d.give})
 
     @property
     def full(self) -> bool:

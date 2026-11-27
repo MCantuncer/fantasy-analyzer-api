@@ -306,6 +306,30 @@ def test_picks_limit_repeats_and_uneven_deals(league):
     assert len(set(cores)) == len(cores)
     queued = [core(d) for d in finder.queue()]
     assert len(set(queued)) < len(queued)  # the queue does repeat ideas, so the rule is exercised
+    # Nor the same deal with another throw-in: same owner and main player I get, any player I send in common.
+    for i, a in enumerate(picked):
+        for b in picked[i + 1 :]:
+            same = (a.partner_idx, core(a)[2]) == (b.partner_idx, core(b)[2])
+            assert not (same and {p.id for p in a.give} & {p.id for p in b.give})
+
+
+def test_picks_list_a_deal_once_whatever_the_throw_in(league):
+    """ "Allen + Spencer for Okongwu" and "Allen + Walter for Okongwu" are one idea, even when the
+    throw-in is priced above the player the deal is built on (League A, 2026-11-27)."""
+    model = CategoryModel(league)
+    me = next(i for i, t in enumerate(league.teams) if t.id == 3)
+    finder = TradeFinder(league, model, me, keep=set())
+    value = finder.perceived.value
+    d = finder.queue()[0]
+    mine = sorted(league.teams[me].roster, key=value, reverse=True)
+    pricier, other, base, cheaper = mine[0], mine[1], mine[len(mine) // 2], mine[-1]
+    assert value(pricier) > value(base) > value(cheaper)
+    picks = finder.picks(10)
+    picks.add(dataclasses.replace(d, give=[base, pricier]))
+    assert not picks.room(dataclasses.replace(d, give=[base, cheaper]))
+    assert not picks.room(dataclasses.replace(d, give=[base]))
+    # A package with none of the same players is another idea for the same player.
+    assert picks.room(dataclasses.replace(d, give=[other]))
 
 
 def test_package_value_has_a_star_premium(league):
