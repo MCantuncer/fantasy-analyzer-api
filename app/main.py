@@ -662,8 +662,11 @@ def create_app(
             latest = max((r.day for r in rows), default=0)
             nights = await run_in_threadpool(app.state.store.sat_out, season, latest - benched.KEEP_DAYS)
             sat = benched.coach_days(nights)
+            # The engine's own misses on the line log's settled nights, for the trees (analysis/blackbox.py).
+            logged = await run_in_threadpool(app.state.store.player_lines, season, True)
+            misses = blackbox.past_misses(logged, season)
             box = await run_in_threadpool(
-                gamebox.build, season, rows, prior, schedule, last, score_start, sat, last_lines
+                gamebox.build, season, rows, prior, schedule, last, score_start, sat, last_lines, misses
             )
             app.state.game_boxes.set(season, box)
             app.state.last_boxes[season] = box

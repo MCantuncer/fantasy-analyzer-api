@@ -64,6 +64,7 @@ class History:
     players: dict[int, np.ndarray] = field(default_factory=dict)  # player -> rows of [day, *_COLS], by day
     teams: dict[int, np.ndarray] = field(default_factory=dict)  # team -> rows of [day, *own, *opponent's], by day
     last: dict[int, dict[str, float]] = field(default_factory=dict)  # player -> last season's per game (+ "gp")
+    misses: Misses | None = None  # the engine's own misses this season (past_misses)
 
 
 def per_game(rows: list[GameRow]) -> dict[int, dict[str, float]]:
@@ -79,7 +80,9 @@ def per_game(rows: list[GameRow]) -> dict[int, dict[str, float]]:
     }
 
 
-def history(rows: list[GameRow], last: dict[int, dict[str, float]] | None = None) -> History:
+def history(
+    rows: list[GameRow], last: dict[int, dict[str, float]] | None = None, misses: Misses | None = None
+) -> History:
     by_player: dict[int, list[list[float]]] = defaultdict(list)
     team_game: dict[tuple[int, int], np.ndarray] = {}
     game_day: dict[int, int] = {}
@@ -102,6 +105,7 @@ def history(rows: list[GameRow], last: dict[int, dict[str, float]] | None = None
         players={p: np.array(sorted(v, key=lambda x: x[0])) for p, v in by_player.items()},
         teams={t: np.array(sorted(v, key=lambda x: x[0])) for t, v in teams.items()},
         last=last or {},
+        misses=misses,
     )
 
 
@@ -137,6 +141,68 @@ def _team(h: History, team: int, day: int, who: str) -> dict[str, float]:
     return out
 
 
+# --- the engine's own misses -----------------------------------------------------------------------------
+# Each settled night of the line log (app/linelog.py) holds each player's line as the engine had it before
+# the trees ("engine"; before TREES_FROM[season] the saved line itself had no trees in it) and what he did.
+# His own misses (result less line, in cats() order) are inputs: his last MISS_LAST games and his season.
+# Only his own: the log holds one league's pool, not every player, so a team's or an opponent's misses
+# would be counted over other players live than in the replay. The replay builds the same records from
+# its own lines (scripts/black_box_backtest.py), so the same code counts them. Trees that read them only
+# answer for a player with MIN_MISSES misses saved.
+TREES_FROM = {2027: 39}  # the first day whose saved lines have the trees in them (api #227, 2026-11-27)
+MISS_LAST = 5
+MIN_MISSES = 5
+LOG_STATS = (MINUTES, PTS, REB, AST, STL, BLK, TPM, TO, FGM, FGA, FTM, FTA)  # linelog.STATS order
+
+
+def _log_cats(a: list[float]) -> list[float]:
+    return cats(dict(zip(LOG_STATS, a, strict=True)))
+
+
+@dataclass(frozen=True)
+class Misses:
+    """The engine's misses this season, by day: who, and cats() of result less line."""
+
+    day: np.ndarray
+    player: np.ndarray
+    miss: np.ndarray  # (n, len(CATS))
+
+
+def past_misses(records: list[tuple[int, dict]], season: int) -> Misses:
+    """Every settled night's misses from the line log's (day, record) pairs."""
+    rows = []
+    before_trees = TREES_FROM.get(season, 10**6)
+    for day, rec in records:
+        engine = rec.get("engine") or {}
+        for pid, got in (rec.get("results") or {}).items():
+            saved = (rec.get("lines") or {}).get(pid)
+            if not got or saved is None:
+                continue
+            line = engine.get(pid) or (saved[1:] if day < before_trees else None)
+            if line is not None:
+                rows.append((day, int(pid), np.array(_log_cats(got)) - np.array(_log_cats(line))))
+    rows.sort(key=lambda r: r[0])
+    return Misses(
+        day=np.array([r[0] for r in rows], dtype=np.int64),
+        player=np.array([r[1] for r in rows], dtype=np.int64),
+        miss=np.array([r[2] for r in rows], dtype=float).reshape(-1, len(CATS)),
+    )
+
+
+def miss_inputs(ms: Misses | None, player: int, day: int) -> dict[str, float]:
+    """His misses before ``day``: how many (the MIN_MISSES gate), his last MISS_LAST and his season."""
+    out: dict[str, float] = {"pm_n": 0.0}
+    if ms is None or not len(ms.day):
+        return out
+    mine = np.flatnonzero((ms.day < day) & (ms.player == player))
+    out["pm_n"] = float(len(mine))
+    for name, idx in (("pm5", mine[-MISS_LAST:]), ("pms", mine)):
+        if len(idx):
+            for c, v in zip(CATS, ms.miss[idx].mean(0), strict=True):
+                out[f"{name}_{c}"] = float(v)
+    return out
+
+
 def game_inputs(h: History | None, player: int, team: int, opponent: int, day: int) -> dict[str, float]:
     """What the league box knows of his game on ``day``: his games so far, last season, both teams' games."""
     if h is None:
@@ -166,6 +232,7 @@ def game_inputs(h: History | None, player: int, team: int, opponent: int, day: i
         if name != "tpa":
             out[f"ly_{name}"] = last[name] if last else NAN
     out |= _team(h, team, day, "t") | _team(h, opponent, day, "o")
+    out |= miss_inputs(h.misses, player, day)
     return out
 
 
@@ -305,18 +372,32 @@ def _trees(spec: dict) -> Trees:
 
 
 @cache
+def _raw() -> dict:
+    return json.loads(MODELS.read_text()) if MODELS.exists() else {}
+
+
+@cache
 def models() -> dict[str, Trees]:
     """The kept categories' trees (empty if the file is missing: lines then stay as they are)."""
-    if not MODELS.exists():
-        return {}
-    raw = json.loads(MODELS.read_text())
-    return {cat: _trees(spec) for cat, spec in raw["models"].items()}
+    return {cat: _trees(spec) for cat, spec in _raw().get("models", {}).items()}
+
+
+@cache
+def with_misses() -> dict[str, Trees]:
+    """The kept categories' trees that also read his past misses: they answer once he has MIN_MISSES."""
+    return {cat: _trees(spec) for cat, spec in _raw().get("with_misses", {}).items()}
 
 
 def calls(x: Mapping[str, float]) -> dict[str, float]:
-    """The trees' expected miss per kept category for one game's inputs."""
+    """The trees' expected miss per kept category for one game's inputs: the trees that read his past
+    misses where they are kept and he has MIN_MISSES of them, else the others."""
     out = {}
-    for cat, t in models().items():
+    known = x.get("pm_n", 0.0) >= MIN_MISSES
+    for cat in models().keys() | with_misses().keys():
+        t = with_misses().get(cat) if known else None
+        t = t or models().get(cat)
+        if t is None:
+            continue
         row = np.array([x.get(name, NAN) for name in t.features], dtype=float)
         v = t.predict(row)
         if math.isfinite(v):
