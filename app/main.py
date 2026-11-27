@@ -242,6 +242,9 @@ PREGAME_WATCH_SECONDS = float(os.getenv("PREGAME_WATCH_SECONDS", "600"))
 # public league (LINE_LOG_LEAGUE_ID, else the sample league), kept as it stood at tip-off; the box
 # build fills in results once the night settles. 0 turns it off.
 LINE_LOG_SECONDS = float(os.getenv("LINE_LOG_SECONDS", "900"))
+# The line log reads this many free agents, most owned first: with the rosters, every NBA player in
+# tonight's games, so the black box's team and opponent misses count the players the replay counts.
+LINE_LOG_FREE_AGENTS = int(os.getenv("LINE_LOG_FREE_AGENTS", "500"))
 LINE_LOG_FIRST = 60.0  # the first look after a start, and the retry while the league box is still building
 # The iddaa log (app/iddaa.py): in the hours before tip-off, iddaa's NBA lines, each game kept as it
 # stood at tip-off, for the admin comparison with ours. Comparison only. 0 turns it off.
@@ -762,12 +765,20 @@ def create_app(
         return raw
 
     async def load_league(
-        league_id: int, season: int, creds: EspnCredentials | None, with_fa: bool, with_calendar: bool = False
+        league_id: int,
+        season: int,
+        creds: EspnCredentials | None,
+        with_fa: bool,
+        with_calendar: bool = False,
+        fa_limit: int | None = None,
     ) -> League:
         """The league, parsed. ``with_fa`` adds free agents and everything the analysis needs;
-        ``with_calendar`` only the NBA calendar, durability and absences, for projections."""
+        ``with_calendar`` only the NBA calendar, durability and absences, for projections;
+        ``fa_limit`` reads more free agents than the analysis does (the line log), kept apart."""
         full = with_fa or with_calendar
         key = (league_id, season, credentials_key(creds), with_fa, full)
+        if fa_limit is not None:
+            key = (*key, fa_limit)
         # The analysis's league (free agents and all) has everything a projection needs:
         # reuse it, or the load already under way, instead of fetching the league again.
         wider = (league_id, season, credentials_key(creds), True, True) if full and not with_fa else None
@@ -780,7 +791,7 @@ def create_app(
             loading = app.state.league_loads.get(k)
             if loading is not None:
                 return await asyncio.shield(loading)
-        task = asyncio.ensure_future(fetch_league(league_id, season, creds, with_fa, full))
+        task = asyncio.ensure_future(fetch_league(league_id, season, creds, with_fa, full, fa_limit))
         app.state.league_loads[key] = task
         task.add_done_callback(
             lambda t: t.cancelled() or t.exception()
@@ -793,13 +804,21 @@ def create_app(
         return league
 
     async def fetch_league(
-        league_id: int, season: int, creds: EspnCredentials | None, with_fa: bool, full: bool
+        league_id: int,
+        season: int,
+        creds: EspnCredentials | None,
+        with_fa: bool,
+        full: bool,
+        fa_limit: int | None = None,
     ) -> League:
         key = (league_id, season, credentials_key(creds), with_fa, full)
+        if fa_limit is not None:
+            key = (*key, fa_limit)
         league = app.state.leagues.get(key)
         if league is None:
             raw = await app.state.espn.league(season, league_id, creds)
-            fas = await app.state.espn.free_agents(season, league_id, creds) if with_fa else []
+            more = {} if fa_limit is None else {"limit": fa_limit}
+            fas = await app.state.espn.free_agents(season, league_id, creds, **more) if with_fa else []
             schedule = await pro_schedule(season) if full else None
             snake = ((raw.get("settings") or {}).get("draftSettings") or {}).get("type") != "AUCTION"
             adp = await market_adp(season) if with_fa and snake else None
@@ -2245,7 +2264,7 @@ def create_app(
         if app.state.game_boxes.get(season) is None:
             start_game_box(season)  # just after a deploy: without the box every line would be missing
             return None
-        league = await load_league(league_id, season, None, with_fa=True)
+        league = await load_league(league_id, season, None, with_fa=True, fa_limit=LINE_LOG_FREE_AGENTS)
         if any(p.game_context is None for t in league.teams for p in t.roster):
             attach_game_contexts(league)  # a box built after this league was loaded
         lines = await run_in_threadpool(linelog.tonight_lines, league)

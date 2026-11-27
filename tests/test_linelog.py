@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
-from app import linelog
+from app import linelog, main
 from app.accounts import MemoryAccountStore
 from app.analysis import gamebox, gamescore
 from app.analysis.form import MINUTES, PTS, REB
@@ -180,6 +180,24 @@ def test_the_watch_saves_the_lines_and_settling_fills_in_results(recorded):
     assert got_day == day and done["lines"] == rec["lines"]
     assert done["results"][pid][:3] == [33.0, 25.0, 4.0]
     assert all(v == [] for k, v in done["results"].items() if k != pid and rec["lines"][k][0] == team)
+
+
+def test_the_watch_reads_every_free_agent_so_every_player_has_a_line(recorded):
+    app, store, sched = _app(recorded)
+    asked: list[int] = []
+    espn = app.state.espn
+    read = espn.free_agents
+
+    async def free_agents(season, league_id, creds, limit=150):
+        asked.append(limit)
+        return await read(season, league_id, creds, limit)
+
+    espn.free_agents = free_agents
+    app.state.line_log_league_id = LEAGUE_ID
+    day = min(d for d, gs in sched.games.items() if gs and d >= 3)
+    app.state.now = lambda: min(g.start for g in sched.games[day]) - timedelta(hours=1)
+    assert asyncio.run(app.state.line_log_sweep()) == [day]
+    assert asked == [main.LINE_LOG_FREE_AGENTS] and main.LINE_LOG_FREE_AGENTS >= 400
 
 
 def test_admins_read_back_who_lands_near_his_line(recorded):
