@@ -62,6 +62,17 @@ def test_a_team_keeps_its_last_line_before_tip_off():
     assert rec["teams"]["19"][1] == before.isoformat()
 
 
+def test_the_engine_line_before_the_trees_is_kept_too():
+    sched = schedule()
+    engine = {MINUTES: 29.0, PTS: 19.04}
+    before = T0 - timedelta(minutes=10)
+    rec = linelog.update(None, sched, 30, {1: (19, line(20), engine), 3: (4, line(9), None)}, before)
+    assert rec["engine"]["1"][:2] == [29.0, 19.0] and rec["engine"]["1"][2] == 0.0
+    assert "3" not in rec["engine"]  # no game context: nothing before the trees
+    rec = linelog.update(rec, sched, 30, {}, before + timedelta(minutes=5))  # ruled out since
+    assert "1" not in rec["lines"] and "1" not in rec["engine"]
+
+
 def row(player: int, team: int, pts: float, minutes: float = 31.0) -> GameRow:
     return GameRow(player, 99, 30, team, {MINUTES: minutes, PTS: pts, REB: 7.0})
 

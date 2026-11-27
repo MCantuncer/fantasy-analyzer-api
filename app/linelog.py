@@ -12,7 +12,11 @@ about 5 MB. A day's record:
 
     {"teams": {team: [tip, checked]},             ISO times
      "lines": {player: [team, *STATS]},           his line, last look before his team tipped off
+     "engine": {player: [*STATS]},                the same look before the trees (analysis/blackbox.py)
      "results": {player: [*STATS] | []}}          once settled; [] = his team played, he didn't
+
+"engine" (since 2026-11-27) is what the engine's own misses are counted against, so the trees can learn
+from past misses without learning from their own corrections.
 
 A player whose team has no game rows that night (postponed) gets no result.
 """
@@ -27,7 +31,7 @@ from datetime import datetime, timedelta
 from app.analysis.form import AST, BLK, FGA, FGM, FTA, FTM, MINUTES, PTS, REB, STL, TO, TPM
 from app.analysis.gamebox import GameRow
 from app.analysis.model import CategoryModel
-from app.analysis.report import next_game_line
+from app.analysis.report import next_game_parts
 from app.espn.parse import League
 from app.schemas import NextGameLine
 from app.scores import Schedule
@@ -57,22 +61,26 @@ def days_to_watch(schedule: Schedule, now: datetime) -> list[int]:
     return sorted(d for d, games in schedule.games.items() if any(now < g.start <= now + AHEAD for g in games))
 
 
-def tonight_lines(league: League) -> dict[int, dict[int, tuple[int, NextGameLine]]]:
+Look = tuple[int, NextGameLine] | tuple[int, NextGameLine, dict[int, float] | None]
+
+
+def tonight_lines(league: League) -> dict[int, dict[int, Look]]:
     """Every player's next-game line in the league's pool (rosters and the free agents it reads), by
-    the day of that game: day -> player -> (NBA team, line). Players out or without a game are left out."""
+    the day of that game: day -> player -> (NBA team, line, the engine's line before the trees). Players
+    out or without a game are left out."""
     pool = [*(p for t in league.teams for p in t.roster), *league.free_agents]
     by_team: dict[int, list] = defaultdict(list)
     for p in pool:
         by_team[p.pro_team_id].append(p)
     model, sums = CategoryModel(league), {}
-    out: dict[int, dict[int, tuple[int, NextGameLine]]] = defaultdict(dict)
+    out: dict[int, dict[int, Look]] = defaultdict(dict)
     for p in pool:
         m = p.game_context
         if m is None:
             continue
-        line = next_game_line(model, p, by_team[p.pro_team_id], sums)
+        line, engine = next_game_parts(model, p, by_team[p.pro_team_id], sums)
         if line is not None:
-            out[m.day][p.id] = (p.pro_team_id, line)
+            out[m.day][p.id] = (p.pro_team_id, line, engine)
     return dict(out)
 
 
@@ -80,14 +88,13 @@ def pack(line: NextGameLine) -> list[float]:
     return [round(getattr(line, name), 1) for name, _ in STATS]
 
 
-def update(
-    record: dict | None, schedule: Schedule, day: int, lines: dict[int, tuple[int, NextGameLine]], now: datetime
-) -> dict:
+def update(record: dict | None, schedule: Schedule, day: int, lines: dict[int, Look], now: datetime) -> dict:
     """The day's record with this look written in for every team whose game hasn't started: its
     players' lines replace the last look's (a player ruled out since then leaves it)."""
     out = {
         "teams": dict((record or {}).get("teams", {})),
         "lines": dict((record or {}).get("lines", {})),
+        "engine": dict((record or {}).get("engine", {})),
         "results": dict((record or {}).get("results", {})),
     }
     tips = {team: g.start for g in schedule.games.get(day, []) for team in (g.away, g.home)}
@@ -97,10 +104,15 @@ def update(
     stamp = now.isoformat(timespec="seconds")
     for team in waiting:
         out["teams"][str(team)] = [tips[team].isoformat(timespec="seconds"), stamp]
-    out["lines"] = {pid: v for pid, v in out["lines"].items() if v[0] not in waiting}
-    for pid, (team, line) in lines.items():
+    gone = {pid for pid, v in out["lines"].items() if v[0] in waiting}
+    out["lines"] = {pid: v for pid, v in out["lines"].items() if pid not in gone}
+    out["engine"] = {pid: v for pid, v in out["engine"].items() if pid not in gone}
+    for pid, (team, line, *rest) in lines.items():
         if team in waiting:
             out["lines"][str(pid)] = [team, *pack(line)]
+            engine = rest[0] if rest else None
+            if engine is not None:
+                out["engine"][str(pid)] = [round(engine.get(stat, 0.0), 1) for _, stat in STATS]
     return out
 
 

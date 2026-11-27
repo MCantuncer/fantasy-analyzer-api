@@ -208,21 +208,32 @@ def next_game_line(
     teammates: Iterable[Player],
     team_sums: dict[tuple[int, int], tuple[float, float]] | None = None,
 ) -> schemas.NextGameLine | None:
+    """His next game's line (next_game_parts)."""
+    return next_game_parts(model, p, teammates, team_sums)[0]
+
+
+def next_game_parts(
+    model: CategoryModel,
+    p: Player,
+    teammates: Iterable[Player],
+    team_sums: dict[tuple[int, int], tuple[float, float]] | None = None,
+) -> tuple[schemas.NextGameLine | None, dict[int, float] | None]:
     """His next game's line: the this-week line the odds count (CategoryModel.horizon_line), plus
     the minutes teammates ruled out of it leave him (tonight.py), at the level his games land
     (NEXT_GAME_LEVEL), then the game itself when the league box knows it (gamebox.apply, from
     ``p.game_context``): opponent, his recent games, teammates' shots, home court; then his team's
     lines held to its expected score (team_sum_gap); last, what the trees of blackbox.py expect it to
     miss by. ``teammates`` are the players of his NBA team this league knows; none while he is out.
-    ``team_sums`` keeps each team's sum of lines across calls."""
+    ``team_sums`` keeps each team's sum of lines across calls. With it, the engine's line before the trees
+    (the line log keeps it, for the trees' inputs on his past misses); None without a game."""
     mates = [t for t in teammates if t.id != p.id]
     parts = _game_line(model, p, mates)
     if parts is None:
-        return None
+        return None, None
     line, applied = parts
     m = p.game_context
     if m is None or applied is None:
-        return schemas.NextGameLine(**_stats(line))
+        return schemas.NextGameLine(**_stats(line)), None
     new, usual, found, (out, back, gained) = applied
     gap = 0.0
     if m.team_score is not None:
@@ -235,6 +246,7 @@ def next_game_line(
         gap = team_sum_gap(m.team_score, *sums, m.team_points)
         new = team_adjust(new, gap)
     # then what the trees expect the line to miss by (blackbox.py)
+    engine = new
     new = blackbox.adjust(new, blackbox.calls(blackbox.inputs(m, line, new, out, back, gained, gap)))
     fga = new.get(FGA, 0.0)
     pct = new.get(FGM, 0.0) / fga if fga > 0 else FG_SCALE[0]
@@ -246,7 +258,7 @@ def next_game_line(
         tip=datetime.fromtimestamp(m.tip / 1000, UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if m.tip else None,
         usual=schemas.NextGameStats(**_stats(usual)),
         reasons=[r for r in reasons if abs(r.value) >= MIN_REASON_VALUE][:MAX_REASONS],
-    )
+    ), engine
 
 
 GameParts = tuple[
