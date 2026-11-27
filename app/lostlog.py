@@ -18,7 +18,11 @@ number) that points the way the miss went. The pieces:
   taken, shot-making, rebounds or assists in the same minutes).
 
 Each reason carries a cause: luck (threes, free throws, shot-making), pace, minutes, late_news or
-other. The log keeps the bets the page takes (one per row: iddaa_compare.ts baremOf, mirrored by
+other. Luck is only what can be measured against an expected rate (Can 2026-11-27: "if you can't
+define it, remove it"): a team's threes and free throws over its expected rates, a player's makes
+over his line's FG% and FT% on the shots he took. A player's points miss his shooting doesn't
+explain, and a threes miss (the box has no three-point attempts to measure it on), are other.
+The log keeps the bets the page takes (one per row: iddaa_compare.ts baremOf, mirrored by
 ``bet_of``), settles them, and counts the causes of the lost ones over the last nights. A cause that
 is not luck and keeps coming back is a candidate for the signal search, tested blind on five seasons
 before anything changes (Can's rule: a signal earns weight only by beating the current estimate in
@@ -44,6 +48,7 @@ SPREAD = {"margin": 13.6, "total": 17.5, "team_pts": 10.9}
 LEAN = 0.05  # a game line we lean to by less than this takes no bet (the page's rule)
 LATE_MIN = 1.0  # late news under a point is rounding: our saved call is whole points
 BLOWOUT = 20  # a final margin this big: starters sit the end
+FT_LEAGUE = 0.78  # a free-throw rate for a player whose line has no free throws
 STANDOUT = 6.0  # points off his line that make a player the story of an "other" miss
 # What a cause has to reach to be named a repeat: this many lost bets of one kind over the nights
 # read, and this share of that kind's losses.
@@ -224,6 +229,18 @@ def game_why(miss: float, sides: list[tuple[int, str, dict, float]], standouts: 
 # ---------------------------------------------------------------- player pieces
 
 
+def shot_luck(line: list[float], got: dict) -> float | None:
+    """His points from shot-making: makes over his line's FG% and FT% on the shots he took tonight,
+    field goals at his line's points a make. None when his line has no shooting to measure against."""
+    if len(line) < 12 or line[9] <= 0 or line[8] <= 0:
+        return None
+    fga, fgm = float(got.get("fga") or 0), float(got.get("fgm") or 0)
+    fta, ftm = float(got.get("fta") or 0), float(got.get("ftm") or 0)
+    per_make = (line[1] - line[10]) / line[8]
+    ft_rate = line[10] / line[11] if line[11] > 0 else FT_LEAGUE
+    return per_make * (fgm - fga * line[8] / line[9]) + (ftm - fta * ft_rate)
+
+
 def player_why(stat: str, ours: float, actual: float, line: list[float], got: dict, margin: int | None) -> dict | None:
     """The reason a player's number landed where it did against our line.
 
@@ -250,10 +267,18 @@ def player_why(stat: str, ours: float, actual: float, line: list[float], got: di
                 "points": round(rest, 1),
                 "text": f"Took {fga:.0f} shots in {m1:.0f} minutes (about {want:.0f} expected)",
             }
-        return {"cause": LUCK, "piece": "shooting", "points": round(rest, 1), "text": f"Shot {fgm:.0f} of {fga:.0f}"}
+        shot = shot_luck(line, got)
+        usual = f" (his usual {line[8] / line[9] * 100:.0f}%)" if len(line) > 9 and line[9] > 0 else ""
+        lucky = shot is not None and shot * rest > 0 and abs(shot) >= abs(rest - shot)
+        return {
+            "cause": LUCK if lucky else OTHER,
+            "piece": "shooting",
+            "points": round(shot if lucky else rest, 1),
+            "text": f"Shot {fgm:.0f} of {fga:.0f}{usual}",
+        }
     if stat == "three_pm":
         return {
-            "cause": LUCK,
+            "cause": OTHER,
             "piece": "shooting",
             "points": round(rest, 1),
             "text": f"Made {actual:.0f} threes in {m1:.0f} minutes (our line {ours:.1f})",
