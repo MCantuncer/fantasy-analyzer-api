@@ -7,13 +7,16 @@ import pytest
 import app.analysis.sim as sim
 from app.analysis.model import CategoryModel, norm_cdf
 from app.analysis.report import (
+    FAIR_MAX_PARTNER_DROP,
     FINE_SIMS,
+    MARKET_MAX_PARTNER_DROP,
     PAPER_MAX_PARTNER_DROP,
     Analyzer,
     _expected_rank,
     expected_gain,
     i_gain,
     partner_gains,
+    partner_says_yes,
     worth_a_try,
 )
 from app.analysis.sim import SeasonSim, category_links, simulate_season
@@ -131,12 +134,12 @@ def test_drift_and_links_spread_the_simulated_records(league, monkeypatch):
     assert linked.playoff_pct.min() > independent.playoff_pct.min()
 
 
-def test_every_trade_idea_raises_the_partners_odds(league):
+def test_every_fair_trade_idea_raises_their_odds_or_wins_on_paper(league):
     previews = []
     report = Analyzer(league, 3).report(on_preview=previews.append)
     assert report.trades
     for t in report.trades:
-        assert t.partner_playoff_pct_after - t.partner_playoff_pct_before >= 0.0099
+        assert _partner_side_holds(t, FAIR_MAX_PARTNER_DROP)
     # Free agents and the season table come first, in a preview the finished report only adds trades to.
     [preview] = previews
     assert preview.pending == ["trades", "edge_trades", "vision_trades"] and report.pending == []
@@ -163,13 +166,43 @@ def test_worth_a_try_is_a_paper_win_that_costs_them_little():
     assert not worth_a_try(short, 0.40, 0.39)  # no paper win and their odds drop
 
 
+def test_partner_says_yes_like_real_trades():
+    """Fair: a paper win may cost their odds a point. Edge: 3 points, or 5 for a sell-high or buy-low."""
+    from types import SimpleNamespace
+
+    def deal(*kinds, give=12.0):
+        return SimpleNamespace(give_value=give, get_value=10.0, facts=[SimpleNamespace(kind=k) for k in kinds])
+
+    plain, market = deal(), deal("sell_high")
+    assert partner_says_yes("fair", plain, 0.40, 0.40 - FAIR_MAX_PARTNER_DROP)
+    assert not partner_says_yes("fair", plain, 0.40, 0.40 - FAIR_MAX_PARTNER_DROP - 0.005)
+    assert not partner_says_yes("fair", market, 0.40, 0.38)  # a market play doesn't stretch Fair
+    assert not partner_says_yes("fair", deal(give=9.0), 0.40, 0.40)  # no paper win: their odds must rise
+    assert partner_says_yes("fair", deal(give=9.0), 0.40, 0.41)
+    assert partner_says_yes("edge", plain, 0.40, 0.40 - PAPER_MAX_PARTNER_DROP)
+    assert not partner_says_yes("edge", plain, 0.40, 0.40 - PAPER_MAX_PARTNER_DROP - 0.005)
+    assert partner_says_yes("edge", deal("buy_low"), 0.40, 0.40 - MARKET_MAX_PARTNER_DROP)
+    assert not partner_says_yes("edge", market, 0.40, 0.40 - MARKET_MAX_PARTNER_DROP - 0.005)
+    assert not partner_says_yes("edge", deal("sell_high", give=9.0), 0.40, 0.39)
+    assert not partner_says_yes("vision", plain, 0.40, 0.40)
+
+
+def _partner_side_holds(t, max_drop: float) -> bool:
+    partner = t.partner_playoff_pct_after - t.partner_playoff_pct_before
+    return partner >= 0.0099 or (t.value_they_get >= t.value_they_give - 0.05 and partner >= -max_drop - 0.001)
+
+
+def test_fair_trades_may_cost_them_a_point_on_a_paper_win(league):
+    for t in Analyzer(league, 3).trades("fair"):
+        assert t.playoff_pct_after - t.playoff_pct_before >= 0.0099
+        assert _partner_side_holds(t, FAIR_MAX_PARTNER_DROP)
+
+
 def test_edge_trades_win_on_paper_and_cost_them_little(league):
     for t in Analyzer(league, 3).trades("edge"):
         assert t.playoff_pct_after - t.playoff_pct_before >= 0.0099
-        partner = t.partner_playoff_pct_after - t.partner_playoff_pct_before
-        assert partner >= 0.0099 or (
-            t.value_they_get >= t.value_they_give - 0.05 and partner >= -PAPER_MAX_PARTNER_DROP - 0.001
-        )
+        market = any(f.kind in ("sell_high", "buy_low") for f in t.facts)
+        assert _partner_side_holds(t, MARKET_MAX_PARTNER_DROP if market else PAPER_MAX_PARTNER_DROP)
 
 
 def test_my_side_needs_a_visible_rise_too():
@@ -218,7 +251,7 @@ def test_report_sections(league):
         assert t.my_cats_gain > 0
         # Their average week may stay about flat; the playoff-odds check is what they must pass.
         assert t.their_cats_gain >= SCREEN_MIN_THEIR_GAIN
-        assert t.partner_playoff_pct_after - t.partner_playoff_pct_before >= 0.0099
+        assert _partner_side_holds(t, FAIR_MAX_PARTNER_DROP)
         assert t.playoff_pct_after - t.playoff_pct_before >= 0.0099
         assert all(p.id not in keep for p in t.give)
         assert t.pitch
