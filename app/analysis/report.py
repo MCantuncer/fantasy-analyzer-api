@@ -93,6 +93,15 @@ LOCK_ODDS = 0.98  # a team this sure of the playoffs can't rise a point: it only
 # that helps me costs them 4.7 points, so this keeps the deals that cost them least, not lopsided ones.
 PAPER_WIN_RATIO = 1.0
 PAPER_MAX_PARTNER_DROP = 0.03
+# Real trades are near even for the team that says yes: in 472 accepted trades in 13 public category
+# leagues (2019-2025, /mnt/project-files/trade-data) its median net value was 0 and half lost on
+# projection, while withdrawn offers cost it more (median -1.1). So a fair trade may be a win on
+# paper for them that costs their odds up to a point, not only one that raises them (Can, 2026-11-27).
+FAIR_MAX_PARTNER_DROP = 0.01
+# Owners judge a deal by this season's numbers more than by projections, which is what a sell-high
+# or buy-low plays on: an edge deal with one may cost their odds more, as a manager would ask.
+MARKET_MAX_PARTNER_DROP = 0.05
+MARKET_FACTS = {"sell_high", "buy_low"}
 # Within a trade step: pairing up players with every team takes about half the time (League A,
 # 2026-11-06: 10 s of 17.5 s for fair trades), simulating the best deals the other half.
 PAIRING_SHARE = 0.5
@@ -117,12 +126,31 @@ def paper_win(d: Deal) -> bool:
     return d.give_value >= PAPER_WIN_RATIO * d.get_value - 1e-9
 
 
-def worth_a_try(d: Deal, before: float, after: float) -> bool:
+def worth_a_try(d: Deal, before: float, after: float, max_drop: float = PAPER_MAX_PARTNER_DROP) -> bool:
     """Whether the other owner has a reason to say yes: their odds go up, or they win on paper
-    and their odds drop by no more than PAPER_MAX_PARTNER_DROP."""
+    and their odds drop by no more than ``max_drop``."""
     if partner_gains(before, after):
         return True
-    return paper_win(d) and after - before >= -PAPER_MAX_PARTNER_DROP - 1e-9
+    return paper_win(d) and after - before >= -max_drop - 1e-9
+
+
+def market_play(d: Deal) -> bool:
+    """Whether the deal sells one of my players high or buys one of theirs low."""
+    return any(f.kind in MARKET_FACTS for f in d.facts)
+
+
+def partner_says_yes(mode: Mode, d: Deal, before: float, after: float) -> bool:
+    """The other owner's side of a listed trade.
+
+    Fair: a win on paper that costs their odds at most FAIR_MAX_PARTNER_DROP, or raises them.
+    Edge: the same up to PAPER_MAX_PARTNER_DROP, or MARKET_MAX_PARTNER_DROP for a sell-high or
+    buy-low. Vision keeps the strict both-gain check.
+    """
+    if mode == "fair":
+        return worth_a_try(d, before, after, FAIR_MAX_PARTNER_DROP)
+    if mode == "edge":
+        return worth_a_try(d, before, after, MARKET_MAX_PARTNER_DROP if market_play(d) else PAPER_MAX_PARTNER_DROP)
+    return partner_gains(before, after)
 
 
 def i_gain(before: float, after: float) -> bool:
@@ -915,15 +943,14 @@ class Analyzer:
         """Small category gains can vanish in the full simulation; only keep moves that hold up there.
 
         A vision trade may cost a little now for a stronger playoff run; any other trade must raise my
-        odds by a point, as it must theirs. Fair trades help both teams; edge trades may instead be a
-        paper win for them that costs them little.
+        odds by a point. Their side is partner_says_yes.
         """
         if mode == "vision":
             if after < before - VISION_ODDS_SLACK:
                 return False
         elif not i_gain(before, after):
             return False
-        return worth_a_try(d, *theirs) if mode == "edge" else partner_gains(*theirs)
+        return partner_says_yes(mode, d, *theirs)
 
     def matchup_timing(self) -> MatchupTiming:
         if self._timing is None:
@@ -1161,9 +1188,12 @@ class Analyzer:
                     "Every category counts as a win or loss in the standings."
                     if each_cat
                     else "Each matchup counts as one win, loss or tie in the standings.",
-                    "Fair trades are shown only if they raise both teams' playoff odds. Edge trades raise yours "
-                    "and give the other team at least equal trade value, costing its playoff odds at most "
-                    f"{round(PAPER_MAX_PARTNER_DROP * 100)} points. Trade value starts from ESPN "
+                    "Every trade raises your playoff odds. Fair trades raise the other team's too, or give it "
+                    "at least equal trade value and cost its odds at most "
+                    f"{round(FAIR_MAX_PARTNER_DROP * 100)} point. Edge trades give it at least equal trade value "
+                    f"and cost its odds at most {round(PAPER_MAX_PARTNER_DROP * 100)} points, or "
+                    f"{round(MARKET_MAX_PARTNER_DROP * 100)} when you sell a player high or buy one low. "
+                    "Trade value starts from ESPN "
                     "rankings and draft prices (draft positions in snake leagues), which fade as games are "
                     "played, and blends % owned, "
                     "rest-of-season value in your categories, this season's rank and the last 15 days. "
