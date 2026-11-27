@@ -60,7 +60,7 @@ from app.accounts import (
     team_of,
     verify_google,
 )
-from app.analysis import absence, gamebox, gamescore, preview, teammates
+from app.analysis import absence, blackbox, gamebox, gamescore, preview, teammates
 from app.analysis.checks import REASON_CHECKS, IdeaChecker, StaleIdea, focus_order
 from app.analysis.checks import TITLES as CHECK_TITLES
 from app.analysis.daily import trade_of_the_day
@@ -459,7 +459,7 @@ def create_app(
     app.state.absence_minutes = TTLCache(GAMELOG_TTL, max_items=2048)
     app.state.game_boxes = TTLCache(GAME_BOX_TTL, max_items=2)
     app.state.prior_rates = TTLCache(PAST_GAMES_TTL, max_items=2)
-    app.state.last_season_form = TTLCache(PAST_GAMES_TTL, max_items=2)  # gamebox.carry + gamescore.season_end
+    app.state.last_season_form = TTLCache(PAST_GAMES_TTL, max_items=2)  # carry, season_end, blackbox.per_game
     app.state.game_box_jobs = {}
     # The last box built for each season, kept past GAME_BOX_TTL: our calls on Scores use it while a
     # new one builds, so they never drop out between builds.
@@ -649,9 +649,10 @@ def create_app(
                         past += gamebox.parse_rows(await peek_gamelogs(season - 1, team, past=True), season - 1)
                 carried = await run_in_threadpool(gamebox.carry, past)
                 end = await run_in_threadpool(lambda: gamescore.season_end(gamescore.team_games(past)))
-                cached = (carried, end)
+                lines = await run_in_threadpool(blackbox.per_game, past)
+                cached = (carried, end, lines)
                 app.state.last_season_form.set(season - 1, cached)
-            last, score_start = cached
+            last, score_start, last_lines = cached
             rows: list[gamebox.GameRow] = []
             for team in sorted(PRO_TEAM_ABBREV):
                 if team:
@@ -661,7 +662,9 @@ def create_app(
             latest = max((r.day for r in rows), default=0)
             nights = await run_in_threadpool(app.state.store.sat_out, season, latest - benched.KEEP_DAYS)
             sat = benched.coach_days(nights)
-            box = await run_in_threadpool(gamebox.build, season, rows, prior, schedule, last, score_start, sat)
+            box = await run_in_threadpool(
+                gamebox.build, season, rows, prior, schedule, last, score_start, sat, last_lines
+            )
             app.state.game_boxes.set(season, box)
             app.state.last_boxes[season] = box
             logging.getLogger(__name__).info("league box for %s: %d player games", season, len(rows))

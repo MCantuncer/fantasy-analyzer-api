@@ -49,7 +49,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from app.analysis import gamescore, lineupcall
+from app.analysis import blackbox, gamescore, lineupcall
 
 PTS, BLK, STL, AST, REB, TO, FGM, FGA, FTM, FTA, TPM = 0, 1, 2, 3, 6, 11, 13, 14, 15, 16, 17
 MINUTES, GS, GP = 40, 41, 42  # GS: started the game
@@ -353,6 +353,7 @@ class Box:
     lineups: lineupcall.Lineups | None = field(default=None, repr=False)  # who played, for who plays tonight
     # team -> (day, how concentrated its finishing was that game: finishing_spread), in day order
     finishing: dict[int, list[tuple[int, float]]] = field(default_factory=dict, repr=False)
+    history: blackbox.History | None = field(default=None, repr=False)  # games so far, for the trees (blackbox.py)
     _day_scores: dict[int, gamescore.Scores] = field(default_factory=dict, repr=False, compare=False)
     _gaps: dict[int, float | None] = field(default_factory=dict, repr=False, compare=False)
     _rotations: dict[tuple[int, int], tuple[tuple[int, float], ...]] = field(
@@ -511,11 +512,13 @@ def build(
     last_season: dict[int, Carry] | None = None,
     score_start: gamescore.SeasonEnd | None = None,
     sat: dict[int, list[int]] | None = None,
+    last_lines: dict[int, dict[str, float]] | None = None,
 ) -> Box:
     """The box from every game row so far: defenses, margins and each player's recent games.
     ``last_season``: carry() of last season's rows, for form that runs across the summer;
     ``score_start``: gamescore.season_end of last season's rows, where teams' scoring starts;
-    ``sat``: the days each player sat a game by coach's decision (ESPN's box scores, app/benched.py)."""
+    ``sat``: the days each player sat a game by coach's decision (ESPN's box scores, app/benched.py);
+    ``last_lines``: blackbox.per_game of last season's rows, for the trees."""
     last_season = last_season or {}
     # League rate a minute, for players without a last season to start from.
     total_min = sum(r.line[MINUTES] for r in rows) or 1.0
@@ -678,6 +681,7 @@ def build(
         sat=sat or {},
         lineups=lineupcall.build(rows, prior, PTS, MINUTES),
         finishing=finishing_spread(rows),
+        history=blackbox.history(rows, last_lines),
     )
 
 
@@ -735,6 +739,7 @@ class GameContext:
     rotation: tuple[tuple[int, float], ...] = ()  # his team's regulars but him: (player, recent minutes over usual)
     opp_three_luck: float = 0.0  # the opponent's 3P% allowed over the league's, shrunk (Box.three_luck)
     own_three_luck: float = 0.0  # his threes short of the league's 3P% a minute this season, shrunk (Box.own_luck)
+    box_inputs: dict[str, float] = field(default_factory=dict, repr=False)  # blackbox.game_inputs, from the box
 
 
 def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
@@ -768,6 +773,7 @@ def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
         rotation=tuple(x for x in box.rotation(team, game.day) if x[0] != player),
         opp_three_luck=box.three_luck.get(game.opponent, 0.0),
         own_three_luck=box.own_luck.get(player, 0.0),
+        box_inputs=blackbox.game_inputs(box.history, player, team, game.opponent, game.day),
     )
 
 
