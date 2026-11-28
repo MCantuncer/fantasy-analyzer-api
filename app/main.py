@@ -15,6 +15,7 @@ import secrets
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager, suppress
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from itertools import chain
 
@@ -252,8 +253,8 @@ LINE_LOG_FIRST = 60.0  # the first look after a start, and the retry while the l
 # stood at tip-off, for the admin comparison with ours. Comparison only. 0 turns it off.
 BOOK_LOG_SECONDS = float(os.getenv("BOOK_LOG_SECONDS", "900"))
 # The starting-five log (app/startlog.py): in the last 90 minutes before each game, nba.com's
-# Expected and Confirmed starters, every change kept, to learn how early and how right they are
-# before a starting-five term uses them. Recorded only. 0 turns it off.
+# Expected and Confirmed starters, every change kept. A confirmed five feeds tonight's next-game
+# lines (gamebox.starting_five); an Expected one is recorded only. 0 turns it off.
 LINEUP_WATCH_SECONDS = float(os.getenv("LINEUP_WATCH_SECONDS", "300"))
 # Where a player's minutes and points sit in a line log row: [team, *linelog.STATS].
 LINE_MINUTES = 1 + [name for name, _ in linelog.STATS].index("minutes")
@@ -491,6 +492,9 @@ def create_app(
     app.state.iddaa_transport = None  # tests answer for iddaa
     app.state.lineup_log = {"checked": None, "ok": None, "error": None, "teams": 0}
     app.state.lineup_transport = None  # tests answer for nba.com
+    # (season, day) -> team -> its confirmed five tonight, by player id (startlog.confirmed_fives): what
+    # gamebox.starting_five reads through GameContext.starts. Rebuilt from the saved looks by each sweep.
+    app.state.starting_fives = {}
 
     origins = [o for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o]
     app.add_middleware(
@@ -626,6 +630,22 @@ def create_app(
         for p in chain((p for t in league.teams for p in t.roster), league.free_agents):
             p.game_context = gamebox.context(box, p.id, p.pro_team_id, cal.today)
             p.week_contexts = gamebox.week_contexts(box, p.id, p.pro_team_id, week)
+        attach_starting_fives(league)
+
+    def with_starting_five(m: gamebox.GameContext | None, season: int, player: int, team: int):
+        """His next game's context with whether he is in his team's confirmed five that night
+        (app.state.starting_fives); unknown until nba.com confirms it."""
+        if m is None:
+            return None
+        five = app.state.starting_fives.get((season, m.day), {}).get(team)
+        starts = None if five is None else player in five
+        return m if m.starts == starts else replace(m, starts=starts)
+
+    def attach_starting_fives(league: League) -> None:
+        """Tonight's confirmed fives on the league's game contexts. A league stays cached longer than
+        a five takes to be confirmed, so every read of a cached league passes here too."""
+        for p in chain((p for t in league.teams for p in t.roster), league.free_agents):
+            p.game_context = with_starting_five(p.game_context, league.season, p.id, p.pro_team_id)
 
     def start_game_box(season: int) -> None:
         job = app.state.game_box_jobs.get(season)
@@ -789,6 +809,7 @@ def create_app(
                 continue
             league = app.state.leagues.get(k)
             if league is not None:
+                attach_starting_fives(league)  # a five confirmed since this league was loaded
                 return league
             loading = app.state.league_loads.get(k)
             if loading is not None:
@@ -2382,10 +2403,25 @@ def create_app(
                 logging.getLogger(__name__).warning("iddaa log watch failed", exc_info=True)
             await asyncio.sleep(BOOK_LOG_SECONDS)
 
+    async def nba_names(season: int, fa_limit: int | None = None) -> tuple[dict[str, list[tuple[int, int]]], dict]:
+        """The line log league's players by folded name (tunings.name_index) and by id, for matching
+        nba.com's names to ours. Empty when no league is set or it can't be read: nothing is matched."""
+        league_id = app.state.line_log_league_id or app.state.sample_league_id
+        if league_id is None:
+            return {}, {}
+        try:
+            league = await load_league(league_id, season, None, with_fa=True, fa_limit=fa_limit)
+        except Exception:
+            logging.getLogger(__name__).warning("nba.com names: league unreadable", exc_info=True)
+            return {}, {}
+        pool = [*(p for t in league.teams for p in t.roster), *league.free_agents]
+        return tunings.name_index((p.id, p.pro_team_id, p.name) for p in pool), {p.id: p.name for p in pool}
+
     async def lineup_sweep() -> list[int]:
         """One look at nba.com's starting fives: the days it wrote (none when no game tips off within
         startlog.LEAD). How the read went is kept in app.state.lineup_log for the admin read, so a
-        host nba.com refuses shows up there."""
+        host nba.com refuses shows up there. Each day's confirmed fives go to app.state.starting_fives,
+        and when one is new the line log looks again at once, so the line kept at tip-off has it."""
         now = app.state.now()
         season = current_season(now)
         raw = await pro_schedule(season)
@@ -2395,6 +2431,12 @@ def create_app(
         days = startlog.days_to_watch(sched, now)
         status = app.state.lineup_log
         written = []
+        names, _ = await nba_names(season, LINE_LOG_FREE_AGENTS) if days else ({}, {})
+
+        def match(name: str, team: int) -> int | None:
+            return tunings.match_player(name, team, names)
+
+        confirmed = False
         for day in days:
             when = sched.date_of(day)
             if when is None:
@@ -2410,6 +2452,15 @@ def create_app(
             await run_in_threadpool(app.state.store.save_lineups, season, day, record)
             status.update(ok=True, error=None, teams=len(listed))
             written.append(day)
+            fives = startlog.confirmed_fives(record, match)
+            if fives != app.state.starting_fives.get((season, day), {}):
+                app.state.starting_fives[(season, day)] = fives
+                confirmed = True
+        if confirmed:
+            try:
+                await line_log_sweep()
+            except Exception:
+                logging.getLogger(__name__).warning("line log look after a confirmed five failed", exc_info=True)
         return written
 
     app.state.lineup_sweep = lineup_sweep
@@ -2431,17 +2482,7 @@ def create_app(
         if box is None or box.scores is None:
             start_game_box(season)
             return []
-        names: dict[str, list[tuple[int, int]]] = {}
-        who: dict[int, str] = {}
-        league_id = app.state.line_log_league_id or app.state.sample_league_id
-        if league_id is not None:
-            try:
-                league = await load_league(league_id, season, None, with_fa=True)
-                pool = [*(p for t in league.teams for p in t.roster), *league.free_agents]
-                names = tunings.name_index((p.id, p.pro_team_id, p.name) for p in pool)
-                who = {p.id: p.name for p in pool}
-            except Exception:  # without names nba.com's lists can't be matched; the rest still runs
-                logging.getLogger(__name__).warning("tunings: league names unreadable", exc_info=True)
+        names, who = await nba_names(season)  # without names nba.com's lists can't be matched; the rest still runs
         book_days = await run_in_threadpool(app.state.store.book_line_days, season)
         written = []
         for day in days:
@@ -5228,7 +5269,8 @@ def create_app(
         box = app.state.game_boxes.get(league.season)
         if box is not None and league.calendar is not None:
             cal = league.calendar
-            p.game_context = gamebox.context(box, p.id, p.pro_team_id, cal.today)
+            m = gamebox.context(box, p.id, p.pro_team_id, cal.today)
+            p.game_context = with_starting_five(m, league.season, p.id, p.pro_team_id)
             p.week_contexts = gamebox.week_contexts(box, p.id, p.pro_team_id, cal.days_left(league.current_period))
         return p
 
