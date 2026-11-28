@@ -258,12 +258,15 @@ def record(games: list[dict]) -> dict:
 def trial(nights: list[dict]) -> dict:
     """The trial's dates and its record night by night (oldest first), for the page's water line.
     nights: compared nights, each with its "date" (ISO, or None when the schedule didn't read) and
-    its games' "quarters". A night from the trial's first day on joins the series once it has a
-    settled pick; edge_returned is what the value picks made that night."""
+    its games' "quarters". Every night with a settled pick joins the series, the ones before the
+    trial's first day too (the boards were saved from Nov 22, so the record counts them), and the
+    start moves back to the first of them: the line, its units and the win rates beside it then
+    cover the same picks (Can 2026-11-28: the line read −7.68 beside the record's 49% / 60%).
+    edge_returned is what the value picks made that night."""
     series = []
     for n in nights:
         when = n.get("date")
-        if not when or date.fromisoformat(when) < TRIAL_FROM:
+        if not when:
             continue
         got = record(n.get("games") or [])
         if got["all"]["bets"] == 0:
@@ -279,8 +282,10 @@ def trial(nights: list[dict]) -> dict:
                 "edge_returned": got["edge"]["returned"],
             }
         )
+    series.sort(key=lambda x: x["date"])
+    start = min([TRIAL_FROM, *(date.fromisoformat(x["date"]) for x in series)])
     return {
-        "start": TRIAL_FROM.isoformat(),
+        "start": start.isoformat(),
         "review": (TRIAL_FROM + timedelta(days=TRIAL_DAYS)).isoformat(),
         "series": series,
     }

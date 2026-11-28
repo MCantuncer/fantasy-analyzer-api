@@ -17095,7 +17095,7 @@
           "start": {
             "type": "string",
             "title": "Start",
-            "description": "The trial's first day, ISO"
+            "description": "The first night on the line: the trial's first day, or an earlier saved night, ISO"
           },
           "review": {
             "type": "string",
