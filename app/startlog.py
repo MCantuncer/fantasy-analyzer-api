@@ -18,9 +18,10 @@ An "Expected" five is still only recorded.
 
 The evening look (2026-11-28, Can: a confirmed five comes when Turkey is asleep, and after the day's
 first tip no pickup can be made): on 2026-11-28 at 15:30 in New York nba.com already had an
-"Expected" five up for all ten teams of the night. In the EVENING before the line log's evening cut (linelog.early_cut: 23:00 in Istanbul, or the
-day's first tip-off) the watch also reads every team of the day, so the five a reader there could
-have seen is kept as the team's first look, to be set against its confirmed five later. Recorded only.
+"Expected" five up for all ten teams of the night. In the EVENING before the line log's evening cut
+(linelog.early_cut: 23:00 in Istanbul, or the day's first tip-off) the watch also reads every team of
+the day, so the five a reader there could have seen is kept as the team's first look, to be set
+against its confirmed five later. Recorded only.
 
 A day's record (JSON keys as strings):
 
