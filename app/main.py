@@ -999,8 +999,10 @@ def create_app(
         except Exception:  # ids alone still read
             names = {}
         rows.sort(key=lambda r: -r["stats"]["pts"]["swing"])
+        early = linelog.early_check(b for _, b in records)
         return schemas.PlayerLines(
             days=len(records),
+            early=schemas.EarlyLines(**early) if early["games"] else None,
             players=[
                 schemas.PlayerLineSummary(
                     **r, name=names.get(r["player_id"], ""), team_abbrev=PRO_TEAM_ABBREV.get(r["team"], "")
