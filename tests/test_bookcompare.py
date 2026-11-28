@@ -63,6 +63,38 @@ def final_day(away: int = 104, home: int = 119) -> dict:
     }
 
 
+def test_each_player_bet_carries_how_our_number_was_built():
+    import numpy as np
+
+    lines = our_lines()
+    lines["engine"] = {str(EMBIID): [33.0, 31.6, 9.0, 4.0, 1.0, 1.0, 2.0, 3.0, 9.0, 18.0, 6.0, 7.0]}
+    usual = [31.0, 27.0, 9.4, 4.0, 1.0, 1.0, 2.0, 3.0, 8.0, 17.0, 6.0, 7.0]
+    lines["build"] = {
+        str(EMBIID): [
+            usual,
+            [
+                ["opponent", "Against MIL", 0.0, 1.5, -0.4, 0.0, 0.0, 0.0, 0.0, 0.0],
+                ["teammates_out", "George out", 2.4, 2.8, 0.3, 0.2, 0.0, 0.0, 0.0, 0.0],
+                ["home", "Home game", 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0],  # moves assists only
+            ],
+        ]
+    }
+    rows = {EMBIID: np.array([[d, 30 + d / 10, 20 + d, 8, 4, 1, 1, 2, 3, 8, 17, 5, 6, 4] for d in range(20, 34)])}
+    recent = bookcompare.recent_games(rows, [EMBIID, MAXEY], 33)
+    assert recent[EMBIID]["pts"][:3] == [52.0, 51.0, 50.0] and len(recent[EMBIID]["pts"]) == 10  # before day 33
+    assert recent[EMBIID]["minutes"][0] == 33.2 and MAXEY not in recent
+    got = bookcompare.compare_day(book_record(), lines, None, {EMBIID: "Joel Embiid", MAXEY: "Tyrese Maxey"}, recent)
+    [g] = got["games"]
+    pts = next(p for p in g["players"] if p["name"] == "Joel Embiid" and p["stat"] == "pts")
+    b = pts["build"]
+    assert b["line"] == 31.0 and b["usual"] == 27.0 and b["minutes"] == 34.0 and b["usual_minutes"] == 31.0
+    assert [r["text"] for r in b["reasons"]] == ["George out", "Against MIL"]  # biggest first; Home moves no points
+    assert b["trees"] == -0.6 and b["rest"] == round(31.0 - 27.0 - 4.3 + 0.6, 1)
+    assert b["recent"][:2] == [52.0, 51.0]
+    maxey = next(p for p in g["players"] if p["name"] == "Tyrese Maxey" and p["stat"] == "pts")
+    assert maxey["build"] is None  # no build saved and no games: nothing to show
+
+
 def test_names_match_across_spellings():
     espn = {1: "Jaime Jaquez Jr.", 2: "Nikola Jokić", 3: "Jalen Williams", 4: "Jaylin Williams", 5: "VJ Edgecombe"}
     got = bookcompare.match_names(["Jaime Jaquez", "Nikola Jokic", "J. Williams", "V.J. Edgecombe"], espn)

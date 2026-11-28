@@ -14,10 +14,16 @@ need them all); a full night is about 450 players, 60-80 KB before Postgres comp
     {"teams": {team: [tip, checked]},             ISO times
      "lines": {player: [team, *STATS]},           his line, last look before his team tipped off
      "engine": {player: [*STATS]},                the same look before the trees (analysis/blackbox.py)
+     "build": {player: [[*STATS], [[kind, text, minutes, *REASON_STATS], ...]]}
+                                                  his plain-night line (usual) and the reasons that moved it
      "results": {player: [*STATS] | []}}          once settled; [] = his team played, he didn't
 
 "engine" (since 2026-11-27) is what the engine's own misses are counted against, so the trees can learn
 from past misses without learning from their own corrections.
+
+"build" (since 2026-11-28, Can: "we need some whys for each estimation, especially for the Kupons") keeps
+how each line was built at that same look: his usual line and the reasons the game moved it (gamebox.py,
+biggest first, as the player card shows them), so a bet's why stays the one anyone could see before tip.
 
 A player whose team has no game rows that night (postponed) gets no result.
 """
@@ -52,6 +58,11 @@ STATS: tuple[tuple[str, int], ...] = (
     ("ftm", FTM),
     ("fta", FTA),
 )
+# Builds are kept for players this many minutes and up: the book prices rotation players only, and the
+# rest of the 450 would add most of the size for nothing.
+BUILD_MIN_MINUTES = 10.0
+# A saved reason's stat changes, in order (NextGameReason's fields).
+REASON_STATS = ("pts", "reb", "ast", "stl", "blk", "three_pm", "to")
 # The stats the read-back summarises (makes and attempts stay saved for FG% and FT% later).
 SUMMARY = ("minutes", "pts", "reb", "ast", "stl", "blk", "three_pm", "to")
 AHEAD = timedelta(hours=18)  # days with a game starting this soon are looked at: the whole night, like the iddaa log
@@ -90,6 +101,18 @@ def pack(line: NextGameLine) -> list[float]:
     return [round(getattr(line, name), 1) for name, _ in STATS]
 
 
+def pack_build(line: NextGameLine) -> list | None:
+    """His usual line and the reasons that moved it, as saved under "build"; None without a usual line."""
+    if line.usual is None:
+        return None
+    usual = [round(getattr(line.usual, name), 1) for name, _ in STATS]
+    reasons = [
+        [r.kind, r.text, round(r.minutes, 1), *(round(getattr(r, name), 2) for name in REASON_STATS)]
+        for r in line.reasons
+    ]
+    return [usual, reasons]
+
+
 def update(record: dict | None, schedule: Schedule, day: int, lines: dict[int, Look], now: datetime) -> dict:
     """The day's record with this look written in for every team whose game hasn't started: its
     players' lines replace the last look's (a player ruled out since then leaves it)."""
@@ -97,6 +120,7 @@ def update(record: dict | None, schedule: Schedule, day: int, lines: dict[int, L
         "teams": dict((record or {}).get("teams", {})),
         "lines": dict((record or {}).get("lines", {})),
         "engine": dict((record or {}).get("engine", {})),
+        "build": dict((record or {}).get("build", {})),
         "results": dict((record or {}).get("results", {})),
     }
     tips = {team: g.start for g in schedule.games.get(day, []) for team in (g.away, g.home)}
@@ -109,9 +133,13 @@ def update(record: dict | None, schedule: Schedule, day: int, lines: dict[int, L
     gone = {pid for pid, v in out["lines"].items() if v[0] in waiting}
     out["lines"] = {pid: v for pid, v in out["lines"].items() if pid not in gone}
     out["engine"] = {pid: v for pid, v in out["engine"].items() if pid not in gone}
+    out["build"] = {pid: v for pid, v in out["build"].items() if pid not in gone}
     for pid, (team, line, *rest) in lines.items():
         if team in waiting:
             out["lines"][str(pid)] = [team, *pack(line)]
+            build = pack_build(line) if line.minutes >= BUILD_MIN_MINUTES else None
+            if build is not None:
+                out["build"][str(pid)] = build
             engine = rest[0] if rest else None
             if engine is not None:
                 out["engine"][str(pid)] = [round(engine.get(stat, 0.0), 1) for _, stat in STATS]

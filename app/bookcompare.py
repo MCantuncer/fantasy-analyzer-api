@@ -105,13 +105,80 @@ def judge(ours: float | None, book: float | None, actual: float | None, band: fl
 RUNG_SOURCE = "iddaa"  # the only bulletin whose rungs count (iddaa's own, not a dealer's)
 
 
-def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: dict[int, str]) -> dict:
+RECENT_GAMES = 10  # a bet's why shows his last this many games of the stat
+REASON_AT = {name: i for i, name in enumerate(linelog.REASON_STATS)}
+
+
+def build_of(
+    stat: str,
+    ours: float | None,
+    engine: list | None,
+    build: list | None,
+    recent: dict | None,
+    minutes: float | None = None,
+) -> dict | None:
+    """How our number for one stat was built (Can 2026-11-28, a "why" for every bet): his plain-night
+    number, the reasons this game moved it (only those that move this stat, biggest first), what the
+    trees changed (the line before them is saved under "engine"), the rest (team score fit, small
+    reasons), minutes on both, and his last RECENT_GAMES games of it, newest first. None without a
+    line or anything to show."""
+    if ours is None or (build is None and not recent):
+        return None
+    out: dict = {"line": ours, "minutes": minutes, "usual": None, "usual_minutes": None, "reasons": [], "trees": 0.0,
+                 "rest": 0.0, "recent": [], "recent_minutes": []}  # fmt: skip
+    if recent:
+        out["recent"] = [round(v, 1) for v in recent.get(stat, [])][:RECENT_GAMES]
+        out["recent_minutes"] = [round(v, 1) for v in recent.get("minutes", [])][:RECENT_GAMES]
+    if build is not None:
+        usual, reasons = build
+        out["usual"] = usual[OURS_AT[stat]]
+        out["usual_minutes"] = usual[OURS_AT["minutes"]]
+        moved = []
+        for kind, text, minutes, *changes in reasons:
+            change = changes[REASON_AT[stat]] if stat in REASON_AT else 0.0
+            if abs(change) >= 0.05 or abs(minutes) >= 0.5:
+                moved.append({"kind": kind, "text": text, "minutes": minutes, "change": round(change, 1)})
+        moved.sort(key=lambda r: -abs(r["change"]))
+        out["reasons"] = moved
+        trees = 0.0 if engine is None else ours - engine[OURS_AT[stat]]
+        out["trees"] = round(trees, 1)
+        out["rest"] = round(ours - out["usual"] - sum(r["change"] for r in moved) - trees, 1)
+    return out
+
+
+HISTORY_STAT = {"minutes": 0, "pts": 1, "reb": 2, "ast": 3, "stl": 4, "blk": 5, "three_pm": 6}  # blackbox _COLS
+
+
+def recent_games(players: dict, ids: Iterable[int], day: int) -> dict[int, dict[str, list[float]]]:
+    """Each player's last RECENT_GAMES games before ``day``, newest first, by stat, from the box's
+    history (blackbox.History.players: rows of [day, *_COLS] in day order)."""
+    out = {}
+    for pid in ids:
+        rows = players.get(pid)
+        if rows is None or len(rows) == 0:
+            continue
+        before = [r for r in rows if r[0] < day][-RECENT_GAMES:][::-1]
+        if before:
+            out[pid] = {name: [float(r[1 + i]) for r in before] for name, i in HISTORY_STAT.items()}
+    return out
+
+
+def compare_day(
+    book: dict | None,
+    lines: dict | None,
+    day: dict | None,
+    names: dict[int, str],
+    recent: dict[int, dict[str, list[float]]] | None = None,
+) -> dict:
     """The day's comparison: per game its match rows and player rows, and per stat a tally.
 
     book: iddaa's record (app/iddaa.py); lines: the line log's record; day: Scores' day body (None
-    before the games); names: ESPN player id -> name, for players not yet in a box score."""
+    before the games); names: ESPN player id -> name, for players not yet in a box score; recent: each
+    player's games before this day, newest first, by stat (and "minutes"), for each bet's build."""
     games_played = {g["id"]: g for g in (day or {}).get("games", [])}
     ours_lines = (lines or {}).get("lines", {})
+    engines = (lines or {}).get("engine", {})
+    builds = (lines or {}).get("build", {})
     out_games = []
     for gid, g in sorted(((book or {}).get("games") or {}).items(), key=lambda kv: (kv[1]["tip"], kv[0])):
         read = iddaa.readout(g)
@@ -161,6 +228,14 @@ def compare_day(book: dict | None, lines: dict | None, day: dict | None, names: 
                         if scored
                         else None,
                         "rung_closer": rung_closer(steps) if scored else None,
+                        "build": build_of(
+                            stat,
+                            ours,
+                            engines.get(str(pid)) if pid is not None else None,
+                            builds.get(str(pid)) if pid is not None else None,
+                            (recent or {}).get(pid) if pid is not None else None,
+                            mine[1 + OURS_AT["minutes"]] if mine else None,
+                        ),
                     }
                 )
 

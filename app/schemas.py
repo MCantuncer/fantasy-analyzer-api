@@ -2671,6 +2671,30 @@ class LossReason(BaseModel):
     text: str = Field(description='One line for the page, e.g. "NO made 8 of 35 threes (we expected 36%)"')
 
 
+class CompareBuildReason(BaseModel):
+    """One thing this game moved his number by (analysis/gamebox.py), for this stat."""
+
+    kind: str = Field(description="NextGameReason's kind: opponent, form, teammates_out, starter_switch, ...")
+    text: str = Field(description="A few words: 'Against BKN', 'Miller and Knueppel out'")
+    minutes: float = Field(description="Minutes it adds (+) or takes (-)")
+    change: float = Field(description="What it moves this stat by")
+
+
+class CompareBuild(BaseModel):
+    """How our number for this stat was built, saved at his last look before tip (app/bookcompare.py
+    build_of): usual + reasons + trees + rest = line."""
+
+    line: float = Field(description="Our number for the stat")
+    usual: float | None = Field(description="His number on a plain night (no opponent, form, absences)")
+    usual_minutes: float | None
+    minutes: float | None = Field(default=None, description="Our minutes for him tonight")
+    reasons: list[CompareBuildReason] = Field(default_factory=list, description="Biggest change first")
+    trees: float = Field(description="What the learned-miss trees changed (analysis/blackbox.py)")
+    rest: float = Field(description="The rest: team score fit and reasons too small to list")
+    recent: list[float] = Field(default_factory=list, description="His last games of the stat, newest first")
+    recent_minutes: list[float] = Field(default_factory=list, description="Minutes in those games")
+
+
 class ComparePlayer(CompareRow):
     name: str
     player_id: int | None = Field(description="ESPN id; None when iddaa's name matched nobody")
@@ -2686,6 +2710,7 @@ class ComparePlayer(CompareRow):
         default=None, description="Whose chances read the result better over the rungs (Brier score)"
     )
     why: LossReason | None = Field(default=None, description="Once final: why the result landed where it did")
+    build: CompareBuild | None = Field(default=None, description="How our number was built, as seen before tip")
 
 
 class CompareOdd(BaseModel):
@@ -2757,6 +2782,9 @@ class QuarterRecordSums(BaseModel):
     ours: float | None = Field(description="Our average chance for these picks")
     book: float | None = Field(description="The book's average chance for them, cut taken out")
     returned: float = Field(description="Units back less units staked, one unit a pick at the book's price")
+    need: float | None = Field(
+        default=None, description="How often they had to win to break even at their odds: picks over the sum of odds"
+    )
 
 
 class QuarterRecordPart(BaseModel):
@@ -2764,10 +2792,32 @@ class QuarterRecordPart(BaseModel):
     edge: QuarterRecordSums
 
 
+class QuarterNight(BaseModel):
+    date: str = Field(description="US game date, ISO")
+    bets: int
+    won: int
+    returned: float = Field(description="Units back less units staked, every settled pick that night")
+    edge_bets: int
+    edge_won: int
+    edge_returned: float = Field(description="The same for the value picks alone")
+
+
+class QuarterTrial(BaseModel):
+    start: str = Field(description="The trial's first day, ISO")
+    review: str = Field(description="When the record is judged for Kupons, ISO")
+    series: list[QuarterNight] = Field(default_factory=list, description="One line per night with settled picks")
+
+
 class QuarterRecord(BaseModel):
     all: QuarterRecordSums = Field(description="Every settled quarter and first-half pick")
     edge: QuarterRecordSums = Field(description="Only the picks where our chance x the price was over 1")
     by_market: dict[str, QuarterRecordPart] = Field(default_factory=dict)
+    by_odds: dict[str, QuarterRecordPart] = Field(
+        default_factory=dict, description="The same by the picked side's price: under 1.50, 1.50-1.79, 1.80-2.19, 2.20+"
+    )
+    trial: QuarterTrial | None = Field(
+        default=None, description="The Kupons trial: its dates and the record night by night"
+    )
 
 
 class CompareGame(BaseModel):
