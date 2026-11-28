@@ -1434,7 +1434,13 @@ def create_app(
                 if not g.get("ours") and datetime.fromisoformat(g["tip"]) > now:  # no look had the box yet
                     c = box.call(day, g["away"], g["home"], out)
                     g["ours"] = [c.away, c.home, round(c.chance, 3)]
-        got = await run_in_threadpool(bookcompare.compare_day, book, lines, played, names)
+        history = getattr(box, "history", None) if box is not None else None
+        recent = (
+            bookcompare.recent_games(history.players, (int(p) for p in (lines or {}).get("lines", {})), day)
+            if history is not None and day
+            else None
+        )
+        got = await run_in_threadpool(bookcompare.compare_day, book, lines, played, names, recent)
         q = await quarter_bets(season, day, book) if day else {}
         for g in got["games"]:
             g["quarters"] = q.get(g["game_id"], [])

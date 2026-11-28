@@ -6767,7 +6767,7 @@
               }
             ],
             "title": "Blend",
-            "description": "Log loss on the blend the page uses (BOOK_WEIGHT)"
+            "description": "Log loss on the 90/10 book blend the page showed until 2026-11-28: the yardstick (BOOK_WEIGHT)"
           },
           "best_weight": {
             "anyOf": [
@@ -7707,6 +7707,127 @@
         "title": "ClientError",
         "description": "A crash or unhandled error in the website, sent so it shows up in the error reports."
       },
+      "CompareBuild": {
+        "properties": {
+          "line": {
+            "type": "number",
+            "title": "Line",
+            "description": "Our number for the stat"
+          },
+          "usual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usual",
+            "description": "His number on a plain night (no opponent, form, absences)"
+          },
+          "usual_minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usual Minutes"
+          },
+          "minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minutes",
+            "description": "Our minutes for him tonight"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/components/schemas/CompareBuildReason"
+            },
+            "type": "array",
+            "title": "Reasons",
+            "description": "Biggest change first"
+          },
+          "trees": {
+            "type": "number",
+            "title": "Trees",
+            "description": "What the learned-miss trees changed (analysis/blackbox.py)"
+          },
+          "rest": {
+            "type": "number",
+            "title": "Rest",
+            "description": "The rest: team score fit and reasons too small to list"
+          },
+          "recent": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Recent",
+            "description": "His last games of the stat, newest first"
+          },
+          "recent_minutes": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Recent Minutes",
+            "description": "Minutes in those games"
+          }
+        },
+        "type": "object",
+        "required": [
+          "line",
+          "usual",
+          "usual_minutes",
+          "trees",
+          "rest"
+        ],
+        "title": "CompareBuild",
+        "description": "How our number for this stat was built, saved at his last look before tip (app/bookcompare.py\nbuild_of): usual + reasons + trees + rest = line."
+      },
+      "CompareBuildReason": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "description": "NextGameReason's kind: opponent, form, teammates_out, starter_switch, ..."
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "A few words: 'Against BKN', 'Miller and Knueppel out'"
+          },
+          "minutes": {
+            "type": "number",
+            "title": "Minutes",
+            "description": "Minutes it adds (+) or takes (-)"
+          },
+          "change": {
+            "type": "number",
+            "title": "Change",
+            "description": "What it moves this stat by"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "text",
+          "minutes",
+          "change"
+        ],
+        "title": "CompareBuildReason",
+        "description": "One thing this game moved his number by (analysis/gamebox.py), for this stat."
+      },
       "CompareEstimate": {
         "properties": {
           "name": {
@@ -8279,6 +8400,17 @@
               }
             ],
             "description": "Once final: why the result landed where it did"
+          },
+          "build": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CompareBuild"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How our number was built, as seen before tip"
           }
         },
         "type": "object",
@@ -12258,7 +12390,7 @@
               }
             ],
             "title": "Alone",
-            "description": "Game bets: our call's chance on its own, before the book blend"
+            "description": "Game bets: our call's chance on its own (the same as chance)"
           },
           "fair": {
             "anyOf": [
@@ -14149,6 +14281,7 @@
               "heavy_minutes",
               "recent_minutes",
               "starter_switch",
+              "starting_five",
               "coach_decision",
               "home",
               "away",
