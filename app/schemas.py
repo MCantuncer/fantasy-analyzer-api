@@ -2803,7 +2803,7 @@ class QuarterNight(BaseModel):
 
 
 class QuarterTrial(BaseModel):
-    start: str = Field(description="The trial's first day, ISO")
+    start: str = Field(description="The first night on the line: the trial's first day, or an earlier saved night, ISO")
     review: str = Field(description="When the record is judged for Kupons, ISO")
     series: list[QuarterNight] = Field(default_factory=list, description="One line per night with settled picks")
 

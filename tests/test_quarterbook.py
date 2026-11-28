@@ -89,19 +89,20 @@ def test_the_record_says_how_often_picks_had_to_win_and_splits_them_by_price():
     assert rec["by_odds"]["2.20+"]["edge"]["bets"] == 0
 
 
-def test_the_trial_lists_its_nights_from_the_first_day_on():
+def test_the_trial_lists_every_night_with_a_settled_pick():
     actual = ([20.0, 25.0, 30.0, 30.0], [33.0, 30.0, 25.0, 28.0])
     games = [{"quarters": quarterbook.bets(BOARD, MIL, PHI, (AWAY_Q, HOME_Q), actual)}]
     before = quarterbook.bets(BOARD, MIL, PHI, (AWAY_Q, HOME_Q), None)
     nights = [
-        {"date": "2026-11-23", "games": games},  # before the trial
         {"date": "2026-11-24", "games": games},
+        {"date": "2026-11-22", "games": games},  # saved before the trial: on the line too
         {"date": "2026-11-25", "games": [{"quarters": before}]},  # nothing settled yet
         {"date": None, "games": games},  # the schedule didn't read
     ]
     got = quarterbook.trial(nights)
-    assert got["start"] == "2026-11-24" and got["review"] == "2026-12-08"
-    [night] = got["series"]
+    assert got["start"] == "2026-11-22" and got["review"] == "2026-12-08"
+    assert [x["date"] for x in got["series"]] == ["2026-11-22", "2026-11-24"]
+    night = got["series"][1]
     rec = quarterbook.record(games)
     assert night == {
         "date": "2026-11-24",
@@ -112,7 +113,9 @@ def test_the_trial_lists_its_nights_from_the_first_day_on():
         "edge_won": rec["edge"]["won"],
         "edge_returned": rec["edge"]["returned"],
     }
-    assert quarterbook.trial([])["series"] == []
+    assert quarterbook.trial([]) == {"start": "2026-11-24", "review": "2026-12-08", "series": []}
+    rec_all = quarterbook.record(games * 2)
+    assert sum(x["edge_returned"] for x in got["series"]) == pytest.approx(rec_all["edge"]["returned"])
 
 
 def test_the_page_and_the_record_carry_quarter_bets(recorded):
