@@ -252,9 +252,10 @@ LINE_LOG_FIRST = 60.0  # the first look after a start, and the retry while the l
 # The iddaa log (app/iddaa.py): in the hours before tip-off, iddaa's NBA lines, each game kept as it
 # stood at tip-off, for the admin comparison with ours. Comparison only. 0 turns it off.
 BOOK_LOG_SECONDS = float(os.getenv("BOOK_LOG_SECONDS", "900"))
-# The starting-five log (app/startlog.py): in the last 90 minutes before each game, nba.com's
-# Expected and Confirmed starters, every change kept. A confirmed five feeds tonight's next-game
-# lines (gamebox.starting_five); an Expected one is recorded only. 0 turns it off.
+# The starting-five log (app/startlog.py): in the last 90 minutes before each game, and once in the
+# evening in Istanbul for every team of the day, nba.com's Expected and Confirmed starters, every
+# change kept. A confirmed five feeds tonight's next-game lines (gamebox.starting_five); an Expected
+# one is recorded only. 0 turns it off.
 LINEUP_WATCH_SECONDS = float(os.getenv("LINEUP_WATCH_SECONDS", "300"))
 # Where a player's minutes and points sit in a line log row: [team, *linelog.STATS].
 LINE_MINUTES = 1 + [name for name, _ in linelog.STATS].index("minutes")
@@ -2421,16 +2422,18 @@ def create_app(
 
     async def lineup_sweep() -> list[int]:
         """One look at nba.com's starting fives: the days it wrote (none when no game tips off within
-        startlog.LEAD). How the read went is kept in app.state.lineup_log for the admin read, so a
-        host nba.com refuses shows up there. Each day's confirmed fives go to app.state.starting_fives,
-        and when one is new the line log looks again at once, so the line kept at tip-off has it."""
+        startlog.LEAD and it isn't the evening look's time, startlog.evening_days). How the read went
+        is kept in app.state.lineup_log for the admin read, so a host nba.com refuses shows up there.
+        Each day's confirmed fives go to app.state.starting_fives, and when one is new the line log
+        looks again at once, so the line kept at tip-off has it."""
         now = app.state.now()
         season = current_season(now)
         raw = await pro_schedule(season)
         if raw is None:
             return []
         sched = parse_schedule(raw)
-        days = startlog.days_to_watch(sched, now)
+        evening = startlog.evening_days(sched, now)  # every team of the day, as a reader in Turkey sees it
+        days = sorted({*startlog.days_to_watch(sched, now), *evening})
         status = app.state.lineup_log
         written = []
         names, _ = await nba_names(season, LINE_LOG_FREE_AGENTS) if days else ({}, {})
@@ -2450,7 +2453,7 @@ def create_app(
                 status.update(ok=False, error=f"{type(exc).__name__}: {exc}"[:300])
                 raise
             record = await run_in_threadpool(app.state.store.get_lineups, season, day)
-            record = startlog.update(record, sched, day, listed, now)
+            record = startlog.update(record, sched, day, listed, now, evening=day in evening)
             await run_in_threadpool(app.state.store.save_lineups, season, day, record)
             status.update(ok=True, error=None, teams=len(listed))
             written.append(day)

@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 import httpx
 import pytest
 
-from app import startlog
+from app import linelog, startlog
 from app.analysis import gamebox
 from app.cache import credentials_key
 from app.main import LINE_LOG_FREE_AGENTS
@@ -96,6 +96,48 @@ def test_a_look_is_kept_only_on_a_change_and_the_first_confirmed_time_stays():
         rec, sched, 37, startlog.parse(lineups(team("GSW"), team("NOP"))), TIP + timedelta(minutes=1)
     )
     assert after == rec  # tipped off: what was seen before tip-off stays as it was
+
+
+def test_the_evening_look_reads_every_team_of_the_day():
+    sched = schedule()
+    cut = linelog.early_cut(sched, 37)  # 23:00 in Istanbul, four and a half hours before the first tip
+    assert cut == TIP - timedelta(hours=4, minutes=30)
+    assert startlog.evening_days(sched, cut - timedelta(minutes=25)) == []
+    assert startlog.evening_days(sched, cut - timedelta(minutes=15)) == [37]
+    assert startlog.evening_days(sched, cut + timedelta(minutes=1)) == []
+    listed = startlog.parse(lineups(team("GSW"), team("NOP")))
+    at = cut - timedelta(minutes=15)
+    assert startlog.update(None, sched, 37, listed, at)["teams"] == {}  # no game within 90 minutes
+    rec = startlog.update(None, sched, 37, listed, at, evening=True)
+    assert set(rec["teams"]) == {str(GSW), str(NOP), str(BOS)}  # BOS isn't in this file: marked as looked at
+    assert rec["teams"][str(NOP)]["looks"][0]["at"] == at.isoformat(timespec="seconds")
+    assert rec["teams"][str(BOS)]["looks"] == []
+    # The same five 80 minutes before tip-off adds no look; a swap does, after the evening one.
+    rec = startlog.update(rec, sched, 37, listed, TIP - timedelta(minutes=80))
+    assert len(rec["teams"][str(GSW)]["looks"]) == 1
+    swapped = startlog.parse(lineups(team("GSW", "Confirmed", swap=True), team("NOP")))
+    rec = startlog.update(rec, sched, 37, swapped, TIP - timedelta(minutes=20))
+    assert [lk["status"] for lk in rec["teams"][str(GSW)]["looks"]] == ["Expected", "Confirmed"]
+
+
+def test_the_watch_takes_the_evening_look(recorded):
+    app, store, sched = _app(recorded)
+    day = min(d for d, gs in sched.games.items() if gs and d >= 3)
+    game = min(sched.games[day], key=lambda g: g.start)
+    away, home = sched.teams[game.away][0].upper(), sched.teams[game.home][0].upper()
+    cut = linelog.early_cut(sched, day)
+    assert cut < game.start - startlog.LEAD  # an ordinary night: hours before the first tip
+    app.state.lineup_transport = httpx.MockTransport(
+        lambda _: httpx.Response(200, json=lineups(team(away), team(home)))
+    )
+    app.state.now = lambda: cut - timedelta(hours=1)
+    assert asyncio.run(app.state.lineup_sweep()) == []
+    app.state.now = lambda: cut - timedelta(minutes=10)
+    assert asyncio.run(app.state.lineup_sweep()) == [day]
+    saved = store.get_lineups(2027, day)["teams"]
+    assert len(saved) == 2 * len(sched.games[day])
+    assert saved[str(game.home)]["looks"][0]["status"] == "Expected"
+    assert not app.state.starting_fives.get((2027, day))  # an Expected five moves no line
 
 
 def test_a_team_missing_from_the_file_is_still_marked_as_looked_at():
