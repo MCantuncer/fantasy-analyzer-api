@@ -9,8 +9,8 @@ Live earns a blind five-season test before it can move the engine (Can's rule: a
 only by beating the current estimate in every season).
 
 The tunings (TUNINGS):
-    live        what the site shows: Our call with ESPN's OUT tags, its chance blended with the book's
-                (90% book, the page's blend; ours alone when the book has no price)
+    live        what the site shows: Our call with ESPN's OUT tags, its own chance (until 2026-11-28
+                the page blended that chance 90% with the book's, and so did this tuning)
     ours_alone  Our call with nobody's help: no book, nba.com's inactive list as well as ESPN's OUT
                 tags, and the starting-five minutes term (STARTER_MINUTES) on tonight's player lines
     book        iddaa's own numbers, margin taken out: the price everyone else is betting into
@@ -53,7 +53,6 @@ from app.analysis import gamescore
 from app.analysis.gamebox import Box
 from app.espn.parse import PRO_TEAM_ABBREV
 from app.linelog import STATS as LINE_STATS
-from app.lostlog import BOOK_WEIGHT, blend_chance
 from app.scores import ScheduledGame
 
 LIVE, OURS_ALONE, BOOK, RIVALRY, CRAZY_ONE = "live", "ours_alone", "book", "rivalry", "crazy_one"
@@ -320,7 +319,7 @@ def calls(g: GameInputs) -> tuple[dict[str, list[float]], list[float] | None]:
     total = sum(pts for _, code, pts in g.beliefs if code == TOTAL)
     ca, ch = la - lean / 2 + total / 2, lh + lean / 2 + total / 2
     out = {
-        LIVE: [round(la, 1), round(lh, 1), round(blend_chance(ours_live, book[0] if book else None, BOOK_WEIGHT), 3)],
+        LIVE: [round(la, 1), round(lh, 1), round(ours_live, 3)],
         OURS_ALONE: [round(oa, 1), round(oh, 1), round(home_chance(oa, oh), 3)],
         CRAZY_ONE: [round(ca, 1), round(ch, 1), round(home_chance(ca, ch), 3)],
     }

@@ -2834,7 +2834,7 @@ class LostBet(BaseModel):
     piece: str | None
     points: float | None
     text: str
-    alone: float | None = Field(None, description="Game bets: our call's chance on its own, before the book blend")
+    alone: float | None = Field(None, description="Game bets: our call's chance on its own (the same as chance)")
     fair: float | None = Field(None, description="Game bets: the book's own chance, its cut taken out")
     book_closer: bool | None = Field(
         None,
@@ -2872,7 +2872,9 @@ class BookCheck(BaseModel):
     bets: int = Field(description="Settled game bets read")
     ours: float | None = Field(description="Log loss on our chance alone (lower is better)")
     book: float | None = Field(description="Log loss on the book's own chance")
-    blend: float | None = Field(description="Log loss on the blend the page uses (BOOK_WEIGHT)")
+    blend: float | None = Field(
+        description="Log loss on the 90/10 book blend the page showed until 2026-11-28: the yardstick (BOOK_WEIGHT)"
+    )
     best_weight: float | None = Field(description="The book weight that would have read these bets best")
 
 
