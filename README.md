@@ -629,6 +629,19 @@ Past misses (2026-11-27): a second set of trees also reads his own misses on ear
 
 Shuffled misses get -0.11 to +0.04 there.
 
+Tonight's starting five (2026-11-28): a player in the confirmed five who has not been starting plays more than his line, one moved to the bench less. `gamebox.starting_five` moves the finished line, after the trees: minutes by 4.45 x (he starts tonight - the share of his last 5 games he started), and points, rebounds, assists, steals and threes with his minutes. It answers only once a game context carries the confirmed five (`GameContext.starts`); nothing sets that yet, so no line moves until the lineup watch (`app/startlog.py`) feeds it. `uv run python -m scripts.starting_five_backtest` replays it on the line as it ships, with the box score's starters, over 144,291 games (% less squared miss; 5.5% of games are a move into the five, 3.7% out of it):
+
+| | left out | forward | 2026-27 | 2018-19 to 2020-21 |
+|---|---|---|---|---|
+| Minutes | +5.13 +4.59 +3.77 +5.07 +3.17 | +4.62 +3.75 +5.09 +3.17 | +4.34 | +3.73 +3.07 +3.17 |
+| Points | +0.78 +0.65 +0.55 +0.97 +0.50 | +0.65 +0.55 +0.99 +0.50 | +0.75 | +0.33 +0.19 +0.29 |
+| Rebounds | +0.93 +0.87 +0.90 +1.31 +0.69 | +0.87 +0.91 +1.33 +0.69 | +0.59 | +0.58 +0.62 +0.38 |
+| Assists | +0.55 +0.74 +0.53 +0.68 +0.43 | +0.76 +0.54 +0.69 +0.43 | +0.31 | +0.54 +0.19 +0.39 |
+| Steals | +0.24 +0.38 +0.19 +0.34 +0.34 | +0.40 +0.20 +0.35 +0.34 | +0.12 | +0.26 +0.19 +0.23 |
+| Threes | +0.39 +0.34 +0.30 +0.54 +0.20 | +0.35 +0.31 +0.55 +0.20 | +0.52 | +0.18 +0.01 +0.13 |
+
+Blocks (-0.04 in one season left out), turnovers (-0.17 in 2019-20) and the FG and FT impacts (-0.24, -0.33) failed a test and are not moved. Who started shuffled within each season gets 0.00. A first listing is not a confirmed five: with one starter wrong in 30% of team games (12 of 40 on the two logged nights had a starter change after the first listing) the same weight makes minutes worse in 8 of 9 seasons (-0.3 to -1.4%), while a weight of about 2 fitted to such a listing still gains 1.0 to 2.1%. So only the confirmed five is used, and a first listing waits for the lineup log's own nights.
+
 A new idea is one function in `CANDIDATES`. First run (2026-11-16, six seasons with 2026-27 so far, 92,852 games): the refit beats the shipped weights by at most 0.5% in a season and loses in 2026-27, so the weights stay; a blowout term for minutes, two or more days of rest and the opponent on a back-to-back all failed. After the form and minutes terms (2026-11-17, same seasons): the refit gains at most 0.6% in a season and loses in 2026-27 (minutes -0.3%), and no category passes, so the weights fitted in the study stay; the same three candidates still fail. With the coaches' calls in (2026-11-19, five seasons, 90,410 games): the refit gains at most 0.5% in a season, under the 0.3% average it needs in every category but minutes, and minutes loses a season fitted forward, so the weights stay, and the three candidates fail again.
 
 ### Vision-trade backtest
