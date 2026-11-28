@@ -16,6 +16,13 @@ gamebox.starting_five). Only a confirmed one: replayed over nine seasons, the te
 with one starter wrong in 30% of team games made minutes worse (scripts/starting_five_backtest.py).
 An "Expected" five is still only recorded.
 
+The evening look (2026-11-28, Can: a confirmed five comes when Turkey is asleep, and after the day's
+first tip no pickup can be made): on 2026-11-28 at 15:30 in New York nba.com already had an
+"Expected" five up for all ten teams of the night. In the EVENING before the line log's evening cut
+(linelog.early_cut: 23:00 in Istanbul, or the day's first tip-off) the watch also reads every team of
+the day, so the five a reader there could have seen is kept as the team's first look, to be set
+against its confirmed five later. Recorded only.
+
 A day's record (JSON keys as strings):
 
     {"teams": {espn team: {
@@ -33,6 +40,7 @@ from datetime import date, datetime, timedelta
 
 import httpx
 
+from app.linelog import early_cut
 from app.scores import Schedule
 
 URL = "https://stats.nba.com/js/data/leaders/00_daily_lineups_{:%Y%m%d}.json"
@@ -46,6 +54,7 @@ HEADERS = {
 }
 TIMEOUT = 15.0
 LEAD = timedelta(minutes=90)  # games starting this soon are watched
+EVENING = timedelta(minutes=20)  # the evening look is taken this long before the line log's evening cut
 # nba.com team codes that ESPN writes differently.
 ESPN_CODE = {"GSW": "GS", "NOP": "NO", "NYK": "NY", "SAS": "SA", "UTA": "UTAH", "WAS": "WSH"}
 
@@ -53,6 +62,16 @@ ESPN_CODE = {"GSW": "GS", "NOP": "NO", "NYK": "NY", "SAS": "SA", "UTA": "UTAH", 
 def days_to_watch(schedule: Schedule, now: datetime) -> list[int]:
     """Days with a game that hasn't started yet and starts within LEAD."""
     return sorted(d for d, games in schedule.games.items() if any(now < g.start <= now + LEAD for g in games))
+
+
+def evening_days(schedule: Schedule, now: datetime) -> list[int]:
+    """Days whose evening cut (linelog.early_cut) is within EVENING: every team gets a look now."""
+    out = []
+    for day in schedule.games:
+        cut = early_cut(schedule, day)
+        if cut is not None and cut - EVENING <= now <= cut:
+            out.append(day)
+    return sorted(out)
 
 
 async def fetch(day: date, transport: httpx.AsyncBaseTransport | None = None) -> dict:
@@ -96,13 +115,21 @@ def parse(raw: dict) -> dict[str, dict]:
     return out
 
 
-def update(record: dict | None, schedule: Schedule, day: int, listed: dict[str, dict], now: datetime) -> dict:
+def update(
+    record: dict | None,
+    schedule: Schedule,
+    day: int,
+    listed: dict[str, dict],
+    now: datetime,
+    evening: bool = False,
+) -> dict:
     """The day's record with this look written in for every team whose game is within LEAD and
-    hasn't started. A look is appended only when the status, the five or the inactive list changed."""
+    hasn't started; with ``evening``, for every team still to tip off (the evening look). A look is
+    appended only when the status, the five or the inactive list changed."""
     out = {"teams": {k: dict(v) for k, v in ((record or {}).get("teams") or {}).items()}}
     stamp = now.isoformat(timespec="seconds")
     for g in schedule.games.get(day, []):
-        if not now < g.start <= now + LEAD:
+        if not now < g.start or not (evening or g.start <= now + LEAD):
             continue
         for team in (g.away, g.home):
             code = schedule.teams.get(team, ("", ""))[0].upper()

@@ -9657,6 +9657,67 @@
         ],
         "title": "DeletePostRequest"
       },
+      "EarlyLines": {
+        "properties": {
+          "days": {
+            "type": "integer",
+            "title": "Days",
+            "description": "Settled days with an evening look (23:00 in Istanbul, or the first tip-off)"
+          },
+          "games": {
+            "type": "integer",
+            "title": "Games",
+            "description": "Player games with both lines and a result"
+          },
+          "moved": {
+            "type": "integer",
+            "title": "Moved",
+            "description": "Of those, how many had a different minutes line by tip-off"
+          },
+          "scratched": {
+            "type": "integer",
+            "title": "Scratched",
+            "description": "Players with an evening line of 10+ minutes and none left at tip-off"
+          },
+          "stats": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EarlyMiss"
+            },
+            "type": "object",
+            "title": "Stats",
+            "description": "minutes, pts, reb, ast, stl, blk, three_pm, to"
+          }
+        },
+        "type": "object",
+        "required": [
+          "days",
+          "games",
+          "moved",
+          "scratched",
+          "stats"
+        ],
+        "title": "EarlyLines"
+      },
+      "EarlyMiss": {
+        "properties": {
+          "early": {
+            "type": "number",
+            "title": "Early",
+            "description": "Typical miss of the evening line (average distance from what he did)"
+          },
+          "tip": {
+            "type": "number",
+            "title": "Tip",
+            "description": "The same for the line at tip-off, on the same player games"
+          }
+        },
+        "type": "object",
+        "required": [
+          "early",
+          "tip"
+        ],
+        "title": "EarlyMiss"
+      },
       "ErrorBody": {
         "properties": {
           "code": {
@@ -15653,6 +15714,17 @@
             },
             "type": "array",
             "title": "Players"
+          },
+          "early": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EarlyLines"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The evening line against the tip-off line (app/linelog.py); None before one settles"
           }
         },
         "type": "object",

@@ -62,6 +62,33 @@ def test_a_team_keeps_its_last_line_before_tip_off():
     assert rec["teams"]["19"][1] == before.isoformat()
 
 
+def test_the_evening_look_closes_at_23_in_istanbul_or_the_first_tip():
+    # T0 is 19:00 in New York on Nov 18 and 03:00 in Istanbul on Nov 19: the reader there looked at 23:00.
+    assert linelog.early_cut(schedule(), 30) == T0 - timedelta(hours=4)
+    matinee = ScheduledGame(9, 30, T0 - timedelta(hours=6), away=7, home=8, official=False)  # 21:00 in Istanbul
+    sched = Schedule(teams={}, games={30: [*schedule().games[30], matinee]})
+    assert linelog.early_cut(sched, 30) == matinee.start  # after the first tip no pickup can be made
+    assert linelog.early_cut(schedule(), 99) is None
+
+
+def test_the_evening_line_is_kept_beside_the_tip_off_line():
+    sched = schedule()
+    cut = linelog.early_cut(sched, 30)
+    rec = linelog.update(None, sched, 30, {1: (19, line(20)), 2: (2, line(14))}, cut - timedelta(hours=1))
+    rec = linelog.update(rec, sched, 30, {1: (19, line(21)), 2: (2, line(14))}, cut)
+    assert rec["early"]["at"] == cut.isoformat() and rec["early"]["lines"]["1"][2] == 21.0
+    # Later looks move the tip-off line only; a player ruled out since leaves it and stays in the evening look.
+    late = T0 - timedelta(minutes=10)
+    rec = linelog.update(rec, sched, 30, {1: (19, line(25, minutes=34.0))}, late)
+    assert rec["early"]["at"] == cut.isoformat() and rec["early"]["lines"]["1"][2] == 21.0
+    assert rec["lines"]["1"][2] == 25.0 and "2" not in rec["lines"] and "2" in rec["early"]["lines"]
+    done = linelog.settle(rec, [row(1, 19, 27)])
+    check = linelog.early_check([done, {"lines": {}, "results": {}}])
+    assert (check["days"], check["games"], check["moved"], check["scratched"]) == (1, 1, 1, 1)
+    assert check["stats"]["pts"] == {"early": 6.0, "tip": 2.0}
+    assert linelog.early_check([{"lines": {"1": [19]}, "results": {}}])["stats"] == {}  # days before the look existed
+
+
 def test_the_engine_line_before_the_trees_is_kept_too():
     sched = schedule()
     engine = {MINUTES: 29.0, PTS: 19.04}
@@ -241,6 +268,15 @@ def test_admins_read_back_who_lands_near_his_line(recorded):
     assert got["players"][0]["stats"]["pts"] == {"line": 20.0, "actual": 35.0, "miss": 15.0, "swing": 15.0}
     assert got["players"][0]["team_abbrev"] == "ORL"
     assert admin.post("/api/admin/player-lines", json={"season": 2027, "min_games": 2}).json()["players"] == []
+    assert got["early"] is None  # that look came after 23:00 in Istanbul
+    sched = schedule()
+    evening = linelog.early_cut(sched, 30) - timedelta(minutes=5)
+    rec = linelog.update(None, sched, 30, {1: (19, line(20))}, evening)
+    rec = linelog.update(rec, sched, 30, {1: (19, line(22))}, T0 - timedelta(hours=1))
+    store.save_player_lines(2027, 30, linelog.settle(rec, [row(1, 19, 21)]), True)
+    early = admin.post("/api/admin/player-lines", json={"season": 2027}).json()["early"]
+    assert (early["days"], early["games"], early["scratched"]) == (1, 1, 0)
+    assert early["stats"]["pts"] == {"early": 1.0, "tip": 1.0}
 
 
 @pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="set TEST_DATABASE_URL to test against Postgres")

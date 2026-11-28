@@ -9,14 +9,17 @@ injury tags). Once the night has settled, the box build fills in what each playe
 Built to stay small: one row per NBA day, numbers in fixed-order arrays instead of keyed objects, ids
 as JSON keys. Since 2026-11-27 the league is read with main.LINE_LOG_FREE_AGENTS free agents, so with
 the rosters every NBA player in tonight's games has a line (the black box's team and opponent misses
-need them all); a full night is about 450 players, 60-80 KB before Postgres compresses it. A day's record:
+need them all); a full night is about 450 players, 60-80 KB before Postgres compresses it (the
+evening look adds about 25). A day's record:
 
     {"teams": {team: [tip, checked]},             ISO times
      "lines": {player: [team, *STATS]},           his line, last look before his team tipped off
      "engine": {player: [*STATS]},                the same look before the trees (analysis/blackbox.py)
      "build": {player: [[*STATS], [[kind, text, minutes, *REASON_STATS], ...]]}
                                                   his plain-night line (usual) and the reasons that moved it
-     "results": {player: [*STATS] | []}}          once settled; [] = his team played, he didn't
+     "results": {player: [*STATS] | []},          once settled; [] = his team played, he didn't
+     "early": {"at": checked, "lines": {player: [team, *STATS]}}}
+                                                  every line at the evening cut (early_cut)
 
 "engine" (since 2026-11-27) is what the engine's own misses are counted against, so the trees can learn
 from past misses without learning from their own corrections.
@@ -24,6 +27,12 @@ from past misses without learning from their own corrections.
 "build" (since 2026-11-28, Can: "we need some whys for each estimation, especially for the Kupons") keeps
 how each line was built at that same look: his usual line and the reasons the game moved it (gamebox.py,
 biggest first, as the player card shows them), so a bet's why stays the one anyone could see before tip.
+
+"early" (since 2026-11-28, Can: "when it's 100% confirmed, most of the users will be in bed if they are
+in Turkey", and a pickup has to be made before the day's first tip) is the line a reader here decides
+on: the last look at or before 23:00 in Istanbul, or the day's first tip-off when that comes sooner.
+early_check sets it beside the tip-off line, so what only late news gives us can be told from what we
+knew in the evening.
 
 A player whose team has no game rows that night (postponed) gets no result.
 """
@@ -33,7 +42,8 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from collections.abc import Iterable
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.analysis.form import AST, BLK, FGA, FGM, FTA, FTM, MINUTES, PTS, REB, STL, TO, TPM
 from app.analysis.gamebox import GameRow
@@ -41,7 +51,12 @@ from app.analysis.model import CategoryModel
 from app.analysis.report import next_game_parts
 from app.espn.parse import League
 from app.schemas import NextGameLine
-from app.scores import Schedule
+from app.scores import NEW_YORK, Schedule
+
+try:
+    ISTANBUL = ZoneInfo("Europe/Istanbul")
+except ZoneInfoNotFoundError:  # no tz database on the host: Turkey keeps UTC+3 all year
+    ISTANBUL = timezone(timedelta(hours=3))
 
 # The order of every saved array: NextGameLine's field and the game row's stat id.
 STATS: tuple[tuple[str, int], ...] = (
@@ -66,11 +81,25 @@ REASON_STATS = ("pts", "reb", "ast", "stl", "blk", "three_pm", "to")
 # The stats the read-back summarises (makes and attempts stay saved for FG% and FT% later).
 SUMMARY = ("minutes", "pts", "reb", "ast", "stl", "blk", "three_pm", "to")
 AHEAD = timedelta(hours=18)  # days with a game starting this soon are looked at: the whole night, like the iddaa log
+# When a reader in Turkey last looks, on the evening of the NBA day (Can: 23:00, 23:30 at most).
+EARLY_AT = time(23, 0)
 
 
 def days_to_watch(schedule: Schedule, now: datetime) -> list[int]:
     """Days with a game that hasn't started yet and starts within AHEAD."""
     return sorted(d for d, games in schedule.games.items() if any(now < g.start <= now + AHEAD for g in games))
+
+
+def early_cut(schedule: Schedule, day: int) -> datetime | None:
+    """When the day's early look closes: EARLY_AT in Istanbul on the NBA day's date (a 19:00 New York
+    tip is 03:00 there), or the day's first tip-off when that comes sooner (weekend afternoon games).
+    None for a day without games."""
+    games = schedule.games.get(day, [])
+    if not games:
+        return None
+    first = min(g.start for g in games)
+    date = schedule.date_of(day) or first.astimezone(NEW_YORK).date()
+    return min(datetime.combine(date, EARLY_AT, tzinfo=ISTANBUL), first)
 
 
 Look = tuple[int, NextGameLine] | tuple[int, NextGameLine, dict[int, float] | None]
@@ -123,11 +152,19 @@ def update(record: dict | None, schedule: Schedule, day: int, lines: dict[int, L
         "build": dict((record or {}).get("build", {})),
         "results": dict((record or {}).get("results", {})),
     }
+    if (record or {}).get("early"):
+        out["early"] = record["early"]
     tips = {team: g.start for g in schedule.games.get(day, []) for team in (g.away, g.home)}
     waiting = {team for team, start in tips.items() if now < start}
     if not waiting:
         return out
     stamp = now.isoformat(timespec="seconds")
+    cut = early_cut(schedule, day)
+    if cut is not None and now <= cut:  # no game has started: every line of the day, as one look
+        out["early"] = {
+            "at": stamp,
+            "lines": {str(pid): [team, *pack(line)] for pid, (team, line, *_) in lines.items()},
+        }
     for team in waiting:
         out["teams"][str(team)] = [tips[team].isoformat(timespec="seconds"), stamp]
     gone = {pid for pid, v in out["lines"].items() if v[0] in waiting}
@@ -158,6 +195,44 @@ def settle(record: dict, rows: Iterable[GameRow]) -> dict:
         elif team in teams:
             results[pid] = []
     return {**record, "results": results}
+
+
+def early_check(records: Iterable[dict]) -> dict:
+    """Over these settled days, the early look against the tip-off line on the same player games (he
+    had both lines and played): for each SUMMARY stat the typical miss of each, as the average distance
+    from what he did. ``days`` counts the days with an early look, ``moved`` the player games whose
+    minutes line changed between the two looks, ``scratched`` the players with an early line of
+    BUILD_MIN_MINUTES or more who had none left at tip-off (ruled out in between)."""
+    index = {name: 1 + i for i, (name, _) in enumerate(STATS)}
+    minutes = index["minutes"]
+    early_miss, tip_miss = dict.fromkeys(SUMMARY, 0.0), dict.fromkeys(SUMMARY, 0.0)
+    days = games = moved = scratched = 0
+    for rec in records:
+        looks = (rec.get("early") or {}).get("lines") or {}
+        if not looks:
+            continue
+        days += 1
+        results, lines, teams = rec.get("results", {}), rec.get("lines", {}), rec.get("teams", {})
+        for pid, early in looks.items():
+            tip, got = lines.get(pid), results.get(pid)
+            if tip is None:
+                scratched += str(early[0]) in teams and early[minutes] >= BUILD_MIN_MINUTES
+                continue
+            if not got:
+                continue
+            games += 1
+            moved += early[minutes] != tip[minutes]
+            for name in SUMMARY:
+                i = index[name]
+                early_miss[name] += abs(got[i - 1] - early[i])
+                tip_miss[name] += abs(got[i - 1] - tip[i])
+    stats = {}
+    if games:
+        stats = {
+            name: {"early": round(early_miss[name] / games, 3), "tip": round(tip_miss[name] / games, 3)}
+            for name in SUMMARY
+        }
+    return {"days": days, "games": games, "moved": moved, "scratched": scratched, "stats": stats}
 
 
 def summary(records: Iterable[dict]) -> list[dict]:

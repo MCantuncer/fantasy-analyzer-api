@@ -2241,9 +2241,26 @@ class PlayerLineSummary(BaseModel):
     stats: dict[str, StatMiss] = Field(description="minutes, pts, reb, ast, stl, blk, three_pm, to")
 
 
+class EarlyMiss(BaseModel):
+    early: float = Field(description="Typical miss of the evening line (average distance from what he did)")
+    tip: float = Field(description="The same for the line at tip-off, on the same player games")
+
+
+class EarlyLines(BaseModel):
+    days: int = Field(description="Settled days with an evening look (23:00 in Istanbul, or the first tip-off)")
+    games: int = Field(description="Player games with both lines and a result")
+    moved: int = Field(description="Of those, how many had a different minutes line by tip-off")
+    scratched: int = Field(description="Players with an evening line of 10+ minutes and none left at tip-off")
+    stats: dict[str, EarlyMiss] = Field(description="minutes, pts, reb, ast, stl, blk, three_pm, to")
+
+
 class PlayerLines(BaseModel):
     days: int = Field(description="Settled days read")
     players: list[PlayerLineSummary]
+    early: EarlyLines | None = Field(
+        default=None,
+        description="The evening line against the tip-off line (app/linelog.py); None before one settles",
+    )
 
 
 class BookLinesRequest(BaseModel):
