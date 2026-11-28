@@ -2671,6 +2671,30 @@ class LossReason(BaseModel):
     text: str = Field(description='One line for the page, e.g. "NO made 8 of 35 threes (we expected 36%)"')
 
 
+class CompareBuildReason(BaseModel):
+    """One thing this game moved his number by (analysis/gamebox.py), for this stat."""
+
+    kind: str = Field(description="NextGameReason's kind: opponent, form, teammates_out, starter_switch, ...")
+    text: str = Field(description="A few words: 'Against BKN', 'Miller and Knueppel out'")
+    minutes: float = Field(description="Minutes it adds (+) or takes (-)")
+    change: float = Field(description="What it moves this stat by")
+
+
+class CompareBuild(BaseModel):
+    """How our number for this stat was built, saved at his last look before tip (app/bookcompare.py
+    build_of): usual + reasons + trees + rest = line."""
+
+    line: float = Field(description="Our number for the stat")
+    usual: float | None = Field(description="His number on a plain night (no opponent, form, absences)")
+    usual_minutes: float | None
+    minutes: float | None = Field(default=None, description="Our minutes for him tonight")
+    reasons: list[CompareBuildReason] = Field(default_factory=list, description="Biggest change first")
+    trees: float = Field(description="What the learned-miss trees changed (analysis/blackbox.py)")
+    rest: float = Field(description="The rest: team score fit and reasons too small to list")
+    recent: list[float] = Field(default_factory=list, description="His last games of the stat, newest first")
+    recent_minutes: list[float] = Field(default_factory=list, description="Minutes in those games")
+
+
 class ComparePlayer(CompareRow):
     name: str
     player_id: int | None = Field(description="ESPN id; None when iddaa's name matched nobody")
@@ -2686,6 +2710,7 @@ class ComparePlayer(CompareRow):
         default=None, description="Whose chances read the result better over the rungs (Brier score)"
     )
     why: LossReason | None = Field(default=None, description="Once final: why the result landed where it did")
+    build: CompareBuild | None = Field(default=None, description="How our number was built, as seen before tip")
 
 
 class CompareOdd(BaseModel):

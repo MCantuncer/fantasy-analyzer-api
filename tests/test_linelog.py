@@ -73,6 +73,33 @@ def test_the_engine_line_before_the_trees_is_kept_too():
     assert "1" not in rec["lines"] and "1" not in rec["engine"]
 
 
+def test_how_each_line_was_built_is_kept_for_its_bets_why():
+    from app.schemas import NextGameReason, NextGameStats
+
+    built = line(20).model_copy(
+        update={
+            "usual": NextGameStats(**{**line(17, 27.0).model_dump(include=set(NextGameStats.model_fields))}),
+            "reasons": [
+                NextGameReason(kind="teammates_out", text="Miller out", minutes=2.8, pts=1.34, value=0.4),
+                NextGameReason(kind="opponent", text="Against BKN", minutes=0, pts=0.5, reb=-0.2, value=0.1),
+            ],
+        }
+    )
+    before = T0 - timedelta(minutes=10)
+    sched = schedule()
+    rec = linelog.update(
+        None, sched, 30, {1: (19, built), 2: (2, line(14)), 3: (4, built.model_copy(update={"minutes": 6.0}))}, before
+    )
+    usual, reasons = rec["build"]["1"]
+    assert usual[:2] == [27.0, 17.0]
+    assert reasons[0] == ["teammates_out", "Miller out", 2.8, 1.34, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    assert reasons[1][:5] == ["opponent", "Against BKN", 0, 0.5, -0.2]
+    assert "2" not in rec["build"]  # no game context (no usual line): nothing to build from
+    assert "3" not in rec["build"]  # under 10 minutes: no bet would use it
+    rec = linelog.update(rec, sched, 30, {}, before + timedelta(minutes=5))  # ruled out since
+    assert "1" not in rec["build"]
+
+
 def row(player: int, team: int, pts: float, minutes: float = 31.0) -> GameRow:
     return GameRow(player, 99, 30, team, {MINUTES: minutes, PTS: pts, REB: 7.0})
 
