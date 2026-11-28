@@ -2763,10 +2763,29 @@ class QuarterRecordPart(BaseModel):
     edge: QuarterRecordSums
 
 
+class QuarterNight(BaseModel):
+    date: str = Field(description="US game date, ISO")
+    bets: int
+    won: int
+    returned: float = Field(description="Units back less units staked, every settled pick that night")
+    edge_bets: int
+    edge_won: int
+    edge_returned: float = Field(description="The same for the value picks alone")
+
+
+class QuarterTrial(BaseModel):
+    start: str = Field(description="The trial's first day, ISO")
+    review: str = Field(description="When the record is judged for Kupons, ISO")
+    series: list[QuarterNight] = Field(default_factory=list, description="One line per night with settled picks")
+
+
 class QuarterRecord(BaseModel):
     all: QuarterRecordSums = Field(description="Every settled quarter and first-half pick")
     edge: QuarterRecordSums = Field(description="Only the picks where our chance x the price was over 1")
     by_market: dict[str, QuarterRecordPart] = Field(default_factory=dict)
+    trial: QuarterTrial | None = Field(
+        default=None, description="The Kupons trial: its dates and the record night by night"
+    )
 
 
 class CompareGame(BaseModel):

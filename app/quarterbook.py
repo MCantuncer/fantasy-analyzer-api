@@ -23,8 +23,14 @@ A market with several lines keeps its main one (its two prices closest), as the 
 from __future__ import annotations
 
 import math
+from datetime import date, timedelta
 
 from app import iddaa
+
+# The trial (Can picked "two steps" on 2026-11-24): quarter picks are shown and recorded, kept out of
+# Kupons, and judged after about two weeks on whether the value picks beat the price.
+TRIAL_FROM = date(2026, 11, 24)
+TRIAL_DAYS = 14
 
 QUARTER_TOTAL_SD = 8.4  # a quarter's points, both teams, against ours
 QUARTER_MARGIN_SD = 8.2  # a quarter's margin against ours
@@ -232,4 +238,35 @@ def record(games: list[dict]) -> dict:
             }
             for k in kinds
         },
+    }
+
+
+def trial(nights: list[dict]) -> dict:
+    """The trial's dates and its record night by night (oldest first), for the page's water line.
+    nights: compared nights, each with its "date" (ISO, or None when the schedule didn't read) and
+    its games' "quarters". A night from the trial's first day on joins the series once it has a
+    settled pick; edge_returned is what the value picks made that night."""
+    series = []
+    for n in nights:
+        when = n.get("date")
+        if not when or date.fromisoformat(when) < TRIAL_FROM:
+            continue
+        got = record(n.get("games") or [])
+        if got["all"]["bets"] == 0:
+            continue
+        series.append(
+            {
+                "date": when,
+                "bets": got["all"]["bets"],
+                "won": got["all"]["won"],
+                "returned": got["all"]["returned"],
+                "edge_bets": got["edge"]["bets"],
+                "edge_won": got["edge"]["won"],
+                "edge_returned": got["edge"]["returned"],
+            }
+        )
+    return {
+        "start": TRIAL_FROM.isoformat(),
+        "review": (TRIAL_FROM + timedelta(days=TRIAL_DAYS)).isoformat(),
+        "series": series,
     }

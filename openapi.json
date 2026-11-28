@@ -2712,7 +2712,7 @@
                 }
               }
             },
-            "description": "Unprocessable Content"
+            "description": "Unprocessable Entity"
           }
         }
       }
@@ -3531,7 +3531,7 @@
                 }
               }
             },
-            "description": "Unprocessable Content"
+            "description": "Unprocessable Entity"
           }
         }
       }
@@ -4073,7 +4073,7 @@
                 }
               }
             },
-            "description": "Unprocessable Content"
+            "description": "Unprocessable Entity"
           }
         }
       }
@@ -16745,6 +16745,52 @@
         ],
         "title": "QuarterBet"
       },
+      "QuarterNight": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "description": "US game date, ISO"
+          },
+          "bets": {
+            "type": "integer",
+            "title": "Bets"
+          },
+          "won": {
+            "type": "integer",
+            "title": "Won"
+          },
+          "returned": {
+            "type": "number",
+            "title": "Returned",
+            "description": "Units back less units staked, every settled pick that night"
+          },
+          "edge_bets": {
+            "type": "integer",
+            "title": "Edge Bets"
+          },
+          "edge_won": {
+            "type": "integer",
+            "title": "Edge Won"
+          },
+          "edge_returned": {
+            "type": "number",
+            "title": "Edge Returned",
+            "description": "The same for the value picks alone"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "bets",
+          "won",
+          "returned",
+          "edge_bets",
+          "edge_won",
+          "edge_returned"
+        ],
+        "title": "QuarterNight"
+      },
       "QuarterRecord": {
         "properties": {
           "all": {
@@ -16761,6 +16807,17 @@
             },
             "type": "object",
             "title": "By Market"
+          },
+          "trial": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuarterTrial"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The Kupons trial: its dates and the record night by night"
           }
         },
         "type": "object",
@@ -16879,6 +16936,34 @@
           "value"
         ],
         "title": "QuarterSide"
+      },
+      "QuarterTrial": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "The trial's first day, ISO"
+          },
+          "review": {
+            "type": "string",
+            "title": "Review",
+            "description": "When the record is judged for Kupons, ISO"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/QuarterNight"
+            },
+            "type": "array",
+            "title": "Series",
+            "description": "One line per night with settled picks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "review"
+        ],
+        "title": "QuarterTrial"
       },
       "ReactRequest": {
         "properties": {

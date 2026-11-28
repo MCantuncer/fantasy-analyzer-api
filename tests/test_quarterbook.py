@@ -73,6 +73,32 @@ def test_the_record_counts_picks_and_what_they_returned():
     }
 
 
+def test_the_trial_lists_its_nights_from_the_first_day_on():
+    actual = ([20.0, 25.0, 30.0, 30.0], [33.0, 30.0, 25.0, 28.0])
+    games = [{"quarters": quarterbook.bets(BOARD, MIL, PHI, (AWAY_Q, HOME_Q), actual)}]
+    before = quarterbook.bets(BOARD, MIL, PHI, (AWAY_Q, HOME_Q), None)
+    nights = [
+        {"date": "2026-11-23", "games": games},  # before the trial
+        {"date": "2026-11-24", "games": games},
+        {"date": "2026-11-25", "games": [{"quarters": before}]},  # nothing settled yet
+        {"date": None, "games": games},  # the schedule didn't read
+    ]
+    got = quarterbook.trial(nights)
+    assert got["start"] == "2026-11-24" and got["review"] == "2026-12-08"
+    [night] = got["series"]
+    rec = quarterbook.record(games)
+    assert night == {
+        "date": "2026-11-24",
+        "bets": rec["all"]["bets"],
+        "won": rec["all"]["won"],
+        "returned": rec["all"]["returned"],
+        "edge_bets": rec["edge"]["bets"],
+        "edge_won": rec["edge"]["won"],
+        "edge_returned": rec["edge"]["returned"],
+    }
+    assert quarterbook.trial([])["series"] == []
+
+
 def test_the_page_and_the_record_carry_quarter_bets(recorded):
     app, store, _ = _app(recorded)
     rec = book_record()
@@ -112,3 +138,4 @@ def test_the_page_and_the_record_carry_quarter_bets(recorded):
     assert q[("q_total", 1)]["actual"] == 53.0 and q[("q_total", 1)]["ours"] > 50
     got = user.post("/api/book-compare/record", json={"season": 2027}).json()
     assert got["quarters"]["all"]["bets"] >= 1
+    assert got["quarters"]["trial"]["review"] == "2026-12-08"
