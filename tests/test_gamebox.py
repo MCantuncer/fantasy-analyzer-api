@@ -6,10 +6,12 @@ import pytest
 from app.analysis import gamebox
 from app.analysis.gamebox import (
     AST,
+    BLK,
     FGA,
     FGM,
     FTA,
     FTM,
+    GS,
     MINUTES,
     PTS,
     REB,
@@ -312,6 +314,44 @@ def test_a_new_starter_plays_more_and_a_benched_one_less():
     assert next(r for r in reasons if r.kind == "starter_switch").minutes < 0
 
 
+def test_tonights_starting_five_moves_the_finished_line_only_once_it_is_confirmed():
+    bench = _form(starts_lately=0.2)
+    # not confirmed yet: the line as it is
+    assert gamebox.starting_five(LINE, _ctx(form=bench)) == (LINE, None)
+    # in the five tonight after starting one of his last five games
+    new, reason = gamebox.starting_five(LINE, _ctx(form=bench, starts=True))
+    more = gamebox.STARTING_MINUTES * 0.8
+    assert new[MINUTES] == pytest.approx(30.0 + more)
+    assert reason.kind == "starting_five" and reason.minutes == pytest.approx(more) and reason.detail["starts"] == 1
+    for k in gamebox.STARTING_STATS:
+        assert new[k] == pytest.approx(LINE[k] * (30.0 + more) / 30.0)
+        assert reason.stats[k] == pytest.approx(new[k] - LINE[k])
+    # blocks, turnovers and his shooting stay: they didn't hold in every season
+    for k in (BLK, TO, FGM, FGA, FTM, FTA):
+        assert new[k] == LINE[k]
+    # a starter moved to the bench plays less, never under zero or over the cap
+    less, reason = gamebox.starting_five(LINE, _ctx(form=_form(starts_lately=1.0), starts=False))
+    assert less[MINUTES] == pytest.approx(30.0 - gamebox.STARTING_MINUTES) and reason.minutes < 0
+    assert less[PTS] < LINE[PTS]
+    benched = _ctx(form=_form(starts_lately=1.0), starts=False)
+    assert gamebox.starting_five(_line(1.0, pts=1.0), benched)[0][MINUTES] == 0
+    top = gamebox.starting_five(_line(43.0, pts=30.0), _ctx(form=bench, starts=True))[0]
+    assert top[MINUTES] == gamebox.MAX_MINUTES
+    # as usual (starts and has been starting), no games for this team, or no minutes: nothing
+    assert gamebox.starting_five(LINE, _ctx(form=_form(starts_lately=1.0), starts=True)) == (LINE, None)
+    assert gamebox.starting_five(LINE, _ctx(starts=True)) == (LINE, None)
+    assert gamebox.starting_five(_line(0.0), _ctx(form=bench, starts=True))[1] is None
+
+
+def test_the_box_knows_how_many_of_his_last_five_games_he_started():
+    def row(day, started):
+        return GameRow(11, 900 + day, day, 1, {**_line(30.0, pts=10.0), GS: float(started)})
+
+    rows = _rows() + [row(d, d >= 23) for d in range(20, 26)]  # six more games: bench, bench, bench, then three starts
+    box = gamebox.build(2027, rows, PRIOR, SCHEDULE)
+    assert box.form[11].starts_lately == pytest.approx(3 / 5)
+
+
 def test_reason_texts():
     def text(kind, **detail):
         return _reason_text(gamebox.Reason(kind, detail=detail), _ctx())
@@ -319,6 +359,8 @@ def test_reason_texts():
     assert text("form") == "His recent form"
     assert text("starter_switch", started=1) == "Started his last game"
     assert text("starter_switch", started=0) == "Moved to the bench"
+    assert text("starting_five", starts=1) == "Starts tonight"
+    assert text("starting_five", starts=0) == "Off the bench tonight"
     assert text("new_team") == "First game for his new team"
     assert text("season_end") == "Last games of the season"
     assert text("coach_decision", days=1) == "Coach sat him yesterday"
@@ -489,6 +531,27 @@ def test_the_next_game_line_says_why(league):
     assert top.text == "Against PHX"
     assert top.pts > 0 and top.value > 0
     assert [abs(r.value) for r in ng.reasons] == sorted((abs(r.value) for r in ng.reasons), reverse=True)
+
+
+def test_the_next_game_line_takes_tonights_starting_five_once_confirmed(league):
+    lg = copy.deepcopy(league)
+    p = lg.team(3).roster[0]
+    p.per_game = {**p.per_game, MINUTES: 24.0, PTS: 12.0, REB: 5.0, AST: 4.0, FGM: 5.0, FGA: 10.0}
+    p.minute_shifts = ()
+    p.recent_minutes = (None, None)
+    p.injury_status = "ACTIVE"
+    bench = _form(minutes=24.0, starts_lately=0.0)
+    p.game_context = _ctx(opponent=21, form=bench)
+    before = Analyzer(lg, 3).ref(p).next_game
+    assert all(r.kind != "starting_five" for r in before.reasons)
+    p.game_context = _ctx(opponent=21, form=bench, starts=True)
+    ng = Analyzer(lg, 3).ref(p).next_game
+    assert ng.minutes == pytest.approx(before.minutes + gamebox.STARTING_MINUTES, abs=0.06)
+    assert ng.pts > before.pts and ng.reb > before.reb
+    why = next(r for r in ng.reasons if r.kind == "starting_five")
+    assert why.text == "Starts tonight" and why.minutes == pytest.approx(gamebox.STARTING_MINUTES, abs=0.06)
+    assert why.pts == pytest.approx(ng.pts - before.pts, abs=0.1)  # the line is rounded
+    assert ng.usual.minutes == before.usual.minutes  # his usual line is before tonight's five
 
 
 def test_a_team_expected_to_outscore_its_lines_lifts_them(league):

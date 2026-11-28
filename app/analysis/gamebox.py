@@ -128,6 +128,22 @@ ROTATION_REGULAR = 12.0
 ROTATION_GAMES = 6
 ROTATION_WINDOW, ROTATION_PLAYED = 5, 4
 BOOM_WINDOW = 10  # Form.last: the games Crazy One's boom calls read (app/booms.py)
+# Tonight's starting five (2026-11-28; first measured 2026-11-25, the area map's dig A). A player in the
+# confirmed five who has not been starting plays more than his line, one moved to the bench less:
+# minutes += STARTING_MINUTES x (starts tonight - the share of his last STARTING_GAMES games he
+# started), and STARTING_STATS move with his minutes. Applied to the finished line, after the trees
+# (starting_five), and only once the five is known (GameContext.starts). Replayed on the line as it
+# ships with the box score's starters, scripts/starting_five_backtest.py (144,291 games): minutes miss
+# 3.2-5.1% less squared in each of 2021-22..2025-26 left out and fitted forward, 4.3% in 2026-27,
+# 3.1-3.7% with the weight frozen on 2018-19..2020-21; points 0.2-1.0%, rebounds 0.4-1.3%, assists
+# 0.2-0.8%, steals 0.1-0.4%, threes 0.0-0.6%, every one of those better. Blocks, turnovers and the FG
+# and FT impacts didn't hold in every season, so they stay as they are. Who started shuffled: 0.0.
+# Only a confirmed five: with one starter wrong in 30% of team games (as nba.com's first listing was on
+# the logged nights) this weight makes minutes worse in 8 of 9 seasons (a weight near 2 would still
+# help; to be fitted on the lineup log's own first listings once it holds enough nights).
+STARTING_MINUTES = 4.45
+STARTING_GAMES = 5
+STARTING_STATS = (PTS, REB, AST, STL, TPM)
 # Who was missing in his last games. His minutes lately already hold the games a teammate sat:
 BACK_SHARE = -0.058  # per minute of regulars back from an absence, x (1 - his minutes / BENCH_MINUTES)
 OLD_OUT_SHARE = -0.049  # per minute of teammates ruled out who already missed a game, x the same
@@ -310,6 +326,7 @@ class Form:
     last_minutes: float | None = None  # in his last game
     started: bool | None = None  # his last game
     start_share: float | None = None  # of his games lately (START_HALF_LIFE)
+    starts_lately: float | None = None  # the share of his last STARTING_GAMES games this season he started
     since_return: int = 0  # games played since missing RAMP_GAP+ team games in a row, while in RAMP
     decided_by: float | None = None  # points his last LOPSIDED_GAMES games were decided by, on average
     overtime: bool = False  # his last game went to overtime
@@ -596,6 +613,7 @@ def build(
             last_minutes=games[-1].line[MINUTES],
             started=games[-1].line.get(GS, 0.0) > 0,
             start_share=float(this[START_HALF_LIFE][col[GS]] / this[START_HALF_LIFE][0]),
+            starts_lately=sum(r.line.get(GS, 0.0) > 0 for r in games[-STARTING_GAMES:]) / len(games[-STARTING_GAMES:]),
             decided_by=sum(gaps) / len(gaps) if gaps else None,
             overtime=games[-1].game in overtime,
             minutes_recent=sum(r.line[MINUTES] for r in games[-ROTATION_RECENT:]) / len(games[-ROTATION_RECENT:]),
@@ -742,6 +760,7 @@ class GameContext:
     opp_three_luck: float = 0.0  # the opponent's 3P% allowed over the league's, shrunk (Box.three_luck)
     own_three_luck: float = 0.0  # his threes short of the league's 3P% a minute this season, shrunk (Box.own_luck)
     box_inputs: dict[str, float] = field(default_factory=dict, repr=False)  # blackbox.game_inputs, from the box
+    starts: bool | None = None  # in his team's confirmed starting five tonight; None: not confirmed yet
 
 
 def context(box: Box, player: int, team: int, today: int) -> GameContext | None:
@@ -849,7 +868,7 @@ class Reason:
 
     kind: str  # opponent, form, teammates_out, back_from_absence, heavy_minutes, recent_minutes,
     # starter_switch, new_team, season_end, coach_decision, lopsided_games, blowout, overtime, rotation,
-    # teammates_back, home, away, favored, underdog, back_to_back
+    # teammates_back, home, away, favored, underdog, back_to_back, starting_five
     minutes: float = 0.0
     stats: dict[int, float] = field(default_factory=dict)
     detail: dict[str, float | str] = field(default_factory=dict)
@@ -1057,6 +1076,29 @@ def apply(
     if "opponent" in reasons:
         reasons["opponent"].detail["team"] = m.opponent
     return new, usual, list(reasons.values())
+
+
+def starting_five(
+    new: dict[int, float], m: GameContext, weight: float = STARTING_MINUTES
+) -> tuple[dict[int, float], Reason | None]:
+    """The finished line with tonight's starting five in it, and the reason when it moved: his minutes
+    by ``weight`` x (he starts tonight - the share of his last STARTING_GAMES games he started), and
+    STARTING_STATS with his minutes. Nothing while the five isn't confirmed (``m.starts``) or he has
+    no games for this team this season."""
+    f = m.form
+    minutes = new.get(MINUTES, 0.0)
+    if m.starts is None or f is None or f.starts_lately is None or minutes <= 0:
+        return new, None
+    moved = min(max(minutes + weight * (float(m.starts) - f.starts_lately), 0.0), MAX_MINUTES)
+    if moved == minutes:
+        return new, None
+    out = dict(new)
+    out[MINUTES] = moved
+    reason = Reason("starting_five", minutes=moved - minutes, detail={"starts": int(m.starts)})
+    for k in STARTING_STATS:
+        out[k] = new.get(k, 0.0) * moved / minutes
+        reason.add(k, out[k] - new.get(k, 0.0))
+    return out, reason
 
 
 def own_three_luck(by_player: dict[int, list[GameRow]]) -> dict[int, float]:

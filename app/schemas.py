@@ -91,6 +91,7 @@ class NextGameReason(BaseModel):
         "heavy_minutes",
         "recent_minutes",
         "starter_switch",
+        "starting_five",
         "coach_decision",
         "home",
         "away",

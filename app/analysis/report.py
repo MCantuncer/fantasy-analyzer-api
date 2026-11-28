@@ -250,8 +250,9 @@ def next_game_parts(
     the minutes teammates ruled out of it leave him (tonight.py), at the level his games land
     (NEXT_GAME_LEVEL), then the game itself when the league box knows it (gamebox.apply, from
     ``p.game_context``): opponent, his recent games, teammates' shots, home court; then his team's
-    lines held to its expected score (team_sum_gap); last, what the trees of blackbox.py expect it to
-    miss by. ``teammates`` are the players of his NBA team this league knows; none while he is out.
+    lines held to its expected score (team_sum_gap); then what the trees of blackbox.py expect it to
+    miss by; last, tonight's starting five once it is confirmed (gamebox.starting_five). ``teammates``
+    are the players of his NBA team this league knows; none while he is out.
     ``team_sums`` keeps each team's sum of lines across calls. With it, the engine's line before the trees
     (the line log keeps it, for the trees' inputs on his past misses); None without a game."""
     mates = [t for t in teammates if t.id != p.id]
@@ -276,6 +277,10 @@ def next_game_parts(
     # then what the trees expect the line to miss by (blackbox.py)
     engine = new
     new = blackbox.adjust(new, blackbox.calls(blackbox.inputs(m, line, new, out, back, gained, gap)))
+    # last, tonight's starting five once it is confirmed (gamebox.starting_five)
+    new, starting = gamebox.starting_five(new, m)
+    if starting is not None:
+        found = [*found, starting]
     fga = new.get(FGA, 0.0)
     pct = new.get(FGM, 0.0) / fga if fga > 0 else FG_SCALE[0]
     reasons = sorted((_reason(r, m, pct, fga) for r in found), key=lambda r: -abs(r.value))
@@ -479,6 +484,8 @@ def _reason_text(r: gamebox.Reason, m: gamebox.GameContext) -> str:
         return f"First game back after {n} missed" if n > 1 else "First game back"
     if r.kind == "starter_switch":
         return "Started his last game" if r.detail.get("started") else "Moved to the bench"
+    if r.kind == "starting_five":
+        return "Starts tonight" if r.detail.get("starts") else "Off the bench tonight"
     if r.kind == "heavy_minutes":
         return "Big minutes ease off"
     if r.kind == "new_team":
