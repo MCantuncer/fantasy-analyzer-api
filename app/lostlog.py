@@ -54,12 +54,14 @@ STANDOUT = 6.0  # points off his line that make a player the story of an "other"
 # read, and this share of that kind's losses.
 REPEAT_MIN = 8
 REPEAT_SHARE = 0.3
-# A game bet's chance leans this much on the book's own price (Can 2026-11-23, "Blend: 90% book, 10%
-# us"; the page's BOOK_WEIGHT). Book moneylines of 2021-22..2023-24 (3,346 games): when we disagree,
-# the result lands on the book's number, and a blend fitted with each season left out puts 0.86-1.00
-# on the book. Can: keep it "for now", but the engine has to earn its own edge, so every lost game
-# bet where the book was closer is listed (``gems``) with what we missed, and ``book_check`` refits
-# the weight on the settled nights: as our own chance gets better it should come down.
+# A game bet's chance is the engine's own (Can 2026-11-28: the book judges us, it doesn't feed us).
+# From 2026-11-23 to 2026-11-28 the page leaned it 90% on the book's own price ("Blend: 90% book, 10%
+# us"): on book moneylines of 2021-22..2024-25 the engine alone reads its winner picks worse than
+# that blend in every season (log loss 0.670-0.697 against 0.649-0.674), and on the 203 game bets of
+# 2026-11-21..27 too (0.728 against 0.698). The blend is kept here only as the yardstick
+# ``book_check`` reports: the engine has to beat it on its own before a game bet is worth showing as
+# a pick again (the page keeps game bets out of the Kupons until then). Every lost game bet where
+# the book was closer is still listed (``gems``) with what we missed.
 BOOK_WEIGHT = 0.9
 BOOK_CUT = 1.235  # iddaa's usual cut on a two-way game line, for a side whose other price is missing
 STAT_WORD = {
@@ -91,7 +93,8 @@ def _logit(p: float) -> float:
 
 
 def blend_chance(ours: float, fair: float | None, weight: float = BOOK_WEIGHT) -> float:
-    """A game bet's chance: ours blended with the book's own in log-odds (the page's blendChance)."""
+    """Ours blended with the book's own in log-odds: the yardstick of ``book_check``, not a chance the
+    page shows."""
     if fair is None:
         return ours
     return 1 / (1 + math.exp(-((1 - weight) * _logit(ours) + weight * _logit(fair))))
@@ -390,7 +393,7 @@ def bet_of(row: dict, kind: str) -> dict | None:
 
 
 def _game_bet(bet: str, line: float | None, odd: float, alone: float, fair: float, won: bool | None) -> dict:
-    out = {"bet": bet, "odd": odd, "chance": round(blend_chance(alone, fair), 3), "won": won}
+    out = {"bet": bet, "odd": odd, "chance": round(alone, 3), "won": won}
     out.update({"alone": round(alone, 3), "fair": round(fair, 3)})
     if line is not None:
         out["line"] = line
@@ -481,9 +484,9 @@ def _book_closer(row: dict) -> bool | None:
 
 
 def book_check(nights: Iterable[dict]) -> dict:
-    """How the settled game bets read on our chance alone, the book's alone and the blend (log loss,
-    lower is better), and the book weight that would have read them best: as our own chance gets
-    better that weight should come down (it changes the page only after a blind test)."""
+    """How the settled game bets read on our chance alone (what the page shows), the book's alone and
+    the 90/10 blend the page showed until 2026-11-28 (log loss, lower is better), and the book weight
+    that would have read them best: as our own chance gets better that weight should come down."""
     bets = [b for n in nights for b in n.get("game_bets", [])]
 
     def loss(w: float) -> float:

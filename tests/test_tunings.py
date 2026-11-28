@@ -6,7 +6,6 @@ import pytest
 
 from app import tunings
 from app.analysis import gamescore
-from app.lostlog import blend_chance
 from tests.conftest import signed_in
 from tests.test_linelog import LEAGUE_ID, _app
 from tests.test_news import boss
@@ -57,12 +56,12 @@ def test_the_stack_needs_a_fallen_contender_in_a_slump_against_a_recent_foe():
     assert tunings.stack(2027, form("OKC", 8, 16, SLUMP), form("SA", 8, 16, SLUMP), set()) is None
 
 
-def test_calls_blend_live_with_the_book_and_shift_the_book_for_the_stack():
+def test_calls_keep_live_on_our_own_chance_and_shift_the_book_for_the_stack():
     made, book = tunings.calls(inputs(book=BOOK, stack={"team": "OKC", "edge": 0.12, "star_out": False}))
     fair = round((1 / 1.48) / (1 / 1.48 + 1 / 1.87), 3)
     assert book == [fair, 2.5, 222.5]
     ours = 1 - gamescore.win_chance(109.3 - 111.1)
-    assert made["live"] == [111.1, 109.3, round(blend_chance(ours, fair), 3)]
+    assert made["live"] == [111.1, 109.3, round(ours, 3)]  # no book in what the site shows
     assert made["ours_alone"][2] == round(ours, 3) and made["ours_alone"][2] < 0.5
     assert made["book"] == [110.0, 112.5, fair]
     assert made["rivalry"][2] == round(fair + 0.12, 3)
