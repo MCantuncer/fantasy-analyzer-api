@@ -2274,6 +2274,19 @@ class RecordBucket(BaseModel):
     happened: float = Field(description="How often he reached the rung")
 
 
+class RecordLeg(BaseModel):
+    name: str
+    player_id: int | None = Field(description="ESPN player id, when the book's name matched one")
+    team: int | None = Field(description="ESPN pro team id")
+    game_id: int | None = Field(default=None, description="ESPN game id")
+    stat: str = Field(description="three_pm, reb, ast, stl, blk or pts")
+    n: int = Field(description="The rung: he needs n or more")
+    odd: float = Field(description="The book's odds at our last look")
+    ours: float = Field(description="Our chance he gets there")
+    hit: bool = Field(description="He got there")
+    actual: float | None = Field(description="What he got")
+
+
 class RecordNight(BaseModel):
     day: int | None = Field(description="NBA day (scoring period)")
     settled: bool = Field(description="The night has results; False before tip-off")
@@ -2283,6 +2296,7 @@ class RecordNight(BaseModel):
     marked: float = Field(description="Sum of the picks' value: what our chances expected them to make")
     players: int = Field(description="How many players the picks spread over")
     top_hit: float | None = Field(description="Odds of the biggest pick that landed")
+    legs: list[RecordLeg] = Field(default_factory=list, description="Every pick on its own, tip-off order")
 
 
 class CutMarket(BaseModel):

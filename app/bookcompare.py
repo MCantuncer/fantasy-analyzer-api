@@ -559,15 +559,36 @@ def cut(nights: list[dict]) -> dict:
 def night_line(night: dict) -> dict:
     """One night of the record: its settled value picks, how many landed, net units at the book's
     odds, what our chances marked them at (sum of value), how many players they spread over and the
-    odds of the biggest one that landed. settled: the night has results (False before tip-off)."""
-    picks = [
-        (p["name"], r)
+    odds of the biggest one that landed. settled: the night has results (False before tip-off).
+    legs: every pick on its own (Can 2026-11-28, "which are the landed bets?"): who, which rung,
+    at what odds, our chance, what he got and whether it landed; tip-off order, then by player and
+    rung, so a player's ladder stays together."""
+    rows = [
+        (g, p, r)
         for g in night["games"]
         for p in g["players"]
         for r in p.get("rungs", ())
         if r["hit"] is not None and r["value"] is not None and r["value"] > 0
     ]
+    picks = [(p["name"], r) for _, p, r in rows]
     landed = [r["odd"] for _, r in picks if r["hit"]]
+    tips = {g.get("game_id"): str(g.get("tip") or "") for g in night["games"]}
+    legs = [
+        {
+            "name": p["name"],
+            "player_id": p.get("player_id"),
+            "team": p.get("team"),
+            "game_id": g.get("game_id"),
+            "stat": p["stat"],
+            "n": r["n"],
+            "odd": r["odd"],
+            "ours": r["ours"],
+            "hit": r["hit"],
+            "actual": p.get("actual"),
+        }
+        for g, p, r in rows
+    ]
+    legs.sort(key=lambda leg: (tips.get(leg["game_id"], ""), leg["name"], PLAYER_STATS.index(leg["stat"]), leg["n"]))
     return {
         "day": night.get("day"),
         "settled": any(g.get("status") == "final" for g in night["games"]),
@@ -577,4 +598,5 @@ def night_line(night: dict) -> dict:
         "marked": round(sum(r["value"] for _, r in picks), 2),
         "players": len({name for name, _ in picks}),
         "top_hit": max(landed, default=None),
+        "legs": legs,
     }

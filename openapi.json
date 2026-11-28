@@ -16940,6 +16940,100 @@
         ],
         "title": "RecordBucket"
       },
+      "RecordLeg": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "player_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Player Id",
+            "description": "ESPN player id, when the book's name matched one"
+          },
+          "team": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team",
+            "description": "ESPN pro team id"
+          },
+          "game_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Game Id",
+            "description": "ESPN game id"
+          },
+          "stat": {
+            "type": "string",
+            "title": "Stat",
+            "description": "three_pm, reb, ast, stl, blk or pts"
+          },
+          "n": {
+            "type": "integer",
+            "title": "N",
+            "description": "The rung: he needs n or more"
+          },
+          "odd": {
+            "type": "number",
+            "title": "Odd",
+            "description": "The book's odds at our last look"
+          },
+          "ours": {
+            "type": "number",
+            "title": "Ours",
+            "description": "Our chance he gets there"
+          },
+          "hit": {
+            "type": "boolean",
+            "title": "Hit",
+            "description": "He got there"
+          },
+          "actual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual",
+            "description": "What he got"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "player_id",
+          "team",
+          "stat",
+          "n",
+          "odd",
+          "ours",
+          "hit",
+          "actual"
+        ],
+        "title": "RecordLeg"
+      },
       "RecordNight": {
         "properties": {
           "day": {
@@ -16994,6 +17088,14 @@
             ],
             "title": "Top Hit",
             "description": "Odds of the biggest pick that landed"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/RecordLeg"
+            },
+            "type": "array",
+            "title": "Legs",
+            "description": "Every pick on its own, tip-off order"
           }
         },
         "type": "object",
