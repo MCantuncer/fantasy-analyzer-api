@@ -2159,7 +2159,8 @@ def create_app(
                 now=app.state.now(),
             ).report(on_preview=job.show),
         )
-        app.state.reports.set(key, report)
+        # Saved before it is shown: the job answers "done" as soon as the report is in memory, and a
+        # server stopped right then (a deploy) would otherwise lose the save and rebuild on the next open.
         try:
             row = saved_row(report, lg, built_at, app.state.build)
             await run_in_threadpool(
@@ -2167,6 +2168,7 @@ def create_app(
             )
         except Exception:  # the report is still served from memory; it just won't open instantly next time
             logging.getLogger(__name__).warning("could not save the report", exc_info=True)
+        app.state.reports.set(key, report)
         return report
 
     async def saved_report(
