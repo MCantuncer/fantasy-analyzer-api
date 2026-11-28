@@ -74,7 +74,7 @@ def test_calls_keep_live_on_our_own_chance_and_shift_the_book_for_the_stack():
 
 def test_starting_fives_move_minutes_and_stats_with_them_and_inactives_go_to_zero():
     g = inputs(
-        fives=("Confirmed", "Confirmed"),
+        fives=("Expected", "Expected"),
         starters=frozenset({1, 3}),
         out_nba=frozenset({4}),
         lines={1: (OKC, LINE), 2: (OKC, LINE), 3: (OKC, LINE), 4: (MIN_, LINE), 5: (OKC, LINE)},
@@ -88,6 +88,10 @@ def test_starting_fives_move_minutes_and_stats_with_them_and_inactives_go_to_zer
 
     unlisted = tunings.moved_lines(inputs(lines={1: (OKC, LINE)}, share={1: 0.0}))
     assert unlisted == {}  # no five from nba.com yet: nothing moves
+
+    # a confirmed five is in Live's own lines (gamebox.starting_five): not counted again here
+    confirmed = tunings.moved_lines(replace(g, fives=("Confirmed", "Confirmed")))
+    assert set(confirmed) == {"4"} and confirmed["4"][3:] == [0.0, 0.0, 0.0, 0.0, 0.0]
 
 
 def test_a_look_after_tip_off_keeps_the_last_one_before_it():

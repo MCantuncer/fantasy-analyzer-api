@@ -6,10 +6,15 @@ the minutes miss by 3.4-5.5% in every one of five seasons, blind. The replay kne
 the box score; live, they come from nba.com's daily lineups file, where each team's five is
 "Expected" during the day and "Confirmed" once the team says so (with its inactive list).
 
-Before the term moves any number we need to know how early the five firms up, how often "Expected"
-turns out right, and whether our server can read nba.com at all. So this watch only records: every
-few minutes in the last LEAD before a game, it reads the file and, for each team still to tip off,
-keeps every change it sees. Nothing here feeds the model yet.
+Every few minutes in the last LEAD before a game the watch reads the file and, for each team still
+to tip off, keeps every change it sees. The first two logged nights (40 team games): the first look
+came 84-89 minutes before tip-off and was "Expected"; "Confirmed" came 10-27 minutes before; for 12
+teams one starter changed in between.
+
+Since 2026-11-28 a confirmed five feeds tonight's next-game lines (confirmed_fives, then
+gamebox.starting_five). Only a confirmed one: replayed over nine seasons, the term at its weight
+with one starter wrong in 30% of team games made minutes worse (scripts/starting_five_backtest.py).
+An "Expected" five is still only recorded.
 
 A day's record (JSON keys as strings):
 
@@ -23,6 +28,7 @@ A day's record (JSON keys as strings):
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 
 import httpx
@@ -117,4 +123,20 @@ def update(record: dict | None, schedule: Schedule, day: int, listed: dict[str, 
                 if seen["status"] == "Confirmed" and not entry.get("confirmed_at"):
                     entry["confirmed_at"] = stamp
             out["teams"][str(team)] = entry
+    return out
+
+
+def confirmed_fives(record: dict | None, match: Callable[[str, int], int | None]) -> dict[int, frozenset[int]]:
+    """Team -> the players of its confirmed five, from a day's record: each team whose last look
+    reads "Confirmed" with five starters, every one found by ``match(nba.com name, team)`` (our
+    player id, or None). A five with a starter we can't name is left out whole: half a five would
+    call a starter a bench player."""
+    out: dict[int, frozenset[int]] = {}
+    for team, entry in ((record or {}).get("teams") or {}).items():
+        looks = entry.get("looks") or []
+        if not looks or looks[-1].get("status") != "Confirmed":
+            continue
+        found = {match(name, int(team)) for _nba, name, *_ in looks[-1].get("starters") or []}
+        if len(found) == 5 and None not in found:
+            out[int(team)] = frozenset(found)
     return out

@@ -13,6 +13,7 @@ The tunings (TUNINGS):
                 the page blended that chance 90% with the book's, and so did this tuning)
     ours_alone  Our call with nobody's help: no book, nba.com's inactive list as well as ESPN's OUT
                 tags, and the starting-five minutes term (STARTER_MINUTES) on tonight's player lines
+                while nba.com's five is not confirmed yet (Live has the confirmed one itself)
     book        iddaa's own numbers, margin taken out: the price everyone else is betting into
     rivalry     the book plus the "rivalry stack" (STACK_EDGE) for a fallen contender in a slump
                 against a recent playoff foe; recorded only on games where the stack fires
@@ -61,7 +62,8 @@ TUNINGS = (LIVE, OURS_ALONE, BOOK, RIVALRY, CRAZY_ONE)
 # Starting-five minutes (area map dig A, 2026-11-25): a player who starts tonight but usually comes off
 # the bench plays about this many minutes more than his line, times (starts tonight - his start share
 # lately); a usual starter on the bench tonight, as many fewer. Blind: minutes miss -3.4..-5.5% every
-# season. His other stats move with his minutes.
+# season. His other stats move with his minutes. Since 2026-11-28 only for a five nba.com lists but
+# has not confirmed: the confirmed five is in Live's own lines (gamebox.starting_five).
 STARTER_MINUTES = 4.6
 MOVED_MINUTES = 0.5  # lines moved less than this stay Live's
 # The line log's stats a moved line keeps, in this order (app/linelog.py STATS names).
@@ -284,10 +286,13 @@ class GameInputs:
 
 
 def moved_lines(g: GameInputs) -> dict[str, list]:
-    """ours_alone's player lines that differ from Live's: the starting five where nba.com lists it,
-    and nba.com's inactive players at zero."""
+    """ours_alone's player lines that differ from Live's: the starting five where nba.com lists it
+    and has not confirmed it yet (a confirmed five is in Live's lines since 2026-11-28,
+    gamebox.starting_five: counting it here too would count it twice), and nba.com's inactive
+    players at zero."""
     out: dict[str, list] = {}
     listed = {g.away: g.fives[0] is not None, g.home: g.fives[1] is not None}
+    confirmed = {g.away: g.fives[0] == "Confirmed", g.home: g.fives[1] == "Confirmed"}
     for pid, (team, line) in (g.lines or {}).items():
         if team not in listed:
             continue
@@ -296,7 +301,7 @@ def moved_lines(g: GameInputs) -> dict[str, list]:
         if pid in g.out_nba and pid not in g.out_espn:
             out[str(pid)] = [team, 0, None if share is None else round(share, 2), *(0.0 for _ in PLAYER_STATS)]
             continue
-        if not listed[team] or share is None:
+        if not listed[team] or confirmed[team] or share is None:
             continue
         delta = STARTER_MINUTES * (float(starts) - share)
         minutes = line.get("minutes") or 0.0
