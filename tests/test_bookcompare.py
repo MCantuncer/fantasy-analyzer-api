@@ -236,6 +236,16 @@ def test_the_record_adds_up_settled_rungs_over_nights():
     assert first["net"] == round(sum(r["odd"] - 1 if r["hit"] else -1 for r in picks), 2)
     assert first["marked"] == round(sum(r["value"] for r in picks), 2)
     assert first["top_hit"] == max((r["odd"] for r in picks if r["hit"]), default=None)
+    legs = first["legs"]  # every pick on its own, a player's ladder together and lowest rung first
+    assert len(legs) == len(picks) and [leg["hit"] for leg in legs].count(True) == first["hits"]
+    assert {leg["name"] for leg in legs} <= {"Joel Embiid", "Tyrese Maxey"}
+    embiid = [leg for leg in legs if leg["name"] == "Joel Embiid"]
+    assert all(leg["player_id"] == EMBIID and leg["team"] == PHI and leg["game_id"] == 401 for leg in embiid)
+    for stat in {leg["stat"] for leg in embiid}:
+        rungs = [leg["n"] for leg in embiid if leg["stat"] == stat]
+        assert rungs == sorted(rungs)
+    assert all(leg["hit"] == (leg["actual"] >= leg["n"]) and 0 < leg["ours"] < 1 for leg in legs)
+    assert third["legs"] == []
     assert bookcompare.record([]) == {
         "series": [],
         "nights": 0,
