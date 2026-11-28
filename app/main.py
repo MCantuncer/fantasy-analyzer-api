@@ -1339,6 +1339,12 @@ def create_app(
                 nights.append(got)
         rec = await run_in_threadpool(bookcompare.record, nights)
         q = quarterbook.record([g for n in nights for g in n["games"]])
+        try:
+            sched = await score_calendar(season)
+        except Exception:  # the trial reads without its nights
+            sched = None
+        dated = [{**n, "date": _iso_date(sched.date_of(n["day"])) if sched else None} for n in nights]
+        q["trial"] = quarterbook.trial(dated)
         return schemas.BookRecord(season=season, **rec, quarters=schemas.QuarterRecord(**q))
 
     @app.post("/api/book-compare/lost", response_model=schemas.LostLog, responses=PRO_ONLY)

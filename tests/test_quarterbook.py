@@ -67,10 +67,52 @@ def test_the_record_counts_picks_and_what_they_returned():
     assert set(rec["by_market"]) <= {"q_total", "q_winner", "h1_total", "h1_margin", "h1_home", "h1_away"}
     assert rec["edge"]["bets"] <= rec["all"]["bets"]
     assert quarterbook.record([]) == {
-        "all": {"bets": 0, "won": 0, "ours": None, "book": None, "returned": 0.0},
-        "edge": {"bets": 0, "won": 0, "ours": None, "book": None, "returned": 0.0},
+        "all": {"bets": 0, "won": 0, "ours": None, "book": None, "returned": 0.0, "need": None},
+        "edge": {"bets": 0, "won": 0, "ours": None, "book": None, "returned": 0.0, "need": None},
         "by_market": {},
+        "by_odds": {},
     }
+
+
+def test_the_record_says_how_often_picks_had_to_win_and_splits_them_by_price():
+    def pick(odd: float, hit: bool, value: float = 0.1) -> dict:
+        side = {"side": "home", "odd": odd, "ours": 0.6, "book": 0.55, "value": value}
+        return {"market": "q_total", "pick": "home", "hit": hit, "sides": [side]}
+
+    games = [{"quarters": [pick(1.4, True), pick(1.4, True), pick(1.4, False), pick(2.5, False, -0.1)]}]
+    rec = quarterbook.record(games)
+    assert rec["all"]["need"] == round(4 / (1.4 * 3 + 2.5), 3)
+    assert rec["all"]["returned"] == round(0.4 + 0.4 - 1 - 1, 2)
+    assert list(rec["by_odds"]) == ["under 1.50", "2.20+"]
+    low = rec["by_odds"]["under 1.50"]
+    assert low["all"]["bets"] == 3 and low["all"]["won"] == 2 and low["all"]["need"] == round(1 / 1.4, 3)
+    assert rec["by_odds"]["2.20+"]["edge"]["bets"] == 0
+
+
+def test_the_trial_lists_its_nights_from_the_first_day_on():
+    actual = ([20.0, 25.0, 30.0, 30.0], [33.0, 30.0, 25.0, 28.0])
+    games = [{"quarters": quarterbook.bets(BOARD, MIL, PHI, (AWAY_Q, HOME_Q), actual)}]
+    before = quarterbook.bets(BOARD, MIL, PHI, (AWAY_Q, HOME_Q), None)
+    nights = [
+        {"date": "2026-11-23", "games": games},  # before the trial
+        {"date": "2026-11-24", "games": games},
+        {"date": "2026-11-25", "games": [{"quarters": before}]},  # nothing settled yet
+        {"date": None, "games": games},  # the schedule didn't read
+    ]
+    got = quarterbook.trial(nights)
+    assert got["start"] == "2026-11-24" and got["review"] == "2026-12-08"
+    [night] = got["series"]
+    rec = quarterbook.record(games)
+    assert night == {
+        "date": "2026-11-24",
+        "bets": rec["all"]["bets"],
+        "won": rec["all"]["won"],
+        "returned": rec["all"]["returned"],
+        "edge_bets": rec["edge"]["bets"],
+        "edge_won": rec["edge"]["won"],
+        "edge_returned": rec["edge"]["returned"],
+    }
+    assert quarterbook.trial([])["series"] == []
 
 
 def test_the_page_and_the_record_carry_quarter_bets(recorded):
@@ -112,3 +154,4 @@ def test_the_page_and_the_record_carry_quarter_bets(recorded):
     assert q[("q_total", 1)]["actual"] == 53.0 and q[("q_total", 1)]["ours"] > 50
     got = user.post("/api/book-compare/record", json={"season": 2027}).json()
     assert got["quarters"]["all"]["bets"] >= 1
+    assert got["quarters"]["trial"]["review"] == "2026-12-08"

@@ -2757,6 +2757,9 @@ class QuarterRecordSums(BaseModel):
     ours: float | None = Field(description="Our average chance for these picks")
     book: float | None = Field(description="The book's average chance for them, cut taken out")
     returned: float = Field(description="Units back less units staked, one unit a pick at the book's price")
+    need: float | None = Field(
+        default=None, description="How often they had to win to break even at their odds: picks over the sum of odds"
+    )
 
 
 class QuarterRecordPart(BaseModel):
@@ -2764,10 +2767,32 @@ class QuarterRecordPart(BaseModel):
     edge: QuarterRecordSums
 
 
+class QuarterNight(BaseModel):
+    date: str = Field(description="US game date, ISO")
+    bets: int
+    won: int
+    returned: float = Field(description="Units back less units staked, every settled pick that night")
+    edge_bets: int
+    edge_won: int
+    edge_returned: float = Field(description="The same for the value picks alone")
+
+
+class QuarterTrial(BaseModel):
+    start: str = Field(description="The trial's first day, ISO")
+    review: str = Field(description="When the record is judged for Kupons, ISO")
+    series: list[QuarterNight] = Field(default_factory=list, description="One line per night with settled picks")
+
+
 class QuarterRecord(BaseModel):
     all: QuarterRecordSums = Field(description="Every settled quarter and first-half pick")
     edge: QuarterRecordSums = Field(description="Only the picks where our chance x the price was over 1")
     by_market: dict[str, QuarterRecordPart] = Field(default_factory=dict)
+    by_odds: dict[str, QuarterRecordPart] = Field(
+        default_factory=dict, description="The same by the picked side's price: under 1.50, 1.50-1.79, 1.80-2.19, 2.20+"
+    )
+    trial: QuarterTrial | None = Field(
+        default=None, description="The Kupons trial: its dates and the record night by night"
+    )
 
 
 class CompareGame(BaseModel):
