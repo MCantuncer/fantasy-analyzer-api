@@ -16808,6 +16808,14 @@
             "type": "object",
             "title": "By Market"
           },
+          "by_odds": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/QuarterRecordPart"
+            },
+            "type": "object",
+            "title": "By Odds",
+            "description": "The same by the picked side's price: under 1.50, 1.50-1.79, 1.80-2.19, 2.20+"
+          },
           "trial": {
             "anyOf": [
               {
@@ -16881,6 +16889,18 @@
             "type": "number",
             "title": "Returned",
             "description": "Units back less units staked, one unit a pick at the book's price"
+          },
+          "need": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Need",
+            "description": "How often they had to win to break even at their odds: picks over the sum of odds"
           }
         },
         "type": "object",

@@ -31,6 +31,9 @@ from app import iddaa
 # Kupons, and judged after about two weeks on whether the value picks beat the price.
 TRIAL_FROM = date(2026, 11, 24)
 TRIAL_DAYS = 14
+# Price bands for the record (Can 2026-11-28: "most of the correct ones are the easiest ones"):
+# whether the short prices win often enough to pay. Lower bound in, upper bound out.
+ODDS_BANDS = [("under 1.50", 0.0, 1.5), ("1.50-1.79", 1.5, 1.8), ("1.80-2.19", 1.8, 2.2), ("2.20+", 2.2, math.inf)]
 
 QUARTER_TOTAL_SD = 8.4  # a quarter's points, both teams, against ours
 QUARTER_MARGIN_SD = 8.2  # a quarter's margin against ours
@@ -204,8 +207,10 @@ def bets(
 
 def record(games: list[dict]) -> dict:
     """Every settled pick across the nights given (each game's "quarters" from bets): how many, how
-    many won, our average chance and the book's for them, and what one unit on each returned at the
-    book's odds; all picks, and the edge picks alone (our chance x odds over 1). By market too."""
+    many won, our average chance and the book's for them, what one unit on each returned at the
+    book's odds, and need: how often they had to win to break even at those odds (picks over the sum
+    of their odds). All picks, and the edge picks alone (our chance x odds over 1). By market and by
+    price band too."""
 
     def sums(rows: list[tuple[dict, dict]]) -> dict:
         n = len(rows)
@@ -217,6 +222,7 @@ def record(games: list[dict]) -> dict:
             "ours": round(sum(s["ours"] for _, s in rows) / n, 3) if n else None,
             "book": round(sum(s["book"] for _, s in rows) / n, 3) if n else None,
             "returned": round(ret, 2),
+            "need": round(n / sum(s["odd"] for _, s in rows), 3) if n else None,
         }
 
     settled = []
@@ -237,6 +243,14 @@ def record(games: list[dict]) -> dict:
                 "edge": sums([x for x in edge if x[0]["market"] == k]),
             }
             for k in kinds
+        },
+        "by_odds": {
+            band: {
+                "all": sums([x for x in settled if lo <= x[1]["odd"] < hi]),
+                "edge": sums([x for x in edge if lo <= x[1]["odd"] < hi]),
+            }
+            for band, lo, hi in ODDS_BANDS
+            if any(lo <= s["odd"] < hi for _, s in settled)
         },
     }
 
