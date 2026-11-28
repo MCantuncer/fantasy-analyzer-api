@@ -2489,7 +2489,7 @@ class TuningLog(BaseModel):
 
 class CrazyOneRequest(BaseModel):
     season: int | None = Field(default=None, description="ESPN season (the year it ends); the current one when unset")
-    day: int | None = Field(default=None, ge=1, description="NBA day; the latest with Crazy One's calls when unset")
+    day: int | None = Field(default=None, ge=1, description="NBA day; tonight (as Scores opens) when unset")
     nights: int = Field(default=60, ge=1, le=200, description="Nights its record counts")
 
 
@@ -2601,13 +2601,28 @@ class CrazyBoomRecord(BaseModel):
     by_night: list[CrazyBoomNight] = Field(description="Settled nights, newest first")
 
 
+class CrazySlateGame(BaseModel):
+    game_id: int
+    away: str
+    home: str
+    tip: str
+
+
 class CrazyOne(BaseModel):
     """Crazy One: a persona that believes what the data backs on average but not every season.
     Never Our call."""
 
     season: int
     day: int | None
-    days: list[int] = Field(description="Days with Crazy One's calls")
+    date: str | None = Field(default=None, description="The day's New York date (ISO), from ESPN's schedule")
+    days: list[int] = Field(description="Days with Crazy One's calls, and tonight even before any")
+    slate: list[CrazySlateGame] = Field(
+        default_factory=list, description="The day's scheduled games in tip order, called or not"
+    )
+    calls_from: str | None = Field(
+        default=None,
+        description="When the day's next calls land: 90 minutes before the first game still waiting for one",
+    )
     games: list[CrazyGame] = Field(description="The day's games, biggest disagreement with Our call first")
     record: CrazyRecord
     booms: list[CrazyBoom] = Field(

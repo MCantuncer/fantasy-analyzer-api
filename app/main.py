@@ -126,6 +126,8 @@ from app.saved import (
     touches,
 )
 from app.scores import (
+    NEW_YORK,
+    TONIGHT_FROM,
     Schedule,
     build_day,
     game_status,
@@ -1100,9 +1102,18 @@ def create_app(
         call, the beliefs that moved it, and its record against Our call on final games, misses
         included. A persona's numbers (app/tunings.py STORY): never Our call, never in the Kupons."""
         await require_feature(authorization, plans.Feature.ESTIMATES)
-        season = body.season or current_season(app.state.now())
+        now = app.state.now()
+        season = body.season or current_season(now)
         days = await run_in_threadpool(app.state.store.tuning_days, season)
-        day = body.day if body.day in days else (days[-1] if days else None)
+        try:
+            sched: Schedule | None = await score_calendar(season)
+        except HTTPException:  # ESPN's schedule unreadable: the recorded days still read
+            sched = None
+        now_season = body.season in (None, current_season(now))
+        tonight = crazy_tonight(sched, now) if sched is not None and now_season else None
+        if tonight is not None and tonight not in days:
+            days = sorted({*days, tonight})  # tonight opens even before (or without) any call: he is silent
+        day = body.day if body.day in days else (tonight or (days[-1] if days else None))
         box = app.state.game_boxes.get(season) or app.state.last_boxes.get(season)
         scores = tunings.finals(box) if box is not None else {}
         abbrev = PRO_TEAM_ABBREV.get
@@ -1199,10 +1210,24 @@ def create_app(
                 boom=hit,
             )
 
+        called_ids = {g.game_id for g in shown}
+        slate = sorted((sched.games.get(day, []) if sched is not None else []), key=lambda g: (g.start, g.id))
+        waiting = [g.start for g in slate if g.id not in called_ids and g.start > now]
         return schemas.CrazyOne(
             season=season,
             day=day,
+            date=_iso_date(sched.date_of(day)) if sched is not None and day is not None else None,
             days=days,
+            slate=[
+                schemas.CrazySlateGame(
+                    game_id=g.id,
+                    away=abbrev(g.away, ""),
+                    home=abbrev(g.home, ""),
+                    tip=g.start.isoformat(timespec="seconds"),
+                )
+                for g in slate
+            ],
+            calls_from=(min(waiting) - startlog.LEAD).isoformat(timespec="seconds") if waiting else None,
             games=sorted(shown, key=lambda x: (-abs(x.swing), x.tip)),
             record=schemas.CrazyRecord(**rec, bold=bold),
             booms=[boom_call(*c) for c in shown_booms],
@@ -1224,6 +1249,16 @@ def create_app(
                 ],
             ),
         )
+
+    def crazy_tonight(sched: Schedule, now: datetime) -> int | None:
+        """The night Crazy 1's World opens on: the Scores page's day (last night until noon New York
+        time, then tonight's slate), and from noon on today even when it has no games, so a quiet day
+        reads as his silence, not as yesterday."""
+        day = sched.default_day(now)
+        local = now.astimezone(NEW_YORK)
+        if sched.opening is not None and local.time() >= TONIGHT_FROM:
+            day = max(day, (local.date() - sched.opening).days + 1)
+        return day
 
     def tuning_score(item: dict) -> schemas.TuningScore:
         players = item.pop("players", None)

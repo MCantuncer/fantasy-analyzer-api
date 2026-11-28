@@ -254,3 +254,24 @@ def test_crazy_ones_world_reads_the_days_calls_for_anyone_with_estimates(recorde
     assert {"ours", "crazy", "beliefs", "swing"} <= set(first) and first["final"] is None
     swings = [abs(g["swing"]) for g in got["games"]]
     assert swings == sorted(swings, reverse=True)
+
+
+def test_crazy_ones_world_opens_on_tonight_and_is_silent_before_any_call(recorded):
+    app, store, sched = _app(recorded)
+    app.state.line_log_league_id = LEAGUE_ID
+    called = min(d for d, gs in sched.games.items() if gs and d >= 3)
+    game = sched.games[called][0]
+    app.state.now = lambda: game.start - timedelta(minutes=45)
+    assert asyncio.run(app.state.tuning_sweep()) == [called]
+    tonight = min(d for d, gs in sched.games.items() if d > called and gs)
+    first = min(g.start for g in sched.games[tonight])
+    app.state.now = lambda: first - timedelta(hours=3)  # tonight's slate, hours before its first call
+    admin = boss(app)
+    got = admin.post("/api/crazy-one", json={}).json()
+    assert got["day"] == tonight and tonight in got["days"] and called in got["days"]
+    assert got["games"] == [] and got["booms"] == []
+    assert got["date"] == sched.date_of(tonight).isoformat()
+    slate = sorted(sched.games[tonight], key=lambda g: (g.start, g.id))
+    assert [g["game_id"] for g in got["slate"]] == [g.id for g in slate]
+    assert datetime.fromisoformat(got["calls_from"]) == first - timedelta(minutes=90)
+    assert admin.post("/api/crazy-one", json={"day": called}).json()["day"] == called  # yesterday still one tap back

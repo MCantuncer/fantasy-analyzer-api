@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, time
+
 from app import booms, linelog
 from app.analysis.gamebox import Form
 from tests.test_linelog import _app
@@ -74,7 +76,9 @@ def test_a_night_picks_its_top_five_over_all_games_and_its_record_wants_a_clear_
 
 
 def test_crazy_ones_world_shows_the_nights_boom_calls_and_counts_the_settled_ones(recorded):
-    app, store, _ = _app(recorded)
+    app, store, sched = _app(recorded)
+    evening = datetime.combine(sched.date_of(31), time(23), UTC)  # 6 pm in New York: night 31 is tonight
+    app.state.now = lambda: evening
     index = {name: i for i, (name, _) in enumerate(linelog.STATS)}
 
     def result(pts, reb):
